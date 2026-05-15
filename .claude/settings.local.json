@@ -6,7 +6,11 @@
       "Bash(git commit *)",
       "Bash(pip install *)",
       "Bash(python -m pip --version)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(rm D:/Unity/GameForge/Assets/Scripts/Core/GameManagerTests.cs)",
+      "Bash(rm D:/Unity/GameForge/Assets/Scripts/Player/PlayerControllerTests.cs)",
+      "Bash(git remote *)",
+      "Bash(git push *)"
     ]
   }
 }
