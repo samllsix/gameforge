@@ -82,7 +82,7 @@ class TestGeneratorAgent(BaseAgent):
 
         Returns:
             测试代码
-        '''
+        """
         # 从源文件名提取类名
         class_name = source_path.split("/")[-1].replace(".cs", "")
 
