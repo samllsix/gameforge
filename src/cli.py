@@ -61,8 +61,8 @@ def generate(ctx, input_file, output_dir):
         "project_context": {
             "engine": "unity",
             "project_name": "GameForge Project",
+            "requirements": requirements,
         },
-        "requirements": requirements,
     }))
 
     # 输出结果

@@ -67,9 +67,12 @@ class TestGeneratorAgent(BaseAgent):
         test_code = {}
 
         for file_path, content in code_generated.items():
-            if file_path.endswith(".cs"):
+            # 只为非测试文件生成测试
+            if file_path.endswith(".cs") and not file_path.endswith("Tests.cs"):
                 test_path = file_path.replace(".cs", "Tests.cs")
-                test_code[test_path] = self._generate_test_template(file_path, content)
+                # 检查测试文件是否已存在
+                if test_path not in code_generated and test_path not in test_code:
+                    test_code[test_path] = self._generate_test_template(file_path, content)
 
         return test_code
 

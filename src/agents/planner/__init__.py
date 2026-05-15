@@ -50,16 +50,21 @@ class PlannerAgent(BaseAgent):
             "current_phase": "planning_complete",
         }
 
-    async def plan(self, requirements: str) -> List[Dict[str, Any]]:
+    async def plan(self, state: GameDevState) -> List[Dict[str, Any]]:
         """生成任务计划
 
         Args:
-            requirements: 需求描述
+            state: 游戏开发状态
 
         Returns:
             任务计划列表
         """
-        self.log_action("generate_task_plan", {"requirements": requirements[:100]})
+        # 从状态中获取需求
+        requirements = state.get("project_context", {}).get("requirements", "")
+        if not requirements:
+            requirements = "默认游戏开发任务"
+
+        self.log_action("generate_task_plan", {"requirements": requirements[:100] if len(requirements) > 100 else requirements})
 
         # TODO: 实现基于LLM的任务规划
         # 这里先返回一个示例任务计划
