@@ -1,0 +1,145 @@
+# GameForge Configuration
+# Main configuration file for the GameForge platform
+
+app:
+  name: GameForge
+  version: 0.1.0
+  description: 游戏研发全流程AI Agent协作平台
+  environment: development
+  debug: true
+
+# Server configuration
+server:
+  host: 0.0.0.0
+  port: 8000
+  workers: 4
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+
+# LLM Configuration
+llm:
+  default_model: claude-3-5-sonnet-20241022
+  models:
+    planner:
+      provider: openai
+      model: gpt-4o
+      temperature: 0.7
+      max_tokens: 4096
+    code_generator:
+      provider: anthropic
+      model: claude-3-5-sonnet-20241022
+      temperature: 0.3
+      max_tokens: 8192
+    code_reviewer:
+      provider: anthropic
+      model: claude-3-5-sonnet-20241022
+      temperature: 0.2
+      max_tokens: 4096
+    test_generator:
+      provider: anthropic
+      model: claude-3-5-sonnet-20241022
+      temperature: 0.4
+      max_tokens: 4096
+    debugger:
+      provider: anthropic
+      model: claude-3-5-sonnet-20241022
+      temperature: 0.2
+      max_tokens: 4096
+
+# Agent Configuration
+agents:
+  orchestrator:
+    max_iterations: 10
+    timeout: 300
+    retry_attempts: 3
+  planner:
+    max_tasks: 20
+    task_granularity: medium
+  code_generator:
+    supported_engines:
+      - unity
+      - unreal
+    code_style: standard
+    include_comments: true
+  test_generator:
+    coverage_target: 80
+    test_types:
+      - unit
+      - integration
+      - e2e
+  debugger:
+    max_fix_attempts: 5
+    auto_fix_enabled: true
+
+# Vector Database Configuration
+vector_db:
+  provider: qdrant
+  host: localhost
+  port: 6333
+  collection_name: gameforge_code
+  embedding_model: text-embedding-3-small
+  dimensions: 1536
+
+# Database Configuration
+database:
+  url: sqlite:///./gameforge.db
+  echo: false
+  pool_size: 5
+  max_overflow: 10
+
+# Redis Configuration
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+  decode_responses: true
+
+# Monitoring Configuration
+monitoring:
+  langsmith:
+    enabled: true
+    project: gameforge
+  prometheus:
+    enabled: true
+    port: 9090
+  logging:
+    level: INFO
+    format: json
+    file: logs/gameforge.log
+
+# Sandbox Configuration
+sandbox:
+  enabled: true
+  timeout: 300
+  memory_limit: 512MB
+  network_enabled: false
+  allowed_paths:
+    - ./projects
+    - ./temp
+
+# Evaluation Configuration
+evaluation:
+  test_cases_dir: data/eval_datasets
+  metrics:
+    - compile_success
+    - test_pass_rate
+    - code_quality
+    - performance
+  report_format: html
+
+# Project Templates
+templates:
+  unity:
+    base_path: templates/unity
+    naming_convention: PascalCase
+  unreal:
+    base_path: templates/unreal
+    naming_convention: PascalCase
+
+# Security Configuration
+security:
+  api_key_header: X-API-Key
+  rate_limit: 100/minute
+  max_input_length: 10000
+  sandbox_code_execution: true
