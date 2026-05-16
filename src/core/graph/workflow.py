@@ -49,6 +49,7 @@ class GameDevWorkflow:
         workflow.add_node("code_reviewer", self._code_reviewer_node)
         workflow.add_node("test_generator", self._test_generator_node)
         workflow.add_node("orchestrator", self._orchestrator_node)
+        workflow.add_node("debugger", self._debugger_node)
 
         # 设置入口点
         workflow.set_entry_point("planner")
@@ -58,6 +59,7 @@ class GameDevWorkflow:
         workflow.add_edge("code_generator", "code_reviewer")
         workflow.add_edge("code_reviewer", "test_generator")
         workflow.add_edge("test_generator", "orchestrator")
+        workflow.add_edge("debugger", "code_generator")  # 修复后重新生成
 
         # 添加条件边
         workflow.add_conditional_edges(
@@ -66,6 +68,7 @@ class GameDevWorkflow:
             {
                 "code_generator": "code_generator",
                 "test_generator": "test_generator",
+                "debugger": "debugger",
                 END: END,
             }
         )
@@ -74,100 +77,123 @@ class GameDevWorkflow:
 
     async def _planner_node(self, state: GameDevState) -> Dict[str, Any]:
         """规划节点 - 解析需求并生成任务计划"""
-        task_plan = await self.planner.plan(state)
-        return {
-            "task_plan": task_plan,
-            "current_phase": "planning_complete",
-        }
+        try:
+            task_plan = await self.planner.plan(state)
+            return {
+                "task_plan": task_plan,
+                "current_phase": "planning_complete",
+            }
+        except Exception as e:
+            return {"error_log": [f"Planner failed: {e}"], "current_phase": "error"}
 
     async def _code_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """代码生成节点 - 根据任务生成代码"""
-        current_task_id = state.get("current_task_id")
-        task_plan = state.get("task_plan", [])
+        try:
+            current_task_id = state.get("current_task_id")
+            task_plan = state.get("task_plan", [])
 
-        # 查找当前任务
-        current_task = None
-        for task in task_plan:
-            if task.get("id") == current_task_id:
-                current_task = task
-                break
+            current_task = None
+            for task in task_plan:
+                if task.get("id") == current_task_id:
+                    current_task = task
+                    break
 
-        if not current_task:
-            return {"current_phase": "no_task"}
+            if not current_task:
+                return {"current_phase": "no_task"}
 
-        # 生成代码
-        code_artifacts = await self.code_generator.generate(state, current_task)
+            code_artifacts = await self.code_generator.generate(state, current_task)
 
-        # 更新任务状态
-        for task in task_plan:
-            if task.get("id") == current_task_id:
-                task["status"] = TaskStatus.COMPLETED.value
-                break
+            for task in task_plan:
+                if task.get("id") == current_task_id:
+                    task["status"] = TaskStatus.COMPLETED.value
+                    break
 
-        return {
-            "code_generated": {
-                **state.get("code_generated", {}),
-                **{art["file_path"]: art["content"] for art in code_artifacts}
-            },
-            "code_artifacts": state.get("code_artifacts", []) + code_artifacts,
-            "task_plan": task_plan,
-            "current_phase": "code_generated",
-        }
+            return {
+                "code_generated": {
+                    **state.get("code_generated", {}),
+                    **{art["file_path"]: art["content"] for art in code_artifacts}
+                },
+                "code_artifacts": state.get("code_artifacts", []) + code_artifacts,
+                "task_plan": task_plan,
+                "current_phase": "code_generated",
+            }
+        except Exception as e:
+            return {"error_log": [f"Code generator failed: {e}"], "current_phase": "error"}
 
     async def _code_reviewer_node(self, state: GameDevState) -> Dict[str, Any]:
         """代码审查节点 - 审查生成的代码"""
-        review_result = await self.code_reviewer.review(state)
-        return {"current_phase": "code_reviewed"}
+        try:
+            review_result = await self.code_reviewer.review(state)
+            return {"current_phase": "code_reviewed"}
+        except Exception as e:
+            return {"error_log": [f"Code reviewer failed: {e}"], "current_phase": "error"}
 
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """测试生成节点 - 为代码生成测试用例"""
-        test_code = await self.test_generator.generate(state)
-
-        # 更新任务状态
-        task_plan = state.get("task_plan", [])
-        current_task_id = state.get("current_task_id")
-        for task in task_plan:
-            if task.get("id") == current_task_id:
-                task["status"] = TaskStatus.COMPLETED.value
-                break
-
-        return {
-            "code_generated": {
-                **state.get("code_generated", {}),
-                **test_code,
-            },
-            "task_plan": task_plan,
-            "current_phase": "test_generated",
-        }
+        try:
+            test_code = await self.test_generator.generate(state)
+            task_plan = state.get("task_plan", [])
+            current_task_id = state.get("current_task_id")
+            for task in task_plan:
+                if task.get("id") == current_task_id:
+                    task["status"] = TaskStatus.COMPLETED.value
+                    break
+            return {
+                "code_generated": {**state.get("code_generated", {}), **test_code},
+                "task_plan": task_plan,
+                "current_phase": "test_generated",
+            }
+        except Exception as e:
+            return {"error_log": [f"Test generator failed: {e}"], "current_phase": "error"}
 
     async def _orchestrator_node(self, state: GameDevState) -> Dict[str, Any]:
         """编排节点 - 调度下一个任务"""
-        task_plan = state.get("task_plan", [])
+        try:
+            task_plan = state.get("task_plan", [])
+            fix_attempts = state.get("fix_attempts", 0)
 
-        # 查找下一个待执行的任务
-        next_task = None
-        for task in task_plan:
-            if task.get("status") == TaskStatus.PENDING.value:
-                # 检查依赖是否满足
-                dependencies = task.get("dependencies", [])
-                all_deps_met = all(
-                    self._is_task_completed(task_plan, dep_id)
-                    for dep_id in dependencies
-                )
-                if all_deps_met:
-                    next_task = task
-                    break
+            # 如果有错误日志，增加修复计数并路由到 debugger
+            error_log = state.get("error_log", [])
+            if error_log and fix_attempts < self.config.get("agents", {}).get("debugger", {}).get("max_fix_attempts", 5):
+                return {
+                    "current_phase": "needs_fix",
+                    "fix_attempts": fix_attempts + 1,
+                }
 
-        if not next_task:
+            next_task = None
+            for task in task_plan:
+                if task.get("status") == TaskStatus.PENDING.value:
+                    dependencies = task.get("dependencies", [])
+                    all_deps_met = all(
+                        self._is_task_completed(task_plan, dep_id)
+                        for dep_id in dependencies
+                    )
+                    if all_deps_met:
+                        next_task = task
+                        break
+
+            if not next_task:
+                return {"current_phase": "workflow_complete", "is_complete": True}
+
             return {
-                "current_phase": "workflow_complete",
-                "is_complete": True,
+                "current_task_id": next_task.get("id"),
+                "current_phase": "task_assigned",
             }
+        except Exception as e:
+            return {"error_log": [f"Orchestrator failed: {e}"], "current_phase": "error"}
 
-        return {
-            "current_task_id": next_task.get("id"),
-            "current_phase": "task_assigned",
-        }
+    async def _debugger_node(self, state: GameDevState) -> Dict[str, Any]:
+        """调试节点 - 分析错误并生成修复"""
+        try:
+            error_log = state.get("error_log", [])
+            fix_result = await self.debugger.analyze_and_fix(state, error_log)
+            return {
+                **fix_result,
+                "current_phase": "fix_applied",
+                "error_log": [],  # 清空错误日志
+            }
+        except Exception as e:
+            return {"error_log": [f"Debugger failed: {e}"], "current_phase": "unrecoverable"}
 
     def _route_next_task(self, state: GameDevState) -> str:
         """路由到下一个任务节点"""
@@ -175,6 +201,8 @@ class GameDevWorkflow:
 
         if current_phase == "workflow_complete":
             return END
+        if current_phase in ("error", "needs_fix"):
+            return "debugger"
 
         task_plan = state.get("task_plan", [])
         current_task_id = state.get("current_task_id")
@@ -182,7 +210,6 @@ class GameDevWorkflow:
         if not current_task_id:
             return END
 
-        # 查找当前任务
         current_task = None
         for task in task_plan:
             if task.get("id") == current_task_id:
@@ -192,7 +219,6 @@ class GameDevWorkflow:
         if not current_task:
             return END
 
-        # 根据任务类型路由
         task_type = current_task.get("type", "code")
         if task_type == "code":
             return "code_generator"

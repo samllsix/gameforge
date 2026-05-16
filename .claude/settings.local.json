@@ -10,7 +10,11 @@
       "Bash(rm D:/Unity/GameForge/Assets/Scripts/Core/GameManagerTests.cs)",
       "Bash(rm D:/Unity/GameForge/Assets/Scripts/Player/PlayerControllerTests.cs)",
       "Bash(git remote *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(mkdir -p D:/Unity/GameForge/Assets/Art)",
+      "Bash(unzip -o \"D:/HONOR Share/kenney_new-platformer-pack-1.1.zip\" -d \"D:/Unity/GameForge/Assets/Art/\")",
+      "Read(//d/Unity/GameForge/Assets/Scripts/**)",
+      "Read(//d/Unity/GameForge/Assets/Art/**)"
     ]
   }
 }

@@ -36,14 +36,12 @@ class PlannerAgent(BaseAgent):
         """
         self.log_action("planner_execute")
 
-        # 获取输入的需求文档
-        requirements = kwargs.get("requirements", "")
-        if not requirements:
-            self.log_error("no_requirements_provided")
-            return {"error_log": ["No requirements provided"]}
+        # 生成任务计划 — 从 state 中读取需求，而非 kwargs
+        task_plan = await self.plan(state)
 
-        # 生成任务计划
-        task_plan = await self.plan(requirements)
+        if not task_plan:
+            self.log_error("no_task_plan_generated")
+            return {"error_log": ["Failed to generate task plan"]}
 
         return {
             "task_plan": task_plan,

@@ -9,6 +9,9 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from src.core.graph.workflow import create_workflow
 from src.utils.logger import get_logger, reset_logger
 
@@ -142,8 +145,8 @@ def workflow(ctx):
         "project_context": {
             "engine": "unity",
             "project_name": "Platformer Game",
+            "requirements": requirements,
         },
-        "requirements": requirements,
     }))
 
     # 输出结果
