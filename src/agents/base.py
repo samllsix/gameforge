@@ -34,10 +34,11 @@ class BaseAgent(ABC):
         # 从配置中获取Agent特定配置
         self.agent_config = config.get("agents", {}).get(agent_type.value, {})
 
-        # LLM配置
-        self.llm_config = config.get("llm", {}).get(
+        # LLM配置 - 从 llm.models.{agent_type} 获取，回退到默认值
+        llm_models = config.get("llm", {}).get("models", {})
+        self.llm_config = llm_models.get(
             self._get_llm_key(),
-            config.get("llm", {}).get("default_model", {})
+            {"provider": "openai", "model": "deepseek-chat", "temperature": 0.7, "max_tokens": 4096}
         )
 
     def _get_llm_key(self) -> str:
@@ -83,11 +84,13 @@ class BaseAgent(ABC):
             error: 错误信息
             details: 错误详情
         """
+        # 避免 details 中的 'error' 键与参数冲突
+        safe_details = {(k if k != "error" else "detail_error"): v for k, v in (details or {}).items()}
         self.logger.error(
             "agent_error",
-            error=error,
+            error_message=error,
             timestamp=datetime.now().isoformat(),
-            **(details or {})
+            **safe_details
         )
 
     def get_prompt_template(self, template_name: str) -> str:

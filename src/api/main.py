@@ -137,7 +137,24 @@ async def plan_tasks(request: TaskPlanRequest):
         from src.agents.planner import PlannerAgent
 
         planner = PlannerAgent(config)
-        tasks = await planner.plan(request.requirements)
+        state = {
+            "project_context": {
+                "requirements": request.requirements,
+                "engine": "unity",
+            },
+            "task_plan": [],
+            "code_generated": {},
+            "code_artifacts": [],
+            "test_results": None,
+            "test_report": None,
+            "fix_history": [],
+            "fix_attempts": 0,
+            "current_phase": "planning",
+            "is_complete": False,
+            "requires_human_input": False,
+            "error_log": [],
+        }
+        tasks = await planner.plan(state)
 
         return TaskPlanResponse(tasks=tasks)
     except Exception as e:
@@ -155,6 +172,7 @@ async def list_agents():
             {"name": "code_reviewer", "description": "代码审查Agent - 审查代码质量"},
             {"name": "test_generator", "description": "测试生成Agent - 生成测试用例"},
             {"name": "debugger", "description": "调试Agent - 分析错误并生成修复方案"},
+            {"name": "refactor", "description": "重构Agent - 分析代码质量并优化重构"},
         ]
     }
 

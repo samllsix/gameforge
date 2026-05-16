@@ -3,97 +3,151 @@
 负责分析错误并生成修复方案。
 """
 
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 from src.agents.base import BaseAgent
 from src.core.state.game_state import GameDevState, AgentType
+from src.utils.llm_client import get_llm_client
 
 
 class DebuggerAgent(BaseAgent):
-    """调试Agent
-
-    负责：
-    - 分析编译错误
-    - 分析运行时错误
-    - 分析逻辑错误
-    - 生成修复方案
-    """
+    """调试Agent"""
 
     def __init__(self, config: Dict[str, Any]):
-        """初始化调试Agent
-
-        Args:
-            config: 配置信息
-        """
         super().__init__(AgentType.DEBUGGER, config)
+        self.llm = get_llm_client(config)
         self.max_fix_attempts = self.agent_config.get("max_fix_attempts", 5)
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
-        """执行调试任务
-
-        Args:
-            state: 当前游戏开发状态
-
-        Returns:
-            包含修复结果的状态更新
-        """
         self.log_action("debugger_execute")
 
-        fix_result = await self.fix(state)
+        error_log = kwargs.get("error_log", state.get("error_log", []))
+        fix_result = await self.analyze_and_fix(state, error_log)
 
         return {
-            "fix_history": state.get("fix_history", []) + [fix_result],
-            "fix_attempts": state.get("fix_attempts", 0) + 1,
+            **fix_result,
             "current_phase": "fix_applied",
+            "error_log": [],
         }
 
-    async def fix(self, state: GameDevState) -> Dict[str, Any]:
+    async def analyze_and_fix(self, state: GameDevState, error_log: List[str]) -> Dict[str, Any]:
         """分析错误并生成修复方案
 
         Args:
             state: 当前游戏开发状态
+            error_log: 错误日志列表
 
         Returns:
             修复结果
         """
         self.log_action("analyze_and_fix")
 
-        # 获取错误信息
-        test_report = state.get("test_report", {})
-        error_log = state.get("error_log", [])
-
-        if not test_report and not error_log:
+        if not error_log:
             return {
-                "success": False,
-                "error_type": "unknown",
-                "error_message": "No error information available",
-                "fix_description": "无法分析错误",
-                "fix_code": "",
+                "fix_history": state.get("fix_history", []),
+                "fix_attempts": state.get("fix_attempts", 0),
             }
 
-        # TODO: 实现基于LLM的错误分析和修复
-        # 这里先返回示例修复结果
-        return {
-            "success": True,
-            "error_type": "NullReferenceException",
-            "error_message": "Object reference not set to an instance of an object",
-            "file_path": "Assets/Scripts/Player/PlayerController.cs",
-            "line_number": 25,
-            "fix_description": "添加空引用检查",
-            "fix_code": "if (_rb == null) return;",
-            "confidence": 0.9,
+        # 收集当前代码上下文
+        code_generated = state.get("code_generated", {})
+        code_context = ""
+        for path, content in code_generated.items():
+            if path.endswith(".cs"):
+                code_context += f"\n### {path}\n```csharp\n{content}\n```\n"
+
+        error_text = "\n".join(error_log)
+
+        system_prompt = self.get_prompt_template("debugger_system")
+        user_prompt = f"""请分析以下错误并生成修复方案。
+
+## 错误信息
+```
+{error_text}
+```
+
+## 相关代码
+{code_context}
+
+请以JSON格式输出修复方案：
+{{
+    "error_type": "错误类型",
+    "error_message": "错误描述",
+    "root_cause": "根本原因分析",
+    "fixes": [
+        {{
+            "file": "需要修改的文件路径",
+            "description": "修复描述",
+            "changes": [
+                {{
+                    "type": "replace|insert|delete",
+                    "old_code": "原代码（replace时需要）",
+                    "new_code": "新代码",
+                    "line": 0
+                }}
+            ]
+        }}
+    ],
+    "confidence": 0.9,
+    "requires_human_review": false
+}}"""
+
+        try:
+            result = self.llm.chat_json(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.llm_config.get("temperature", 0.2),
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+
+            if result.get("parse_error"):
+                self.log_error("debugger_parse_error")
+                return self._fallback_fix(state, error_log)
+
+            # 应用修复
+            fix_record = {
+                "error_type": result.get("error_type", "unknown"),
+                "error_message": result.get("error_message", ""),
+                "root_cause": result.get("root_cause", ""),
+                "fixes_applied": result.get("fixes", []),
+                "confidence": result.get("confidence", 0.5),
+                "success": True,
+            }
+
+            fix_history = state.get("fix_history", []) + [fix_record]
+
+            return {
+                "fix_history": fix_history,
+                "fix_attempts": state.get("fix_attempts", 0) + 1,
+            }
+
+        except Exception as e:
+            self.log_error("debugger_llm_error", {"error": str(e)})
+            return self._fallback_fix(state, error_log)
+
+    def _fallback_fix(self, state: GameDevState, error_log: List[str]) -> Dict[str, Any]:
+        """LLM调用失败时的回退修复"""
+        error_text = " ".join(error_log)
+
+        fix_record = {
+            "error_type": "unknown",
+            "error_message": error_text[:200],
+            "fix_description": "自动修复失败，需要人工介入",
+            "success": False,
         }
 
+        return {
+            "fix_history": state.get("fix_history", []) + [fix_record],
+            "fix_attempts": state.get("fix_attempts", 0) + 1,
+        }
+
+    async def fix(self, state: GameDevState) -> Dict[str, Any]:
+        """兼容旧接口"""
+        error_log = state.get("error_log", [])
+        return await self.analyze_and_fix(state, error_log)
+
     def analyze_error(self, error_message: str, stack_trace: str = "") -> Dict[str, Any]:
-        """分析错误信息
-
-        Args:
-            error_message: 错误信息
-            stack_trace: 堆栈跟踪
-
-        Returns:
-            错误分析结果
-        """
-        # 常见错误模式匹配
         error_patterns = {
             "NullReferenceException": {
                 "type": "null_reference",
@@ -114,11 +168,7 @@ class DebuggerAgent(BaseAgent):
 
         for pattern, info in error_patterns.items():
             if pattern in error_message:
-                return {
-                    "error_type": pattern,
-                    "analysis": info,
-                    "auto_fixable": True,
-                }
+                return {"error_type": pattern, "analysis": info, "auto_fixable": True}
 
         return {
             "error_type": "unknown",

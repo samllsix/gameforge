@@ -61,17 +61,23 @@ class TestCodeGeneratorAgent:
     def test_generate_collision_code(self, sample_config):
         agent = CodeGeneratorAgent(sample_config)
         artifacts = agent._generate_collision_code("unity")
-        assert artifacts == []
+        assert len(artifacts) == 1
+        assert "CollisionHandler" in artifacts[0]["content"]
+        assert artifacts[0]["language"] == "csharp"
 
     def test_generate_score_code(self, sample_config):
         agent = CodeGeneratorAgent(sample_config)
         artifacts = agent._generate_score_code("unity")
-        assert artifacts == []
+        assert len(artifacts) == 1
+        assert "ScoreManager" in artifacts[0]["content"]
+        assert artifacts[0]["language"] == "csharp"
 
     def test_generate_generic_code(self, sample_config):
         agent = CodeGeneratorAgent(sample_config)
         artifacts = agent._generate_generic_code("UnknownTask", "unity")
-        assert artifacts == []
+        assert len(artifacts) == 1
+        assert "UnknownTask" in artifacts[0]["content"]
+        assert artifacts[0]["language"] == "csharp"
 
     @pytest.mark.asyncio
     async def test_generate_player_task(self, sample_config, sample_game_state):

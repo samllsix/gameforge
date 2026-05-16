@@ -3,9 +3,11 @@
 负责将游戏策划文档解析为开发任务。
 """
 
+import json
 from typing import Any, Dict, List
 from src.agents.base import BaseAgent
 from src.core.state.game_state import GameDevState, AgentType, TaskType
+from src.utils.llm_client import get_llm_client
 
 
 class PlannerAgent(BaseAgent):
@@ -18,25 +20,11 @@ class PlannerAgent(BaseAgent):
     """
 
     def __init__(self, config: Dict[str, Any]):
-        """初始化规划Agent
-
-        Args:
-            config: 配置信息
-        """
         super().__init__(AgentType.PLANNER, config)
+        self.llm = get_llm_client(config)
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
-        """执行规划任务
-
-        Args:
-            state: 当前游戏开发状态
-
-        Returns:
-            包含任务计划的状态更新
-        """
         self.log_action("planner_execute")
-
-        # 生成任务计划 — 从 state 中读取需求，而非 kwargs
         task_plan = await self.plan(state)
 
         if not task_plan:
@@ -49,36 +37,72 @@ class PlannerAgent(BaseAgent):
         }
 
     async def plan(self, state: GameDevState) -> List[Dict[str, Any]]:
-        """生成任务计划
-
-        Args:
-            state: 游戏开发状态
-
-        Returns:
-            任务计划列表
-        """
-        # 从状态中获取需求
         requirements = state.get("project_context", {}).get("requirements", "")
         if not requirements:
             requirements = "默认游戏开发任务"
 
-        self.log_action("generate_task_plan", {"requirements": requirements[:100] if len(requirements) > 100 else requirements})
+        self.log_action("generate_task_plan", {"requirements": requirements[:100]})
 
-        # TODO: 实现基于LLM的任务规划
-        # 这里先返回一个示例任务计划
-        task_plan = self._create_sample_task_plan(requirements)
+        engine = state.get("project_context", {}).get("engine", "unity")
 
-        return task_plan
+        system_prompt = self.get_prompt_template("planner_system")
+        user_prompt = f"""请根据以下游戏需求，生成开发任务列表。
+
+游戏引擎: {engine}
+需求描述:
+{requirements}
+
+请严格按照系统提示中的JSON格式输出任务列表。每个任务必须包含 id, name, description, type, priority, dependencies, assigned_agent 字段。
+type 可选值: code, test, art, design
+assigned_agent 可选值: code_generator, test_generator"""
+
+        try:
+            result = self.llm.chat_json(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.llm_config.get("temperature", 0.7),
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+
+            if result.get("parse_error"):
+                self.log_error("llm_response_parse_error", {"raw": str(result.get("raw_response", ""))[:200]})
+                return self._create_sample_task_plan(requirements)
+
+            tasks = result.get("tasks", [])
+            if not tasks:
+                self.log_error("no_tasks_in_response")
+                return self._create_sample_task_plan(requirements)
+
+            # 规范化任务格式
+            normalized = []
+            for i, task in enumerate(tasks):
+                normalized.append({
+                    "id": task.get("id", f"task_{i+1:03d}"),
+                    "name": task.get("name", f"Task {i+1}"),
+                    "description": task.get("description", ""),
+                    "type": task.get("type", TaskType.CODE.value),
+                    "status": "pending",
+                    "priority": self._parse_priority(task.get("priority", "medium")),
+                    "dependencies": task.get("dependencies", []),
+                    "assigned_agent": task.get("assigned_agent", AgentType.CODE_GENERATOR.value),
+                })
+
+            self.log_action("task_plan_generated", {"task_count": len(normalized)})
+            return normalized
+
+        except Exception as e:
+            self.log_error("planner_llm_error", {"error": str(e)})
+            return self._create_sample_task_plan(requirements)
+
+    def _parse_priority(self, priority) -> int:
+        if isinstance(priority, int):
+            return priority
+        mapping = {"high": 1, "medium": 2, "low": 3}
+        return mapping.get(str(priority).lower(), 2)
 
     def _create_sample_task_plan(self, requirements: str) -> List[Dict[str, Any]]:
-        """创建示例任务计划
-
-        Args:
-            requirements: 需求描述
-
-        Returns:
-            示例任务计划
-        """
         return [
             {
                 "id": "task_001",
@@ -143,17 +167,91 @@ class PlannerAgent(BaseAgent):
         ]
 
     def parse_design_document(self, document: str) -> Dict[str, Any]:
-        """解析设计文档
+        """解析游戏策划文档，提取功能模块和依赖关系
 
         Args:
-            document: 设计文档内容
+            document: 策划文档内容
 
         Returns:
-            解析后的结构化数据
+            解析结果，包含features、modules、dependencies
         """
-        # TODO: 实现文档解析逻辑
+        system_prompt = """你是一个游戏策划文档分析专家。请分析策划文档并提取关键信息。
+
+输出JSON格式：
+{
+    "title": "项目名称",
+    "genre": "游戏类型",
+    "features": [
+        {
+            "name": "功能名称",
+            "description": "功能描述",
+            "priority": "high|medium|low",
+            "complexity": "简单|中等|复杂"
+        }
+    ],
+    "modules": [
+        {
+            "name": "模块名称",
+            "description": "模块职责",
+            "dependencies": ["依赖模块1", "依赖模块2"]
+        }
+    ],
+    "dependencies": [
+        {
+            "from": "模块A",
+            "to": "模块B",
+            "type": "requires|uses|extends"
+        }
+    ],
+    "estimated_tasks": 6
+}"""
+
+        user_prompt = f"""请分析以下游戏策划文档：
+
+{document[:3000]}
+
+请提取功能模块、依赖关系，并估算需要的任务数量。以JSON格式输出。"""
+
+        try:
+            result = self.llm.chat_json(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.llm_config.get("temperature", 0.3),
+                max_tokens=self.llm_config.get("max_tokens", 2048),
+            )
+
+            if result.get("parse_error"):
+                self.log_error("parse_design_doc_error")
+                return self._fallback_parse_document(document)
+
+            return {
+                "title": result.get("title", "未命名项目"),
+                "genre": result.get("genre", "unknown"),
+                "features": result.get("features", []),
+                "modules": result.get("modules", []),
+                "dependencies": result.get("dependencies", []),
+                "estimated_tasks": result.get("estimated_tasks", 6),
+            }
+
+        except Exception as e:
+            self.log_error("parse_design_doc_llm_error", {"error": str(e)})
+            return self._fallback_parse_document(document)
+
+    def _fallback_parse_document(self, document: str) -> Dict[str, Any]:
+        """LLM调用失败时的回退解析"""
+        features = []
+        keywords = ["玩家", "角色", "敌人", "关卡", "道具", "UI", "菜单", "音效", "特效", "物理", "碰撞", "计分", "存档"]
+        for kw in keywords:
+            if kw in document:
+                features.append({"name": kw, "description": f"包含{kw}相关功能", "priority": "medium", "complexity": "中等"})
+
         return {
-            "features": [],
-            "modules": [],
+            "title": "未命名项目",
+            "genre": "unknown",
+            "features": features or [{"name": "核心玩法", "description": "游戏核心玩法", "priority": "high", "complexity": "中等"}],
+            "modules": [{"name": "Core", "description": "核心模块", "dependencies": []}],
             "dependencies": [],
+            "estimated_tasks": max(len(features), 3),
         }

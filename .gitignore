@@ -77,3 +77,6 @@ temp/
 
 # Memory
 .memory/
+
+# Claude Code local settings
+.claude/

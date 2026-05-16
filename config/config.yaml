@@ -129,6 +129,13 @@ evaluation:
     - performance
   report_format: html
 
+# Unity Integration
+unity:
+  editor_path: D:/Unity/2022.3.62f3c1/Editor/Unity.exe
+  project_path: D:/Unity/GameForge
+  timeout: 300
+  auto_refresh: true
+
 # Project Templates
 templates:
   unity:

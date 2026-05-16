@@ -31,8 +31,9 @@ class TestBaseAgent:
     def test_get_llm_config_fallback_to_default(self):
         config = {"llm": {"default_model": "gpt-4"}}
         agent = ConcreteAgent(AgentType.DEBUGGER, config)
-        # debugger config not found → falls back to default
-        assert agent.llm_config == "gpt-4"
+        # debugger config not found → falls back to default dict
+        assert agent.llm_config["model"] == "deepseek-chat"
+        assert agent.llm_config["provider"] == "openai"
 
     @pytest.mark.asyncio
     async def test_execute(self, sample_config):

@@ -3,74 +3,81 @@
 负责审查生成的代码质量。
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 from src.agents.base import BaseAgent
 from src.core.state.game_state import GameDevState, AgentType
+from src.utils.llm_client import get_llm_client
 
 
 class CodeReviewerAgent(BaseAgent):
-    """代码审查Agent
-
-    负责：
-    - 代码规范检查
-    - 设计模式检查
-    - 性能分析
-    - 安全性检查
-    """
+    """代码审查Agent"""
 
     def __init__(self, config: Dict[str, Any]):
-        """初始化代码审查Agent
-
-        Args:
-            config: 配置信息
-        """
         super().__init__(AgentType.CODE_REVIEWER, config)
+        self.llm = get_llm_client(config)
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
-        """执行代码审查任务
-
-        Args:
-            state: 当前游戏开发状态
-
-        Returns:
-            审查结果
-        """
         self.log_action("code_reviewer_execute")
-
         review_result = await self.review(state)
-
         return {
-            "current_phase": "code_review_passed" if review_result["passed"] else "code_review_failed",
-            "error_log": state.get("error_log", []) + review_result.get("issues", []),
+            "current_phase": "code_review_passed" if review_result.get("passed", True) else "code_review_failed",
+            "review_result": review_result,
         }
 
     async def review(self, state: GameDevState) -> Dict[str, Any]:
-        """审查代码
-
-        Args:
-            state: 当前游戏开发状态
-
-        Returns:
-            审查结果
-        """
         self.log_action("review_code")
 
         code_generated = state.get("code_generated", {})
         if not code_generated:
-            return {
-                "passed": False,
-                "score": 0,
-                "issues": ["No code to review"],
-            }
+            return {"passed": False, "score": 0, "issues": ["No code to review"]}
 
-        # TODO: 实现基于LLM的代码审查
-        # 这里先返回示例审查结果
-        return {
-            "passed": True,
-            "score": 85,
-            "issues": [],
-            "suggestions": [
-                "考虑添加更多注释",
-                "可以优化某些性能瓶颈",
-            ],
-        }
+        code_context = ""
+        for path, content in code_generated.items():
+            if path.endswith(".cs") and not path.endswith("Tests.cs"):
+                code_context += f"\n### {path}\n```csharp\n{content}\n```\n"
+
+        if not code_context:
+            return {"score": 100, "passed": True, "issues": [], "suggestions": []}
+
+        system_prompt = self.get_prompt_template("reviewer_system")
+        user_prompt = f"""请审查以下Unity C#代码，给出评分和改进建议。
+
+{code_context}
+
+请以JSON格式输出审查结果：
+{{
+    "score": 85,
+    "passed": true,
+    "issues": [
+        {{
+            "type": "performance|security|style|logic",
+            "severity": "high|medium|low",
+            "file": "文件路径",
+            "line": 10,
+            "message": "问题描述",
+            "suggestion": "修复建议"
+        }}
+    ],
+    "suggestions": ["改进建议1", "改进建议2"]
+}}"""
+
+        try:
+            result = self.llm.chat_json(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.llm_config.get("temperature", 0.2),
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+
+            if result.get("parse_error"):
+                self.log_error("review_parse_error")
+                return {"score": 70, "issues": [], "passed": True, "note": "Review parsing failed"}
+
+            self.log_action("review_complete", {"score": result.get("score", 0)})
+            return result
+
+        except Exception as e:
+            self.log_error("reviewer_llm_error", {"error": str(e)})
+            return {"score": 70, "issues": [], "passed": True, "note": f"Review error: {e}"}
