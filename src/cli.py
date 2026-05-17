@@ -185,6 +185,176 @@ def status(ctx):
     click.echo(f"\n日志文件: {logger.get_log_file()}")
 
 
+@cli.command()
+@click.option("--input", "-i", "input_dir", required=True, help="代码目录路径")
+@click.option("--output", "-o", "output_dir", default=None, help="输出目录（默认覆盖原文件）")
+@click.pass_context
+def refactor(ctx, input_dir, output_dir):
+    """重构代码目录中的C#文件"""
+    reset_logger()
+    logger = get_logger(prefix="refactor")
+
+    config = ctx.obj["config"]
+
+    logger.section("GameForge 代码重构")
+    logger.result("输入目录", input_dir)
+
+    from src.agents.refactor import RefactorAgent
+    from src.core.tools import list_files, read_file, write_file
+
+    agent = RefactorAgent(config)
+
+    cs_files = list_files(input_dir, [".cs"])
+    logger.result("找到文件", str(len(cs_files)))
+
+    if not cs_files:
+        logger.warning("未找到C#文件")
+        return
+
+    refactored_count = 0
+    for file_path in cs_files:
+        content = read_file(file_path)
+        if not content:
+            continue
+
+        logger.subsection(f"分析: {file_path}")
+        quality = agent.analyze_code_quality(content)
+        logger.result("质量分数", str(quality["score"]))
+
+        if quality["score"] < 70:
+            logger.result("问题", ", ".join(quality["issues"][:3]))
+
+    logger.section("重构完成")
+    logger.success(f"日志已保存: {logger.get_log_file()}")
+
+
+@cli.command()
+@click.option("--project", "-p", default=None, help="Unity项目路径")
+@click.option("--action", "-a", type=click.Choice(["compile", "refresh", "import"]), default="compile", help="操作类型")
+@click.option("--files", "-f", default=None, help="要导入的文件目录")
+@click.pass_context
+def unity(ctx, project, action, files):
+    """Unity编辑器操作"""
+    reset_logger()
+    logger = get_logger(prefix="unity")
+
+    config = ctx.obj["config"]
+
+    logger.section("GameForge Unity操作")
+
+    from src.engine.unity import UnityEditor
+
+    unity_config = config.get("unity", {})
+    if project:
+        unity_config["unity_project_path"] = project
+
+    editor = UnityEditor(unity_config)
+
+    is_valid, msg = editor.validate()
+    if not is_valid:
+        logger.failure(f"验证失败: {msg}")
+        return
+
+    logger.result("项目路径", editor.project_path)
+
+    if action == "compile":
+        logger.subsection("编译项目")
+        result = editor.compile_project()
+        if result.success:
+            logger.success(f"编译成功 ({result.compile_time:.1f}秒)")
+        else:
+            logger.failure(f"编译失败: {len(result.errors)}个错误")
+            for err in result.errors[:5]:
+                logger.result("错误", err)
+
+    elif action == "refresh":
+        logger.subsection("刷新资源")
+        if editor.refresh_assets():
+            logger.success("资源刷新成功")
+        else:
+            logger.failure("资源刷新失败")
+
+    elif action == "import" and files:
+        logger.subsection("导入文件")
+        from src.core.tools import list_files, read_file
+        file_list = list_files(files, [".cs"])
+        import_files = {}
+        for f in file_list:
+            content = read_file(f)
+            if content:
+                rel_path = f.replace(files, "").lstrip("/\\")
+                import_files[f"Assets/Scripts/{rel_path}"] = content
+
+        result = editor.import_files(import_files)
+        if result.success:
+            logger.success(f"导入成功: {len(result.imported_files)}个文件")
+        else:
+            logger.failure(f"导入失败: {len(result.failed_files)}个文件")
+
+    logger.section("操作完成")
+
+
+@cli.command()
+@click.option("--host", default="0.0.0.0", help="监听地址")
+@click.option("--port", "-p", default=8000, type=int, help="监听端口")
+@click.option("--workers", "-w", default=1, type=int, help="工作进程数")
+@click.pass_context
+def serve(ctx, host, port, workers):
+    """启动API服务器（支持高并发）"""
+    from src.api.main import start_server
+
+    click.echo(f"启动GameForge API服务器...")
+    click.echo(f"  地址: {host}:{port}")
+    click.echo(f"  进程数: {workers}")
+    click.echo(f"  并发限制: 20请求/进程")
+    click.echo(f"  速率限制: 60请求/分钟/IP")
+    click.echo()
+    start_server(host=host, port=port, workers=workers)
+
+
+@cli.command()
+@click.option("--project", "-p", default="default", help="项目名称")
+@click.option("--report", "-r", is_flag=True, help="生成评测报告")
+@click.pass_context
+def eval(ctx, project, report):
+    """运行代码评测"""
+    reset_logger()
+    logger = get_logger(prefix="eval")
+
+    logger.section("GameForge 代码评测")
+
+    from src.eval.metrics import run_evaluation, CodeQualityMetrics
+    from src.core.tools import list_files, read_file
+
+    output_dir = "output"
+    cs_files = list_files(output_dir, [".cs"])
+
+    if not cs_files:
+        logger.warning("未找到代码文件，请先运行 generate 命令")
+        return
+
+    logger.result("找到文件", str(len(cs_files)))
+
+    code_files = {}
+    for f in cs_files:
+        content = read_file(f)
+        if content:
+            code_files[f] = content
+
+    eval_report = run_evaluation(project, code_files=code_files)
+
+    logger.subsection("评测结果")
+    logger.result("总分", f"{eval_report.overall_score:.1f}")
+    for metric in eval_report.metrics:
+        logger.result(metric.name, f"{metric.score:.1f}")
+
+    if report:
+        report_path = eval_report.save()
+        logger.result("报告已保存", report_path)
+
+    logger.section("评测完成")
+
+
 def main():
     """主入口函数"""
     cli(obj={})

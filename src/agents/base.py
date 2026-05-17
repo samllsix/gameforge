@@ -38,7 +38,7 @@ class BaseAgent(ABC):
         llm_models = config.get("llm", {}).get("models", {})
         self.llm_config = llm_models.get(
             self._get_llm_key(),
-            {"provider": "openai", "model": "deepseek-chat", "temperature": 0.7, "max_tokens": 4096}
+            {"provider": "openai", "model": "mimo-v2.5-pro", "temperature": 0.7, "max_tokens": 4096}
         )
 
     def _get_llm_key(self) -> str:

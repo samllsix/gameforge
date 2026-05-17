@@ -32,7 +32,7 @@ class TestBaseAgent:
         config = {"llm": {"default_model": "gpt-4"}}
         agent = ConcreteAgent(AgentType.DEBUGGER, config)
         # debugger config not found → falls back to default dict
-        assert agent.llm_config["model"] == "deepseek-chat"
+        assert agent.llm_config["model"] == "mimo-v2.5-pro"
         assert agent.llm_config["provider"] == "openai"
 
     @pytest.mark.asyncio

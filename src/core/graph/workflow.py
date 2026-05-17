@@ -13,6 +13,7 @@ from src.agents.code_generator import CodeGeneratorAgent
 from src.agents.code_reviewer import CodeReviewerAgent
 from src.agents.test_generator import TestGeneratorAgent
 from src.agents.debugger import DebuggerAgent
+from src.agents.refactor import RefactorAgent
 
 
 class GameDevWorkflow:
@@ -31,6 +32,7 @@ class GameDevWorkflow:
         self.code_reviewer = CodeReviewerAgent(config)
         self.test_generator = TestGeneratorAgent(config)
         self.debugger = DebuggerAgent(config)
+        self.refactor = RefactorAgent(config)
 
         self.workflow = self._build_workflow()
 
@@ -47,6 +49,7 @@ class GameDevWorkflow:
         workflow.add_node("planner", self._planner_node)
         workflow.add_node("code_generator", self._code_generator_node)
         workflow.add_node("code_reviewer", self._code_reviewer_node)
+        workflow.add_node("refactor", self._refactor_node)
         workflow.add_node("test_generator", self._test_generator_node)
         workflow.add_node("orchestrator", self._orchestrator_node)
         workflow.add_node("debugger", self._debugger_node)
@@ -57,7 +60,8 @@ class GameDevWorkflow:
         # 添加边
         workflow.add_edge("planner", "orchestrator")
         workflow.add_edge("code_generator", "code_reviewer")
-        workflow.add_edge("code_reviewer", "test_generator")
+        workflow.add_edge("code_reviewer", "refactor")
+        workflow.add_edge("refactor", "test_generator")
         workflow.add_edge("test_generator", "orchestrator")
         workflow.add_edge("debugger", "code_generator")  # 修复后重新生成
 
@@ -127,6 +131,14 @@ class GameDevWorkflow:
             return {"current_phase": "code_reviewed"}
         except Exception as e:
             return {"error_log": [f"Code reviewer failed: {e}"], "current_phase": "error"}
+
+    async def _refactor_node(self, state: GameDevState) -> Dict[str, Any]:
+        """重构节点 - 分析并优化代码质量"""
+        try:
+            result = await self.refactor.execute(state)
+            return result
+        except Exception as e:
+            return {"error_log": [f"Refactor failed: {e}"], "current_phase": "error"}
 
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """测试生成节点 - 为代码生成测试用例"""

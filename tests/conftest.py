@@ -13,11 +13,19 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 @pytest.fixture(autouse=True)
 def _close_loggers():
-    """每个测试后关闭 GameForgeLogger 的文件句柄（防止 Windows 文件锁）"""
+    """每个测试后关闭所有 GameForgeLogger 的文件句柄（防止 Windows 文件锁）"""
     yield
     try:
+        import logging
         from src.utils.logger import reset_logger
         reset_logger()
+        # 关闭所有 GameForge.* logger 的 handler
+        for name in list(logging.Logger.manager.loggerDict.keys()):
+            if name.startswith("GameForge."):
+                logger = logging.getLogger(name)
+                for handler in logger.handlers[:]:
+                    handler.close()
+                    logger.removeHandler(handler)
     except Exception:
         pass
 

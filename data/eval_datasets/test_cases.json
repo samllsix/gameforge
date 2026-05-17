@@ -1,0 +1,47 @@
+[
+    {
+        "id": "tc_001",
+        "name": "2D平台跳跃游戏",
+        "description": "创建一个基础的2D平台跳跃游戏",
+        "requirements": "玩家角色可以左右移动和跳跃，有平台和障碍物，碰撞检测，计分系统",
+        "expected_features": ["PlayerController", "CollisionHandler", "ScoreManager", "GameManager"],
+        "engine": "unity",
+        "difficulty": "easy"
+    },
+    {
+        "id": "tc_002",
+        "name": "弹幕射击游戏",
+        "description": "创建一个垂直卷轴弹幕射击游戏",
+        "requirements": "玩家飞机移动射击，敌人生成，子弹碰撞，道具系统，Boss战",
+        "expected_features": ["PlayerShip", "EnemySpawner", "BulletSystem", "PowerUpManager", "BossController"],
+        "engine": "unity",
+        "difficulty": "medium"
+    },
+    {
+        "id": "tc_003",
+        "name": "RPG回合制战斗",
+        "description": "创建一个回合制RPG战斗系统",
+        "requirements": "角色属性系统，技能系统，回合制战斗，AI敌人，战斗UI",
+        "expected_features": ["CharacterStats", "SkillSystem", "BattleManager", "EnemyAI", "BattleUI"],
+        "engine": "unity",
+        "difficulty": "hard"
+    },
+    {
+        "id": "tc_004",
+        "name": "塔防游戏",
+        "description": "创建一个基础塔防游戏",
+        "requirements": "敌人路径，防御塔放置，子弹系统，波次管理，经济系统",
+        "expected_features": ["EnemyPath", "TowerPlacement", "BulletSystem", "WaveManager", "EconomySystem"],
+        "engine": "unity",
+        "difficulty": "medium"
+    },
+    {
+        "id": "tc_005",
+        "name": "迷宫探索游戏",
+        "description": "创建一个随机生成的迷宫探索游戏",
+        "requirements": "随机迷宫生成，玩家移动，宝藏收集，出口寻找，计时系统",
+        "expected_features": ["MazeGenerator", "PlayerMovement", "TreasureSystem", "TimerSystem"],
+        "engine": "unity",
+        "difficulty": "medium"
+    }
+]

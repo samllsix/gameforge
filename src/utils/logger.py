@@ -1,11 +1,13 @@
 """GameForge - 日志管理模块
 
 提供统一的日志记录功能，支持控制台输出和文件保存。
+使用线程锁保证单例初始化安全。
 """
 
 import os
 import sys
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -28,19 +30,27 @@ class GameForgeLogger:
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_file = self.log_dir / f"{prefix}_{self.timestamp}.log"
 
-        # 创建logger
-        self.logger = logging.getLogger("GameForge")
+        # 使用唯一logger名称（包含时间戳+随机后缀避免冲突）
+        import random
+        unique_suffix = random.randint(1000, 9999)
+        logger_name = f"GameForge.{self.timestamp}.{unique_suffix}"
+        self.logger = logging.getLogger(logger_name)
         self.logger.setLevel(logging.DEBUG)
+        self.logger.propagate = False  # 防止日志向上传播
 
-        # 清除已有的handler
-        self.logger.handlers.clear()
+        # 清除旧handler
+        for h in self.logger.handlers[:]:
+            h.close()
+            self.logger.removeHandler(h)
 
-        # 添加文件handler
-        file_handler = logging.FileHandler(self.log_file, encoding="utf-8")
+        # 添加文件handler（立即创建文件）
+        file_handler = logging.FileHandler(
+            self.log_file, encoding="utf-8", delay=False
+        )
         file_handler.setLevel(logging.DEBUG)
         file_formatter = logging.Formatter(
             "%(asctime)s [%(levelname)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
         file_handler.setFormatter(file_formatter)
         self.logger.addHandler(file_handler)
@@ -49,8 +59,7 @@ class GameForgeLogger:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)
         console_formatter = logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(message)s",
-            datefmt="%H:%M:%S"
+            "%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"
         )
         console_handler.setFormatter(console_formatter)
         self.logger.addHandler(console_handler)
@@ -102,12 +111,15 @@ class GameForgeLogger:
         return self.log_file
 
 
-# 全局日志实例
+# 全局日志实例（线程安全）
 _logger: Optional[GameForgeLogger] = None
+_logger_lock = threading.Lock()
 
 
-def get_logger(log_dir: str = "logs", prefix: str = "gameforge") -> GameForgeLogger:
-    """获取全局日志实例
+def get_logger(
+    log_dir: str = "logs", prefix: str = "gameforge"
+) -> GameForgeLogger:
+    """获取全局日志实例（线程安全的懒加载）
 
     Args:
         log_dir: 日志目录
@@ -118,11 +130,18 @@ def get_logger(log_dir: str = "logs", prefix: str = "gameforge") -> GameForgeLog
     """
     global _logger
     if _logger is None:
-        _logger = GameForgeLogger(log_dir, prefix)
+        with _logger_lock:
+            if _logger is None:
+                _logger = GameForgeLogger(log_dir, prefix)
     return _logger
 
 
 def reset_logger():
-    """重置日志实例"""
+    """重置日志实例（线程安全，关闭所有handler）"""
     global _logger
-    _logger = None
+    with _logger_lock:
+        if _logger is not None:
+            for handler in _logger.logger.handlers[:]:
+                handler.close()
+                _logger.logger.removeHandler(handler)
+        _logger = None

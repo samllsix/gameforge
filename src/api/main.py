@@ -1,77 +1,194 @@
 """GameForge - API服务器模块
 
-提供RESTful API接口。
+提供RESTful API接口，支持高并发请求处理。
+集成速率限制、并发控制、请求指标、安全防护等中间件。
 """
 
-from fastapi import FastAPI, HTTPException
+import os
+import asyncio
+import yaml
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Dict, Any, List, Optional
 import uvicorn
 
 from src.core.graph.workflow import create_workflow
+from src.core.concurrency import ConcurrencyManager
+from src.api.middleware import (
+    RateLimitMiddleware,
+    ConcurrencyLimitMiddleware,
+    RequestMetricsMiddleware,
+)
+from src.api.security import (
+    InputValidator,
+    SecurityHeadersMiddleware,
+    RequestBodyLimitMiddleware,
+    APIKeyAuthMiddleware,
+    InputValidationMiddleware,
+    get_secure_cors_config,
+    get_audit_logger,
+)
+
+
+def load_config() -> Dict[str, Any]:
+    """加载配置文件"""
+    config_path = os.path.join("config", "config.yaml")
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    return {}
 
 
 # 创建FastAPI应用
 app = FastAPI(
     title="GameForge API",
-    description="游戏研发全流程AI Agent协作平台",
-    version="0.1.0",
+    description="游戏研发全流程AI Agent协作平台 — 支持高并发与安全防护",
+    version="0.3.0",
 )
 
-# 配置CORS
+# ========== 中间件注册（顺序很重要：后注册的先执行） ==========
+
+# 1. 安全头（最外层）
+app.add_middleware(SecurityHeadersMiddleware)
+
+# 2. CORS（限制允许的源）
+cors_config = get_secure_cors_config()
+app.add_middleware(CORSMiddleware, **cors_config)
+
+# 3. 请求体大小限制 (2MB)
+app.add_middleware(RequestBodyLimitMiddleware, max_size_bytes=2_097_152)
+
+# 4. 输入验证（检测注入攻击）
+app.add_middleware(InputValidationMiddleware)
+
+# 5. 请求指标
+app.add_middleware(RequestMetricsMiddleware, log_file="logs/api_metrics.jsonl")
+
+# 6. 并发控制（限制同时处理20个请求）
+app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=20)
+
+# 7. 速率限制（每IP每分钟60个请求）
+app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
+
+# 8. API密钥认证（默认关闭，通过环境变量启用）
+API_KEYS = {}
+if os.getenv("GAMEFORGE_API_KEYS"):
+    # 格式: key1:name1,key2:name2
+    for pair in os.getenv("GAMEFORGE_API_KEYS", "").split(","):
+        if ":" in pair:
+            key, name = pair.split(":", 1)
+            API_KEYS[key.strip()] = name.strip()
+
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    APIKeyAuthMiddleware,
+    api_keys=API_KEYS,
+    enabled=bool(API_KEYS),
 )
 
 
-# 请求/响应模型
+# ========== 请求/响应模型（带输入验证） ==========
+
+
 class GenerateRequest(BaseModel):
     """代码生成请求"""
+
     requirements: str
     engine: str = "unity"
     project_name: str = "GameForge Project"
 
+    @field_validator("requirements")
+    @classmethod
+    def validate_requirements(cls, v):
+        result = InputValidator.validate_requirements(v)
+        if not result["valid"]:
+            raise ValueError(result["error"])
+        return result["sanitized"]
+
+    @field_validator("engine")
+    @classmethod
+    def validate_engine(cls, v):
+        result = InputValidator.validate_engine(v)
+        if not result["valid"]:
+            raise ValueError(result["error"])
+        return v.lower()
+
+    @field_validator("project_name")
+    @classmethod
+    def validate_project_name(cls, v):
+        result = InputValidator.validate_project_name(v)
+        if not result["valid"]:
+            raise ValueError(result["error"])
+        return v
+
 
 class GenerateResponse(BaseModel):
     """代码生成响应"""
+
     success: bool
-    code_generated: Dict[str, str]
-    task_count: int
-    fix_count: int
+    task_id: Optional[str] = None
+    code_generated: Dict[str, str] = {}
+    task_count: int = 0
+    fix_count: int = 0
+    message: str = ""
 
 
 class TaskPlanRequest(BaseModel):
     """任务规划请求"""
+
     requirements: str
+
+    @field_validator("requirements")
+    @classmethod
+    def validate_requirements(cls, v):
+        result = InputValidator.validate_requirements(v)
+        if not result["valid"]:
+            raise ValueError(result["error"])
+        return result["sanitized"]
 
 
 class TaskPlanResponse(BaseModel):
     """任务规划响应"""
-    tasks: List[Dict[str, Any]]
+
+    success: bool
+    task_id: Optional[str] = None
+    tasks: List[Dict[str, Any]] = []
+    message: str = ""
 
 
-# 全局配置
-config = {
-    "app": {
-        "name": "GameForge",
-        "version": "0.1.0",
-        "environment": "development",
-    },
-    "llm": {
-        "default_model": "claude-3-5-sonnet-20241022",
-    },
-    "agents": {
-        "orchestrator": {"max_iterations": 10},
-        "planner": {"max_tasks": 20},
-        "code_generator": {"supported_engines": ["unity", "unreal"]},
-        "debugger": {"max_fix_attempts": 5},
-    },
-}
+class TaskStatusResponse(BaseModel):
+    """任务状态响应"""
+
+    task_id: str
+    status: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+# ========== 初始化 ==========
+
+config = load_config()
+
+
+@app.on_event("startup")
+async def startup():
+    """应用启动时初始化"""
+    await ConcurrencyManager.get_instance(
+        max_concurrent_workflows=5,
+        max_concurrent_llm_calls=10,
+        max_queue_size=100,
+    )
+    audit = get_audit_logger()
+    await audit.log_event(
+        event_type="server_startup",
+        client_ip="system",
+        path="/",
+        method="SYSTEM",
+        details={"version": "0.3.0"},
+    )
+
+
+# ========== API路由 ==========
 
 
 @app.get("/")
@@ -79,40 +196,96 @@ async def root():
     """根路径"""
     return {
         "name": "GameForge API",
-        "version": "0.1.0",
-        "description": "游戏研发全流程AI Agent协作平台",
+        "version": "0.3.0",
+        "description": "游戏研发全流程AI Agent协作平台 — 支持高并发与安全防护",
+        "security": {
+            "rate_limiting": "60 req/min/IP",
+            "concurrency_limit": "20 concurrent",
+            "input_validation": "enabled",
+            "security_headers": "enabled",
+            "api_key_auth": "enabled" if API_KEYS else "disabled",
+        },
     }
 
 
 @app.get("/health")
 async def health_check():
     """健康检查"""
-    return {"status": "healthy"}
+    manager = await ConcurrencyManager.get_instance()
+    stats = manager.get_stats()
+    return {
+        "status": "healthy",
+        "concurrency": stats,
+    }
+
+
+@app.get("/stats")
+async def get_stats():
+    """获取系统统计信息"""
+    manager = await ConcurrencyManager.get_instance()
+    return {
+        "concurrency": manager.get_stats(),
+    }
 
 
 @app.post("/api/v1/generate", response_model=GenerateResponse)
 async def generate_code(request: GenerateRequest):
-    """生成游戏代码
+    """生成游戏代码（异步队列模式）"""
+    manager = await ConcurrencyManager.get_instance()
+    audit = get_audit_logger()
 
-    Args:
-        request: 生成请求
+    await audit.log_event(
+        event_type="generate_request",
+        client_ip="api",
+        path="/api/v1/generate",
+        method="POST",
+        details={"engine": request.engine, "project": request.project_name},
+    )
 
-    Returns:
-        生成结果
-    """
-    try:
-        # 创建工作流
+    async def _run_workflow(payload: Dict[str, Any]) -> Dict[str, Any]:
         workflow = create_workflow(config)
+        return await workflow.run(
+            {
+                "project_context": {
+                    "engine": payload["engine"],
+                    "project_name": payload["project_name"],
+                    "requirements": payload["requirements"],
+                },
+            }
+        )
 
-        # 运行工作流
-        result = await workflow.run({
-            "project_context": {
-                "engine": request.engine,
-                "project_name": request.project_name,
-            },
+    task_id = await manager.submit_task(
+        task_type="workflow",
+        payload={
             "requirements": request.requirements,
-        })
+            "engine": request.engine,
+            "project_name": request.project_name,
+        },
+        handler=_run_workflow,
+        priority=0,
+    )
 
+    return GenerateResponse(
+        success=True,
+        task_id=task_id,
+        message=f"任务已提交，通过 /api/v1/task/{task_id} 查询进度",
+    )
+
+
+@app.post("/api/v1/generate_sync", response_model=GenerateResponse)
+async def generate_code_sync(request: GenerateRequest):
+    """生成游戏代码（同步等待模式）"""
+    try:
+        workflow = create_workflow(config)
+        result = await workflow.run(
+            {
+                "project_context": {
+                    "engine": request.engine,
+                    "project_name": request.project_name,
+                    "requirements": request.requirements,
+                },
+            }
+        )
         return GenerateResponse(
             success=True,
             code_generated=result.get("code_generated", {}),
@@ -125,14 +298,7 @@ async def generate_code(request: GenerateRequest):
 
 @app.post("/api/v1/plan", response_model=TaskPlanResponse)
 async def plan_tasks(request: TaskPlanRequest):
-    """规划任务
-
-    Args:
-        request: 规划请求
-
-    Returns:
-        任务计划
-    """
+    """规划任务"""
     try:
         from src.agents.planner import PlannerAgent
 
@@ -155,10 +321,48 @@ async def plan_tasks(request: TaskPlanRequest):
             "error_log": [],
         }
         tasks = await planner.plan(state)
-
-        return TaskPlanResponse(tasks=tasks)
+        return TaskPlanResponse(success=True, tasks=tasks)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/task/{task_id}", response_model=TaskStatusResponse)
+async def get_task_status(task_id: str):
+    """查询任务状态"""
+    # 验证task_id格式（防止注入）
+    if not task_id.isalnum() or len(task_id) > 20:
+        raise HTTPException(status_code=400, detail="无效的任务ID格式")
+
+    manager = await ConcurrencyManager.get_instance()
+    task = await manager.get_task_status(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
+
+    return TaskStatusResponse(
+        task_id=task.task_id,
+        status=task.status.value,
+        result=task.result,
+        error=task.error,
+    )
+
+
+@app.post("/api/v1/task/{task_id}/wait")
+async def wait_for_task(task_id: str, timeout: int = 300):
+    """等待任务完成"""
+    if not task_id.isalnum() or len(task_id) > 20:
+        raise HTTPException(status_code=400, detail="无效的任务ID格式")
+
+    manager = await ConcurrencyManager.get_instance()
+    task = await manager.wait_for_task(task_id, timeout=min(timeout, 600))
+    if not task:
+        raise HTTPException(status_code=408, detail="等待超时")
+
+    return TaskStatusResponse(
+        task_id=task.task_id,
+        status=task.status.value,
+        result=task.result,
+        error=task.error,
+    )
 
 
 @app.get("/api/v1/agents")
@@ -177,14 +381,42 @@ async def list_agents():
     }
 
 
-def start_server(host: str = "0.0.0.0", port: int = 8000):
-    """启动服务器
+@app.get("/security/test")
+async def security_test():
+    """安全功能测试端点"""
+    return {
+        "security_features": {
+            "input_validation": {
+                "prompt_injection_detection": "enabled",
+                "path_traversal_detection": "enabled",
+                "sql_injection_detection": "enabled",
+                "filename_sanitization": "enabled",
+            },
+            "middleware_stack": [
+                "SecurityHeadersMiddleware",
+                "CORSMiddleware (restricted origins)",
+                "RequestBodyLimitMiddleware (2MB)",
+                "InputValidationMiddleware",
+                "RequestMetricsMiddleware",
+                "ConcurrencyLimitMiddleware (20)",
+                "RateLimitMiddleware (60/min/IP)",
+                "APIKeyAuthMiddleware",
+            ],
+            "audit_logging": "enabled (logs/security/)",
+            "api_key_auth": "enabled" if API_KEYS else "disabled (set GAMEFORGE_API_KEYS to enable)",
+        }
+    }
 
-    Args:
-        host: 主机地址
-        port: 端口号
-    """
-    uvicorn.run(app, host=host, port=port)
+
+def start_server(host: str = "0.0.0.0", port: int = 8000, workers: int = 1):
+    """启动服务器"""
+    uvicorn.run(
+        "src.api.main:app",
+        host=host,
+        port=port,
+        workers=workers,
+        log_level="info",
+    )
 
 
 if __name__ == "__main__":
