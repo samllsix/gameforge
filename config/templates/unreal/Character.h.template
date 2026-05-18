@@ -1,0 +1,28 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Character.h"
+#include "{{CLASS_NAME}}.generated.h"
+
+/**
+ * {{DESCRIPTION}}
+ */
+UCLASS()
+class {{API_MACRO}} A{{CLASS_NAME}} : public ACharacter
+{
+	GENERATED_BODY()
+
+public:
+	A{{CLASS_NAME}}();
+
+protected:
+	virtual void BeginPlay() override;
+	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+
+public:
+	virtual void Tick(float DeltaTime) override;
+
+private:
+	void MoveForward(float Value);
+	void MoveRight(float Value);
+};

@@ -51,3 +51,16 @@ def get_sandbox(config: Dict[str, Any]):
     """
     from src.engine.sandbox import SandboxExecutor
     return SandboxExecutor(config)
+
+
+def create_editor(engine_type: str, config: Dict[str, Any]):
+    """创建引擎编辑器实例（别名）
+
+    Args:
+        engine_type: 引擎类型 (unity/unreal)
+        config: 配置字典
+
+    Returns:
+        引擎编辑器实例
+    """
+    return get_engine_editor(engine_type, config)

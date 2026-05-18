@@ -1,0 +1,22 @@
+using UnityEngine;
+using UnityEditor;
+
+/// <summary>
+/// {{DESCRIPTION}}
+/// </summary>
+public class {{CLASS_NAME}} : EditorWindow
+{
+    [MenuItem("GameForge/{{MENU_NAME}}")]
+    public static void ShowWindow()
+    {
+        GetWindow<{{CLASS_NAME}}>("{{WINDOW_TITLE}}");
+    }
+
+    private void OnGUI()
+    {
+        GUILayout.Label("{{WINDOW_TITLE}}", EditorStyles.boldLabel);
+        EditorGUILayout.Space();
+
+        // 编辑器UI
+    }
+}

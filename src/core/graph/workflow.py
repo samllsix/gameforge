@@ -3,10 +3,11 @@
 基于LangGraph的状态图定义，管理游戏开发全流程。
 """
 
+import asyncio
 from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, END
 
-from src.core.state.game_state import GameDevState, TaskStatus, AgentType
+from src.core.state.game_state import GameDevState, TaskStatus, TaskType, AgentType
 from src.agents.orchestrator import OrchestratorAgent
 from src.agents.planner import PlannerAgent
 from src.agents.code_generator import CodeGeneratorAgent
@@ -159,7 +160,7 @@ class GameDevWorkflow:
             return {"error_log": [f"Test generator failed: {e}"], "current_phase": "error"}
 
     async def _orchestrator_node(self, state: GameDevState) -> Dict[str, Any]:
-        """编排节点 - 调度下一个任务"""
+        """编排节点 - 调度下一个任务（支持并行）"""
         try:
             task_plan = state.get("task_plan", [])
             fix_attempts = state.get("fix_attempts", 0)
@@ -172,23 +173,14 @@ class GameDevWorkflow:
                     "fix_attempts": fix_attempts + 1,
                 }
 
-            next_task = None
-            for task in task_plan:
-                if task.get("status") == TaskStatus.PENDING.value:
-                    dependencies = task.get("dependencies", [])
-                    all_deps_met = all(
-                        self._is_task_completed(task_plan, dep_id)
-                        for dep_id in dependencies
-                    )
-                    if all_deps_met:
-                        next_task = task
-                        break
-
-            if not next_task:
+            ready_tasks = self._get_all_ready_tasks(task_plan)
+            if not ready_tasks:
                 return {"current_phase": "workflow_complete", "is_complete": True}
 
+            ready_ids = [t.get("id") for t in ready_tasks]
             return {
-                "current_task_id": next_task.get("id"),
+                "current_task_id": ready_tasks[0].get("id"),
+                "ready_task_ids": ready_ids,
                 "current_phase": "task_assigned",
             }
         except Exception as e:
@@ -246,6 +238,116 @@ class GameDevWorkflow:
                 return task.get("status") == TaskStatus.COMPLETED.value
         return False
 
+    def _get_all_ready_tasks(self, task_plan: List[Dict]) -> List[Dict]:
+        """获取所有依赖已满足的待执行任务"""
+        ready = []
+        for task in task_plan:
+            if task.get("status") != TaskStatus.PENDING.value:
+                continue
+            dependencies = task.get("dependencies", [])
+            all_deps_met = all(
+                self._is_task_completed(task_plan, dep_id)
+                for dep_id in dependencies
+            )
+            if all_deps_met:
+                ready.append(task)
+        return ready
+
+    async def _execute_tasks_parallel(self, state: GameDevState, tasks: List[Dict]) -> Dict[str, Any]:
+        """并行执行多个独立任务"""
+        async def _process_single_task(task):
+            task_type = task.get("type", "code")
+            if task_type == TaskType.TEST.value:
+                return await self.test_generator.generate(state), task, "test"
+            else:
+                return await self.code_generator.generate(state, task), task, "code"
+
+        results = await asyncio.gather(
+            *[_process_single_task(t) for t in tasks],
+            return_exceptions=True,
+        )
+
+        merged_code = dict(state.get("code_generated", {}))
+        merged_artifacts = list(state.get("code_artifacts", []))
+        updated_plan = [dict(t) for t in state.get("task_plan", [])]
+
+        errors = []
+        for result in results:
+            if isinstance(result, Exception):
+                errors.append(str(result))
+                continue
+
+            artifacts, task, _ = result
+            if isinstance(artifacts, list):
+                for art in artifacts:
+                    merged_code[art["file_path"]] = art["content"]
+                    merged_artifacts.append(art)
+            elif isinstance(artifacts, dict):
+                merged_code.update(artifacts)
+
+            for t in updated_plan:
+                if t.get("id") == task.get("id"):
+                    t["status"] = TaskStatus.COMPLETED.value
+                    break
+
+        return {
+            "code_generated": merged_code,
+            "code_artifacts": merged_artifacts,
+            "task_plan": updated_plan,
+            "current_phase": "code_generated",
+            "error_log": errors if errors else [],
+        }
+
+    async def _run_with_parallel_support(self, state: GameDevState) -> GameDevState:
+        """运行工作流（支持并行任务执行）"""
+        # Phase 1: 规划
+        plan_result = await self._planner_node(state)
+        state.update(plan_result)
+
+        max_iterations = self.config.get("agents", {}).get("orchestrator", {}).get("max_iterations", 10)
+
+        for _ in range(max_iterations):
+            # 编排器决定下一步
+            orch_result = await self._orchestrator_node(state)
+            state.update(orch_result)
+
+            if state.get("is_complete") or state.get("current_phase") == "workflow_complete":
+                break
+
+            if state.get("current_phase") in ("error", "needs_fix"):
+                debug_result = await self._debugger_node(state)
+                state.update(debug_result)
+                continue
+
+            ready_ids = state.get("ready_task_ids", [])
+            task_plan = state.get("task_plan", [])
+            ready_tasks = [t for t in task_plan if t.get("id") in ready_ids]
+
+            if len(ready_tasks) > 1:
+                # 多个独立任务 → 并行执行
+                parallel_result = await self._execute_tasks_parallel(state, ready_tasks)
+                state.update(parallel_result)
+            elif ready_tasks:
+                # 单个任务 → 完整流水线
+                task = ready_tasks[0]
+                state["current_task_id"] = task.get("id")
+
+                gen_result = await self._code_generator_node(state)
+                state.update(gen_result)
+
+                review_result = await self._code_reviewer_node(state)
+                state.update(review_result)
+
+                refactor_result = await self._refactor_node(state)
+                state.update(refactor_result)
+
+                test_result = await self._test_generator_node(state)
+                state.update(test_result)
+            else:
+                break
+
+        return state
+
     async def run(self, input_state: Dict[str, Any]) -> Dict[str, Any]:
         """运行工作流
 
@@ -255,10 +357,10 @@ class GameDevWorkflow:
         Returns:
             最终状态
         """
-        # 初始化状态
         initial_state: GameDevState = {
             "task_plan": [],
             "current_task_id": None,
+            "ready_task_ids": None,
             "code_generated": {},
             "code_artifacts": [],
             "test_results": None,
@@ -272,8 +374,7 @@ class GameDevWorkflow:
             "error_log": [],
         }
 
-        # 运行工作流
-        final_state = await self.workflow.ainvoke(initial_state)
+        final_state = await self._run_with_parallel_support(initial_state)
         return final_state
 
 

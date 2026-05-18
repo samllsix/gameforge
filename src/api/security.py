@@ -184,7 +184,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "X-Frame-Options": "DENY",
         "X-XSS-Protection": "1; mode=block",
         "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+        "Content-Security-Policy": "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data:;",
         "Referrer-Policy": "strict-origin-when-cross-origin",
         "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
         "Cache-Control": "no-store, no-cache, must-revalidate",
@@ -392,7 +392,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 class InputValidationMiddleware(BaseHTTPMiddleware):
     """输入验证中间件 — 自动检测并拦截恶意请求"""
 
-    SKIP_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/stats"}
+    SKIP_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/stats", "/app"}
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path in self.SKIP_PATHS:

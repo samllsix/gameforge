@@ -1,0 +1,10 @@
+#include "{{CLASS_NAME}}.h"
+
+A{{CLASS_NAME}}::A{{CLASS_NAME}}()
+{
+}
+
+void A{{CLASS_NAME}}::BeginPlay()
+{
+	Super::BeginPlay();
+}

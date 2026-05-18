@@ -87,6 +87,27 @@ app.add_middleware(
 )
 
 
+# ========== 静态文件和前端 ==========
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+_static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+
+@app.get("/app")
+async def serve_frontend():
+    """前端页面"""
+    return FileResponse(os.path.join(_static_dir, "index.html"))
+
+
+# 挂载额外路由模块
+from src.api.routes import router as routes_router
+app.include_router(routes_router, prefix="/api/v1/ext", tags=["extended"])
+
+
 # ========== 请求/响应模型（带输入验证） ==========
 
 
@@ -173,6 +194,10 @@ config = load_config()
 @app.on_event("startup")
 async def startup():
     """应用启动时初始化"""
+    # 初始化数据库
+    from src.db.session import init_db
+    init_db()
+
     await ConcurrencyManager.get_instance(
         max_concurrent_workflows=5,
         max_concurrent_llm_calls=10,
@@ -184,7 +209,7 @@ async def startup():
         client_ip="system",
         path="/",
         method="SYSTEM",
-        details={"version": "0.3.0"},
+        details={"version": "0.4.0"},
     )
 
 
@@ -244,7 +269,7 @@ async def generate_code(request: GenerateRequest):
 
     async def _run_workflow(payload: Dict[str, Any]) -> Dict[str, Any]:
         workflow = create_workflow(config)
-        return await workflow.run(
+        result = await workflow.run(
             {
                 "project_context": {
                     "engine": payload["engine"],
@@ -253,17 +278,41 @@ async def generate_code(request: GenerateRequest):
                 },
             }
         )
+        # 持久化生成历史
+        try:
+            from src.db.session import get_db, _engine
+            from src.db.models import GenerationHistory
+            if _engine is not None:
+                db = get_db()
+                try:
+                    history = GenerationHistory(
+                        task_id=payload.get("task_id", ""),
+                        engine=payload.get("engine", "unity"),
+                        requirements=payload.get("requirements", ""),
+                        files_generated=result.get("code_generated", {}),
+                        task_count=len(result.get("task_plan", [])),
+                        fix_count=len(result.get("fix_history", [])),
+                    )
+                    db.add(history)
+                    db.commit()
+                finally:
+                    db.close()
+        except Exception:
+            pass
+        return result
 
+    payload = {
+        "requirements": request.requirements,
+        "engine": request.engine,
+        "project_name": request.project_name,
+    }
     task_id = await manager.submit_task(
         task_type="workflow",
-        payload={
-            "requirements": request.requirements,
-            "engine": request.engine,
-            "project_name": request.project_name,
-        },
+        payload=payload,
         handler=_run_workflow,
         priority=0,
     )
+    payload["task_id"] = task_id
 
     return GenerateResponse(
         success=True,
@@ -406,6 +455,45 @@ async def security_test():
             "api_key_auth": "enabled" if API_KEYS else "disabled (set GAMEFORGE_API_KEYS to enable)",
         }
     }
+
+
+@app.get("/api/v1/tasks")
+async def list_tasks(limit: int = 50, status: Optional[str] = None):
+    """获取任务历史列表"""
+    from src.db.session import get_db
+    from src.db.models import TaskRecord
+
+    db = get_db()
+    try:
+        query = db.query(TaskRecord).order_by(TaskRecord.created_at.desc())
+        if status:
+            query = query.filter(TaskRecord.status == status)
+        records = query.limit(min(limit, 200)).all()
+        return {
+            "tasks": [r.to_dict() for r in records],
+            "total": len(records),
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/history")
+async def get_generation_history(limit: int = 20):
+    """获取代码生成历史"""
+    from src.db.session import get_db
+    from src.db.models import GenerationHistory
+
+    db = get_db()
+    try:
+        records = db.query(GenerationHistory).order_by(
+            GenerationHistory.created_at.desc()
+        ).limit(min(limit, 100)).all()
+        return {
+            "history": [r.to_dict() for r in records],
+            "total": len(records),
+        }
+    finally:
+        db.close()
 
 
 def start_server(host: str = "0.0.0.0", port: int = 8000, workers: int = 1):

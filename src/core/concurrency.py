@@ -83,6 +83,36 @@ class ConcurrencyManager:
                     cls._instance = cls(**kwargs)
         return cls._instance
 
+    def _persist_task(self, task: QueuedTask):
+        """持久化任务状态到数据库（非阻塞）"""
+        try:
+            from src.db.session import _engine
+            if _engine is None:
+                return
+            from src.db.session import get_db
+            from src.db.models import TaskRecord
+            db = get_db()
+            try:
+                record = db.query(TaskRecord).filter(TaskRecord.id == task.task_id).first()
+                if not record:
+                    record = TaskRecord(
+                        id=task.task_id,
+                        task_type=task.task_type,
+                        payload=task.payload,
+                        priority=task.priority,
+                    )
+                    db.add(record)
+                record.status = task.status.value
+                record.result = task.result
+                record.error = task.error
+                record.started_at = datetime.fromtimestamp(task.started_at) if task.started_at else None
+                record.completed_at = datetime.fromtimestamp(task.completed_at) if task.completed_at else None
+                db.commit()
+            finally:
+                db.close()
+        except Exception:
+            pass
+
     async def submit_task(
         self,
         task_type: str,
@@ -110,6 +140,7 @@ class ConcurrencyManager:
         )
         self.active_tasks[task_id] = queued_task
         self.stats["total_submitted"] += 1
+        self._persist_task(queued_task)
 
         # 放入优先级队列
         await self.task_queue.put((priority, time.time(), task_id, handler))
@@ -146,6 +177,7 @@ class ConcurrencyManager:
                 async with self.workflow_semaphore:
                     task.status = TaskStatus.RUNNING
                     task.started_at = time.time()
+                    self._persist_task(task)
                     logger.info("task_started", task_id=task_id)
 
                     try:
@@ -165,6 +197,7 @@ class ConcurrencyManager:
                         logger.error("task_failed", task_id=task_id, error=str(e))
                     finally:
                         task.completed_at = time.time()
+                        self._persist_task(task)
         finally:
             self._processor_running = False
 

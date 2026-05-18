@@ -1,0 +1,47 @@
+#include "{{CLASS_NAME}}.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "Camera/CameraComponent.h"
+
+A{{CLASS_NAME}}::A{{CLASS_NAME}}()
+{
+	PrimaryActorTick.bCanEverTick = true;
+}
+
+void A{{CLASS_NAME}}::BeginPlay()
+{
+	Super::BeginPlay();
+}
+
+void A{{CLASS_NAME}}::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+}
+
+void A{{CLASS_NAME}}::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+	Super::SetupPlayerInputComponent(PlayerInputComponent);
+	PlayerInputComponent->BindAxis("MoveForward", this, &A{{CLASS_NAME}}::MoveForward);
+	PlayerInputComponent->BindAxis("MoveRight", this, &A{{CLASS_NAME}}::MoveRight);
+}
+
+void A{{CLASS_NAME}}::MoveForward(float Value)
+{
+	if (Value != 0.0f)
+	{
+		const FRotator Rotation = Controller->GetControlRotation();
+		const FRotator YawRotation(0, Rotation.Yaw, 0);
+		const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+		AddMovementInput(Direction, Value);
+	}
+}
+
+void A{{CLASS_NAME}}::MoveRight(float Value)
+{
+	if (Value != 0.0f)
+	{
+		const FRotator Rotation = Controller->GetControlRotation();
+		const FRotator YawRotation(0, Rotation.Yaw, 0);
+		const FVector Direction = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+		AddMovementInput(Direction, Value);
+	}
+}

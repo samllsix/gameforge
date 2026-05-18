@@ -1,0 +1,16 @@
+#include "{{CLASS_NAME}}.h"
+
+A{{CLASS_NAME}}::A{{CLASS_NAME}}()
+{
+	PrimaryActorTick.bCanEverTick = true;
+}
+
+void A{{CLASS_NAME}}::BeginPlay()
+{
+	Super::BeginPlay();
+}
+
+void A{{CLASS_NAME}}::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+}

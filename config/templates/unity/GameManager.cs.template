@@ -1,0 +1,51 @@
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+/// <summary>
+/// 游戏管理器 - 全局单例
+/// </summary>
+public class {{CLASS_NAME}} : MonoBehaviour
+{
+    public static {{CLASS_NAME}} Instance { get; private set; }
+
+    [Header("Game Settings")]
+    [SerializeField] private int _maxLives = 3;
+
+    public int Score { get; private set; }
+    public int Lives { get; private set; }
+    public bool IsGameOver { get; private set; }
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        Instance = this;
+        DontDestroyOnLoad(gameObject);
+        Lives = _maxLives;
+    }
+
+    public void AddScore(int points)
+    {
+        Score += points;
+    }
+
+    public void LoseLife()
+    {
+        Lives--;
+        if (Lives <= 0)
+        {
+            IsGameOver = true;
+        }
+    }
+
+    public void RestartGame()
+    {
+        Score = 0;
+        Lives = _maxLives;
+        IsGameOver = false;
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+    }
+}

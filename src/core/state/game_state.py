@@ -118,6 +118,7 @@ class GameDevState(TypedDict):
     current_phase: str
     is_complete: bool
     requires_human_input: bool
+    ready_task_ids: Optional[List[str]]
 
     # 上下文信息
     project_context: Dict[str, Any]

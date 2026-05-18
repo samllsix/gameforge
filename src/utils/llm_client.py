@@ -7,12 +7,84 @@
 import os
 import json
 import re
+import time
+import random
 import asyncio
 from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from enum import Enum
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 load_dotenv()
+
+
+class CircuitState(str, Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+@dataclass
+class RetryConfig:
+    max_retries: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 60.0
+    exponential_base: float = 2.0
+    jitter: bool = True
+
+    def get_delay(self, attempt: int) -> float:
+        delay = min(self.base_delay * (self.exponential_base ** attempt), self.max_delay)
+        if self.jitter:
+            delay = delay * (0.5 + random.random())
+        return delay
+
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 60.0,
+                 half_open_max_calls: int = 3):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.half_open_max_calls = half_open_max_calls
+        self.state = CircuitState.CLOSED
+        self.failure_count = 0
+        self.success_count = 0
+        self.last_failure_time = 0.0
+        self._lock = asyncio.Lock()
+
+    async def can_execute(self) -> bool:
+        async with self._lock:
+            if self.state == CircuitState.CLOSED:
+                return True
+            if self.state == CircuitState.OPEN:
+                if time.time() - self.last_failure_time >= self.recovery_timeout:
+                    self.state = CircuitState.HALF_OPEN
+                    self.success_count = 0
+                    return True
+                return False
+            if self.state == CircuitState.HALF_OPEN:
+                return self.success_count < self.half_open_max_calls
+            return False
+
+    async def record_success(self):
+        async with self._lock:
+            if self.state == CircuitState.HALF_OPEN:
+                self.success_count += 1
+                if self.success_count >= self.half_open_max_calls:
+                    self.state = CircuitState.CLOSED
+                    self.failure_count = 0
+            else:
+                self.failure_count = 0
+
+    async def record_failure(self):
+        async with self._lock:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.failure_count >= self.failure_threshold:
+                self.state = CircuitState.OPEN
+
+    def get_state(self) -> str:
+        return self.state.value
 
 
 class LLMClientPool:
@@ -76,6 +148,17 @@ class LLMClient:
         )
         self.api_key = os.getenv("MIMO_API_KEY", "")
 
+        # 重试和熔断配置
+        self.retry_config = RetryConfig(
+            max_retries=llm_config.get("max_retries", 3),
+            base_delay=llm_config.get("base_retry_delay", 1.0),
+            max_delay=llm_config.get("max_retry_delay", 60.0),
+        )
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=llm_config.get("circuit_breaker_threshold", 5),
+            recovery_timeout=llm_config.get("circuit_breaker_recovery", 60.0),
+        )
+
         # 使用同步客户端作为回退（兼容旧调用）
         from openai import OpenAI
 
@@ -100,7 +183,7 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> str:
-        """异步发送聊天请求
+        """异步发送聊天请求（带重试和熔断）
 
         Args:
             messages: 消息列表
@@ -111,14 +194,28 @@ class LLMClient:
         Returns:
             模型回复文本
         """
-        client = await self._get_async_client()
-        response = await client.chat.completions.create(
-            model=model or self.default_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content
+        if not await self.circuit_breaker.can_execute():
+            raise RuntimeError(f"Circuit breaker OPEN for {self.base_url}. Try again later.")
+
+        last_error = None
+        for attempt in range(self.retry_config.max_retries + 1):
+            try:
+                client = await self._get_async_client()
+                response = await client.chat.completions.create(
+                    model=model or self.default_model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                await self.circuit_breaker.record_success()
+                return response.choices[0].message.content
+            except Exception as e:
+                last_error = e
+                await self.circuit_breaker.record_failure()
+                if attempt < self.retry_config.max_retries:
+                    delay = self.retry_config.get_delay(attempt)
+                    await asyncio.sleep(delay)
+        raise last_error
 
     def chat_sync(
         self,
@@ -127,7 +224,7 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> str:
-        """同步发送聊天请求（兼容旧代码）
+        """同步发送聊天请求（带重试，兼容旧代码）
 
         Args:
             messages: 消息列表
@@ -138,13 +235,22 @@ class LLMClient:
         Returns:
             模型回复文本
         """
-        response = self._sync_client.chat.completions.create(
-            model=model or self.default_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.choices[0].message.content
+        last_error = None
+        for attempt in range(self.retry_config.max_retries + 1):
+            try:
+                response = self._sync_client.chat.completions.create(
+                    model=model or self.default_model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                last_error = e
+                if attempt < self.retry_config.max_retries:
+                    delay = self.retry_config.get_delay(attempt)
+                    time.sleep(delay)
+        raise last_error
 
     async def chat_json(
         self,

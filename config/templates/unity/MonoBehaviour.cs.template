@@ -1,0 +1,30 @@
+using UnityEngine;
+
+/// <summary>
+/// {{DESCRIPTION}}
+/// </summary>
+public class {{CLASS_NAME}} : MonoBehaviour
+{
+    [Header("Settings")]
+    [SerializeField] private float _speed = 5f;
+
+    private void Awake()
+    {
+        // 初始化
+    }
+
+    private void Start()
+    {
+        // 启动逻辑
+    }
+
+    private void Update()
+    {
+        // 每帧更新
+    }
+
+    private void FixedUpdate()
+    {
+        // 物理更新
+    }
+}

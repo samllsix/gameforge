@@ -1,0 +1,17 @@
+using UnityEngine;
+
+/// <summary>
+/// {{DESCRIPTION}}
+/// </summary>
+[CreateAssetMenu(fileName = "{{FILE_NAME}}", menuName = "{{MENU_PATH}}")]
+public class {{CLASS_NAME}} : ScriptableObject
+{
+    [Header("Settings")]
+    [SerializeField] private string _displayName;
+    [SerializeField] private string _description;
+    [SerializeField] private Sprite _icon;
+
+    public string DisplayName => _displayName;
+    public string Description => _description;
+    public Sprite Icon => _icon;
+}

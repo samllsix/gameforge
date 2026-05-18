@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GameForge - AI游戏开发平台</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>GameForge</h1>
+            <span class="subtitle">AI游戏研发全流程协作平台</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- 输入区域 -->
+        <section class="card input-section">
+            <h2>创建游戏项目</h2>
+            <div class="form-group">
+                <label for="requirements">游戏需求描述</label>
+                <textarea id="requirements" rows="4" placeholder="描述你想要的游戏，例如：创建一个2D平台跳跃游戏，玩家可以左右移动和跳跃，有计分系统..."></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="engine">游戏引擎</label>
+                    <select id="engine">
+                        <option value="unity">Unity</option>
+                        <option value="unreal">Unreal Engine</option>
+                        <option value="godot">Godot</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="projectName">项目名称</label>
+                    <input type="text" id="projectName" value="GameForge Project" placeholder="项目名称">
+                </div>
+            </div>
+            <button id="submitBtn" onclick="submitTask()">开始生成</button>
+        </section>
+
+        <!-- 任务状态 -->
+        <section class="card status-section" id="statusSection" style="display:none">
+            <h2>任务状态</h2>
+            <div class="status-bar">
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="dot"></span>
+                    <span id="statusText">等待中...</span>
+                </div>
+                <span id="taskId" class="task-id"></span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+        </section>
+
+        <!-- 结果展示 -->
+        <section class="card result-section" id="resultSection" style="display:none">
+            <h2>生成结果</h2>
+            <div class="result-stats" id="resultStats"></div>
+            <div class="code-tabs" id="codeTabs"></div>
+            <div class="code-display">
+                <pre><code id="codeContent"></code></pre>
+            </div>
+        </section>
+
+        <!-- 历史记录 -->
+        <section class="card history-section">
+            <div class="section-header">
+                <h2>历史记录</h2>
+                <button class="btn-secondary" onclick="loadHistory()">刷新</button>
+            </div>
+            <div id="historyList" class="history-list">
+                <p class="empty-state">暂无历史记录</p>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/csharp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
