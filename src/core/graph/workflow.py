@@ -14,7 +14,6 @@ from src.agents.code_generator import CodeGeneratorAgent
 from src.agents.code_reviewer import CodeReviewerAgent
 from src.agents.test_generator import TestGeneratorAgent
 from src.agents.debugger import DebuggerAgent
-from src.agents.refactor import RefactorAgent
 
 
 class GameDevWorkflow:
@@ -33,7 +32,6 @@ class GameDevWorkflow:
         self.code_reviewer = CodeReviewerAgent(config)
         self.test_generator = TestGeneratorAgent(config)
         self.debugger = DebuggerAgent(config)
-        self.refactor = RefactorAgent(config)
 
         self.workflow = self._build_workflow()
 
@@ -46,11 +44,10 @@ class GameDevWorkflow:
         # 创建状态图
         workflow = StateGraph(GameDevState)
 
-        # 添加节点
+        # 添加节点（已移除refactor节点，代码质量由code_generator直接保证）
         workflow.add_node("planner", self._planner_node)
         workflow.add_node("code_generator", self._code_generator_node)
         workflow.add_node("code_reviewer", self._code_reviewer_node)
-        workflow.add_node("refactor", self._refactor_node)
         workflow.add_node("test_generator", self._test_generator_node)
         workflow.add_node("orchestrator", self._orchestrator_node)
         workflow.add_node("debugger", self._debugger_node)
@@ -58,11 +55,10 @@ class GameDevWorkflow:
         # 设置入口点
         workflow.set_entry_point("planner")
 
-        # 添加边
+        # 添加边（reviewer之后直接回到orchestrator，不再经过refactor）
         workflow.add_edge("planner", "orchestrator")
         workflow.add_edge("code_generator", "code_reviewer")
-        workflow.add_edge("code_reviewer", "refactor")
-        workflow.add_edge("refactor", "test_generator")
+        workflow.add_edge("code_reviewer", "orchestrator")
         workflow.add_edge("test_generator", "orchestrator")
         workflow.add_edge("debugger", "code_generator")  # 修复后重新生成
 
@@ -132,14 +128,6 @@ class GameDevWorkflow:
             return {"current_phase": "code_reviewed"}
         except Exception as e:
             return {"error_log": [f"Code reviewer failed: {e}"], "current_phase": "error"}
-
-    async def _refactor_node(self, state: GameDevState) -> Dict[str, Any]:
-        """重构节点 - 分析并优化代码质量"""
-        try:
-            result = await self.refactor.execute(state)
-            return result
-        except Exception as e:
-            return {"error_log": [f"Refactor failed: {e}"], "current_phase": "error"}
 
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """测试生成节点 - 为代码生成测试用例"""
@@ -327,22 +315,48 @@ class GameDevWorkflow:
                 # 多个独立任务 → 并行执行
                 parallel_result = await self._execute_tasks_parallel(state, ready_tasks)
                 state.update(parallel_result)
+
+                # 并行执行审查和测试生成
+                review_result, test_result = await asyncio.gather(
+                    self._code_reviewer_node(state),
+                    self._test_generator_node(state),
+                )
+                state.update(review_result)
+                state.update(test_result)
             elif ready_tasks:
-                # 单个任务 → 完整流水线
+                # 单个任务 → 完整流水线（reviewer + test_generator并行）
                 task = ready_tasks[0]
                 state["current_task_id"] = task.get("id")
+                task_type = task.get("type", TaskType.CODE.value)
 
-                gen_result = await self._code_generator_node(state)
-                state.update(gen_result)
+                if task_type == TaskType.TEST.value:
+                    # 测试任务 → 直接生成测试
+                    test_result = await self._test_generator_node(state)
+                    state.update(test_result)
+                else:
+                    # 代码任务 → 生成 + 审查 + 测试（并行）
+                    gen_result = await self._code_generator_node(state)
+                    state.update(gen_result)
 
-                review_result = await self._code_reviewer_node(state)
-                state.update(review_result)
+                    # 如果代码生成失败（如不支持的任务类型），标记任务完成避免死循环
+                    error_log = state.get("error_log", [])
+                    if error_log:
+                        task_plan = state.get("task_plan", [])
+                        for t in task_plan:
+                            if t.get("id") == task.get("id"):
+                                t["status"] = TaskStatus.COMPLETED.value
+                                break
+                        state["task_plan"] = task_plan
+                        state["error_log"] = []
+                        continue
 
-                refactor_result = await self._refactor_node(state)
-                state.update(refactor_result)
-
-                test_result = await self._test_generator_node(state)
-                state.update(test_result)
+                    # 并行执行代码审查和测试生成
+                    review_result, test_result = await asyncio.gather(
+                        self._code_reviewer_node(state),
+                        self._test_generator_node(state),
+                    )
+                    state.update(review_result)
+                    state.update(test_result)
             else:
                 break
 
@@ -376,6 +390,168 @@ class GameDevWorkflow:
 
         final_state = await self._run_with_parallel_support(initial_state)
         return final_state
+
+    async def run_with_streaming(
+        self, input_state: Dict[str, Any], event_callback
+    ) -> Dict[str, Any]:
+        """运行工作流（带SSE事件回调）
+
+        Args:
+            input_state: 初始状态
+            event_callback: 异步回调函数 async def callback(event_type: str, data: dict)
+
+        Returns:
+            最终状态
+        """
+        initial_state: GameDevState = {
+            "task_plan": [],
+            "current_task_id": None,
+            "ready_task_ids": None,
+            "code_generated": {},
+            "code_artifacts": [],
+            "test_results": None,
+            "test_report": None,
+            "fix_history": [],
+            "fix_attempts": 0,
+            "current_phase": "initialized",
+            "is_complete": False,
+            "requires_human_input": False,
+            "project_context": input_state.get("project_context", {}),
+            "error_log": [],
+        }
+
+        state = initial_state
+
+        try:
+            # Phase 1: 规划
+            await event_callback("phase_start", {"phase": "planning", "message": "正在分析需求并生成任务计划..."})
+            plan_result = await self._planner_node(state)
+            state.update(plan_result)
+            await event_callback("task_plan", {
+                "phase": "planning_complete",
+                "tasks": [
+                    {"id": t.get("id"), "name": t.get("name"), "description": t.get("description")}
+                    for t in state.get("task_plan", [])
+                ],
+                "message": f"任务计划生成完成，共{len(state.get('task_plan', []))}个任务",
+            })
+
+            max_iterations = self.config.get("agents", {}).get("orchestrator", {}).get("max_iterations", 10)
+
+            for iteration in range(max_iterations):
+                orch_result = await self._orchestrator_node(state)
+                state.update(orch_result)
+
+                if state.get("is_complete") or state.get("current_phase") == "workflow_complete":
+                    break
+
+                if state.get("current_phase") in ("error", "needs_fix"):
+                    await event_callback("phase_start", {"phase": "debugging", "message": "检测到错误，正在自动修复..."})
+                    debug_result = await self._debugger_node(state)
+                    state.update(debug_result)
+                    continue
+
+                ready_ids = state.get("ready_task_ids", [])
+                task_plan = state.get("task_plan", [])
+                ready_tasks = [t for t in task_plan if t.get("id") in ready_ids]
+
+                if len(ready_tasks) > 1:
+                    # 多个独立任务 → 并行执行
+                    await event_callback("phase_start", {
+                        "phase": "generating",
+                        "message": f"正在并行生成{len(ready_tasks)}个任务...",
+                    })
+                    # 记录已发送的文件
+                    sent_files = set(state.get("code_generated", {}).keys())
+                    parallel_result = await self._execute_tasks_parallel(state, ready_tasks)
+                    state.update(parallel_result)
+
+                    # 只发送新生成的文件
+                    for file_path, content in state.get("code_generated", {}).items():
+                        if file_path not in sent_files:
+                            await event_callback("code_file", {
+                                "file_path": file_path,
+                                "content": content,
+                            })
+
+                    # 并行执行审查和测试生成
+                    review_result, test_result = await asyncio.gather(
+                        self._code_reviewer_node(state),
+                        self._test_generator_node(state),
+                    )
+                    state.update(review_result)
+                    state.update(test_result)
+
+                    # 发送测试生成的文件
+                    for file_path, content in state.get("code_generated", {}).items():
+                        if file_path not in sent_files:
+                            await event_callback("code_file", {
+                                "file_path": file_path,
+                                "content": content,
+                            })
+
+                elif ready_tasks:
+                    task = ready_tasks[0]
+                    state["current_task_id"] = task.get("id")
+                    task_type = task.get("type", TaskType.CODE.value)
+                    await event_callback("phase_start", {
+                        "phase": "generating",
+                        "message": f"正在生成: {task.get('name', '')}...",
+                    })
+
+                    sent_files = set(state.get("code_generated", {}).keys())
+
+                    if task_type == TaskType.TEST.value:
+                        # 测试任务 → 直接生成测试
+                        test_result = await self._test_generator_node(state)
+                        state.update(test_result)
+                    else:
+                        # 代码任务 → 生成 + 审查 + 测试（并行）
+                        gen_result = await self._code_generator_node(state)
+                        state.update(gen_result)
+
+                        # 如果代码生成失败，标记任务完成避免死循环
+                        error_log = state.get("error_log", [])
+                        if error_log:
+                            task_plan = state.get("task_plan", [])
+                            for t in task_plan:
+                                if t.get("id") == task.get("id"):
+                                    t["status"] = TaskStatus.COMPLETED.value
+                                    break
+                            state["task_plan"] = task_plan
+                            state["error_log"] = []
+                            continue
+
+                        # 并行执行审查和测试
+                        review_result, test_result = await asyncio.gather(
+                            self._code_reviewer_node(state),
+                            self._test_generator_node(state),
+                        )
+                        state.update(review_result)
+                        state.update(test_result)
+
+                    # 只发送新生成的文件
+                    for file_path, content in state.get("code_generated", {}).items():
+                        if file_path not in sent_files:
+                            await event_callback("code_file", {
+                                "file_path": file_path,
+                                "content": content,
+                            })
+                else:
+                    break
+
+            await event_callback("complete", {
+                "phase": "complete",
+                "message": "代码生成完成！",
+                "files": state.get("code_generated", {}),
+                "task_count": len(state.get("task_plan", [])),
+                "fix_count": len(state.get("fix_history", [])),
+            })
+
+        except Exception as e:
+            await event_callback("error", {"message": f"生成过程出错: {str(e)}"})
+
+        return state
 
 
 def create_workflow(config: Dict[str, Any]) -> GameDevWorkflow:

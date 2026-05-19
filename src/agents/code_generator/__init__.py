@@ -69,7 +69,7 @@ class CodeGeneratorAgent(BaseAgent):
             for path, content in existing_code.items():
                 existing_context += f"\n### {path}\n```\n{content[:500]}\n...\n```\n"
 
-        user_prompt = f"""请根据以下任务生成完整的代码实现。
+        user_prompt = f"""请根据以下任务生成完整的、高质量的代码实现。
 
 项目名称: {project_name}
 游戏引擎: {engine}
@@ -82,8 +82,15 @@ class CodeGeneratorAgent(BaseAgent):
 1. 生成完整可编译的代码，不要省略任何部分
 2. 遵循系统提示中的命名规范和代码结构
 3. 使用 namespace {project_name.replace(' ', '.')}.[ModuleName] 格式
-4. 包含必要的注释
-5. 代码必须是可以直接复制到Unity项目中使用的
+4. 代码必须是可以直接复制到Unity项目中使用的
+5. 代码质量要求（直接生成高质量代码）：
+   - 遵循SOLID原则：单一职责、开闭原则
+   - 使用#region/#endregion组织代码块
+   - 字段使用[SerializeField]私有化，通过属性暴露公共接口
+   - 使用事件系统解耦模块间通信
+   - 空值检查和边界条件处理
+   - 避免FindObjectOfType等性能杀手，改用缓存引用
+   - 使用[Header]和[Tooltip]增强Inspector可读性
 
 请直接输出代码，格式如下：
 ```csharp
@@ -97,7 +104,7 @@ namespace ...
 如果需要生成多个文件，每个文件用单独的代码块。"""
 
         try:
-            response = self.llm.chat(
+            response = await self.llm.chat(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

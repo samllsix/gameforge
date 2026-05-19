@@ -6,9 +6,11 @@
 
 import os
 import asyncio
+import json
 import yaml
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from typing import Dict, Any, List, Optional
 import uvicorn
@@ -345,6 +347,53 @@ async def generate_code_sync(request: GenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/generate_stream")
+async def generate_code_stream(request: GenerateRequest):
+    """生成游戏代码（SSE流式返回）"""
+    queue = asyncio.Queue()
+
+    async def event_generator():
+        workflow = create_workflow(config)
+
+        async def callback(event_type: str, data: dict):
+            await queue.put({"event": event_type, "data": data})
+
+        async def run_workflow():
+            try:
+                await workflow.run_with_streaming(
+                    {
+                        "project_context": {
+                            "engine": request.engine,
+                            "project_name": request.project_name,
+                            "requirements": request.requirements,
+                        },
+                    },
+                    event_callback=callback,
+                )
+            except Exception as e:
+                await queue.put({"event": "error", "data": {"message": str(e)}})
+            finally:
+                await queue.put(None)
+
+        asyncio.create_task(run_workflow())
+
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/api/v1/plan", response_model=TaskPlanResponse)
 async def plan_tasks(request: TaskPlanRequest):
     """规划任务"""
@@ -496,7 +545,7 @@ async def get_generation_history(limit: int = 20):
         db.close()
 
 
-def start_server(host: str = "0.0.0.0", port: int = 8000, workers: int = 1):
+def start_server(host: str = "0.0.0.0", port: int = 8001, workers: int = 1):
     """启动服务器"""
     uvicorn.run(
         "src.api.main:app",

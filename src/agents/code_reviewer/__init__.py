@@ -62,7 +62,7 @@ class CodeReviewerAgent(BaseAgent):
 }}"""
 
         try:
-            result = self.llm.chat_json(
+            result = await self.llm.chat_json(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

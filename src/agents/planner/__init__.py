@@ -46,18 +46,23 @@ class PlannerAgent(BaseAgent):
         engine = state.get("project_context", {}).get("engine", "unity")
 
         system_prompt = self.get_prompt_template("planner_system")
-        user_prompt = f"""请根据以下游戏需求，生成开发任务列表。
+        user_prompt = f"""请根据以下游戏需求，生成2-3个综合性的代码开发任务列表。
 
 游戏引擎: {engine}
 需求描述:
 {requirements}
 
-请严格按照系统提示中的JSON格式输出任务列表。每个任务必须包含 id, name, description, type, priority, dependencies, assigned_agent 字段。
-type 可选值: code, test, art, design
-assigned_agent 可选值: code_generator, test_generator"""
+要求：
+1. 生成2-3个代码任务（每个任务应包含完整的功能模块，不要太细）
+2. 每个任务必须包含 id, name, description, type, priority, dependencies, assigned_agent 字段
+3. type 必须为 "code"（测试由系统自动生成，不需要单独创建测试任务）
+4. assigned_agent 必须为 "code_generator"
+5. 所有任务之间不能有依赖（dependencies为空），以便并行执行
+
+请严格按照系统提示中的JSON格式输出任务列表。"""
 
         try:
-            result = self.llm.chat_json(
+            result = await self.llm.chat_json(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -107,7 +112,7 @@ assigned_agent 可选值: code_generator, test_generator"""
             {
                 "id": "task_001",
                 "name": "创建Player控制器",
-                "description": "实现玩家角色的移动和跳跃控制",
+                "description": "实现玩家角色的移动、跳跃控制、碰撞检测和动画状态管理",
                 "type": TaskType.CODE.value,
                 "status": "pending",
                 "priority": 1,
@@ -116,18 +121,8 @@ assigned_agent 可选值: code_generator, test_generator"""
             },
             {
                 "id": "task_002",
-                "name": "实现碰撞检测系统",
-                "description": "创建碰撞检测和响应系统",
-                "type": TaskType.CODE.value,
-                "status": "pending",
-                "priority": 2,
-                "dependencies": ["task_001"],
-                "assigned_agent": AgentType.CODE_GENERATOR.value,
-            },
-            {
-                "id": "task_003",
-                "name": "创建GameManager",
-                "description": "实现游戏状态管理器",
+                "name": "创建GameManager、计分和UI系统",
+                "description": "实现游戏状态管理器、计分系统、UI界面（HUD、菜单、分数显示）",
                 "type": TaskType.CODE.value,
                 "status": "pending",
                 "priority": 1,
@@ -135,38 +130,18 @@ assigned_agent 可选值: code_generator, test_generator"""
                 "assigned_agent": AgentType.CODE_GENERATOR.value,
             },
             {
-                "id": "task_004",
-                "name": "实现计分系统",
-                "description": "创建计分和分数显示系统",
+                "id": "task_003",
+                "name": "创建敌人和道具系统",
+                "description": "实现敌人AI、道具生成、收集逻辑和关卡管理",
                 "type": TaskType.CODE.value,
                 "status": "pending",
                 "priority": 2,
-                "dependencies": ["task_003"],
+                "dependencies": [],
                 "assigned_agent": AgentType.CODE_GENERATOR.value,
-            },
-            {
-                "id": "task_005",
-                "name": "编写Player单元测试",
-                "description": "为Player控制器编写单元测试",
-                "type": TaskType.TEST.value,
-                "status": "pending",
-                "priority": 3,
-                "dependencies": ["task_001"],
-                "assigned_agent": AgentType.TEST_GENERATOR.value,
-            },
-            {
-                "id": "task_006",
-                "name": "编写集成测试",
-                "description": "编写游戏流程集成测试",
-                "type": TaskType.TEST.value,
-                "status": "pending",
-                "priority": 4,
-                "dependencies": ["task_001", "task_002", "task_003", "task_004"],
-                "assigned_agent": AgentType.TEST_GENERATOR.value,
             },
         ]
 
-    def parse_design_document(self, document: str) -> Dict[str, Any]:
+    async def parse_design_document(self, document: str) -> Dict[str, Any]:
         """解析游戏策划文档，提取功能模块和依赖关系
 
         Args:
@@ -213,7 +188,7 @@ assigned_agent 可选值: code_generator, test_generator"""
 请提取功能模块、依赖关系，并估算需要的任务数量。以JSON格式输出。"""
 
         try:
-            result = self.llm.chat_json(
+            result = await self.llm.chat_json(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

@@ -33,17 +33,119 @@ class TestGeneratorAgent(BaseAgent):
         if not code_generated:
             return {}
 
-        test_code = {}
-
+        # 收集需要生成测试的源文件
+        source_files = {}
         for file_path, content in code_generated.items():
             if file_path.endswith(".cs") and not file_path.endswith("Tests.cs"):
                 test_path = file_path.replace(".cs", "Tests.cs")
-                if test_path not in code_generated and test_path not in test_code:
-                    generated = await self._generate_test_with_llm(file_path, content)
-                    if generated:
-                        test_code[test_path] = generated
+                if test_path not in code_generated:
+                    source_files[file_path] = content
 
-        return test_code
+        if not source_files:
+            return {}
+
+        # 批量生成所有测试（单次LLM调用）
+        return await self._generate_all_tests_batch(source_files)
+
+    async def _generate_all_tests_batch(self, source_files: Dict[str, str]) -> Dict[str, str]:
+        """批量生成所有测试代码（单次LLM调用）
+
+        Args:
+            source_files: {文件路径: 源代码} 字典
+
+        Returns:
+            {测试文件路径: 测试代码} 字典
+        """
+        # 构建源文件列表
+        files_section = ""
+        for file_path, content in source_files.items():
+            class_name = file_path.split("/")[-1].replace(".cs", "")
+            files_section += f"\n### 文件: {file_path}\n类名: {class_name}\n```csharp\n{content}\n```\n"
+
+        system_prompt = self.get_prompt_template("test_generator_system")
+        user_prompt = f"""请为以下所有Unity C#源文件批量生成单元测试。
+
+{files_section}
+
+要求：
+1. 使用NUnit框架（[TestFixture], [Test], [SetUp], [TearDown]）
+2. 使用UnityEngine.TestTools（[UnityTest]）
+3. 为每个源文件生成独立的测试文件
+4. 每个测试文件路径为源文件路径将 .cs 替换为 Tests.cs
+5. 包含初始化测试、方法测试、边界测试
+6. 测试必须完整可编译
+
+输出格式（每个测试文件一个代码块）：
+```csharp
+// 文件: Assets/Scripts/xxx/xxxTests.cs
+using NUnit.Framework;
+...
+```
+
+请直接输出所有测试代码。"""
+
+        try:
+            response = await self.llm.chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=self.llm_config.get("temperature", 0.4),
+                max_tokens=self.llm_config.get("max_tokens", 8192),
+            )
+
+            # 解析所有代码块
+            test_code = {}
+            code_blocks = re.findall(
+                r'```(?:csharp|cs)?\s*\n(.*?)\n```',
+                response,
+                re.DOTALL,
+            )
+
+            for block in code_blocks:
+                block = block.strip()
+                if not block:
+                    continue
+
+                # 提取文件路径
+                file_path_match = re.search(r'//\s*文件:\s*(\S+)', block)
+                if file_path_match:
+                    test_path = file_path_match.group(1)
+                    block = re.sub(r'//\s*文件:\s*\S+\s*\n', '', block, count=1).strip()
+                else:
+                    # 尝试从类名推断
+                    class_match = re.search(r'class\s+(\w+Tests)', block)
+                    if class_match:
+                        test_name = class_match.group(1).replace("Tests", "")
+                        # 找到对应的源文件路径
+                        for src_path in source_files:
+                            if test_name in src_path:
+                                test_path = src_path.replace(".cs", "Tests.cs")
+                                break
+                        else:
+                            continue
+                    else:
+                        continue
+
+                if 'class ' in block and ('[Test]' in block or '[TestFixture]' in block):
+                    test_code[test_path] = block
+
+            # 对于未生成测试的文件，使用模板
+            for file_path in source_files:
+                test_path = file_path.replace(".cs", "Tests.cs")
+                if test_path not in test_code:
+                    test_code[test_path] = self._generate_test_template(file_path, source_files[file_path])
+
+            self.log_action("batch_tests_generated", {"file_count": len(test_code)})
+            return test_code
+
+        except Exception as e:
+            self.log_error("batch_test_generator_error", {"error": str(e)})
+            # 回退：为每个文件生成模板测试
+            return {
+                path.replace(".cs", "Tests.cs"): self._generate_test_template(path, content)
+                for path, content in source_files.items()
+            }
 
     async def _generate_test_with_llm(self, source_path: str, source_content: str) -> str:
         """用LLM生成测试代码
@@ -80,7 +182,7 @@ class TestGeneratorAgent(BaseAgent):
 请直接输出测试代码，不要包含解释文字。"""
 
         try:
-            response = self.llm.chat(
+            response = await self.llm.chat(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

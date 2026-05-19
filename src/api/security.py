@@ -12,9 +12,7 @@ from typing import Dict, Any, Optional, List, Set
 from datetime import datetime
 from pathlib import Path
 
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
 import structlog
 
 logger = structlog.get_logger()
@@ -176,28 +174,41 @@ class InputValidator:
 # ============================================================
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """安全HTTP头中间件"""
+class SecurityHeadersMiddleware:
+    """安全HTTP头中间件（纯ASGI实现，不缓冲流式响应）"""
 
-    HEADERS = {
-        "X-Content-Type-Options": "nosniff",
-        "X-Frame-Options": "DENY",
-        "X-XSS-Protection": "1; mode=block",
-        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-        "Content-Security-Policy": "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data:;",
-        "Referrer-Policy": "strict-origin-when-cross-origin",
-        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-        "Pragma": "no-cache",
-    }
+    HEADERS = [
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options", b"DENY"),
+        (b"x-xss-protection", b"1; mode=block"),
+        (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
+        (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"),
+        (b"referrer-policy", b"strict-origin-when-cross-origin"),
+        (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+        (b"cache-control", b"no-store, no-cache, must-revalidate"),
+        (b"pragma", b"no-cache"),
+    ]
 
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        for key, value in self.HEADERS.items():
-            response.headers[key] = value
-        # 移除服务器指纹
-        response.headers.pop("server", None)
-        return response
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                # 添加安全头
+                for key, value in self.HEADERS:
+                    headers.append((key, value))
+                # 移除服务器指纹
+                headers = [(k, v) for k, v in headers if k != b"server"]
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 # ============================================================
@@ -205,26 +216,39 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # ============================================================
 
 
-class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
-    """请求体大小限制"""
+class RequestBodyLimitMiddleware:
+    """请求体大小限制（纯ASGI）"""
 
     def __init__(self, app, max_size_bytes: int = 1_048_576):  # 1MB默认
-        super().__init__(app)
+        self.app = app
         self.max_size = max_size_bytes
 
-    async def dispatch(self, request: Request, call_next):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         # 检查Content-Length
-        content_length = request.headers.get("content-length")
+        headers = dict(scope.get("headers", []))
+        content_length = headers.get(b"content-length", b"").decode()
         if content_length and int(content_length) > self.max_size:
-            return JSONResponse(
-                status_code=413,
-                content={
-                    "error": "Request body too large",
-                    "message": f"请求体超过最大限制 ({self.max_size // 1024}KB)",
-                    "max_size_bytes": self.max_size,
-                },
-            )
-        return await call_next(request)
+            content = json.dumps({
+                "error": "Request body too large",
+                "message": f"请求体超过最大限制 ({self.max_size // 1024}KB)",
+                "max_size_bytes": self.max_size,
+            }, ensure_ascii=False).encode("utf-8")
+            await send({
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(content)).encode()),
+                ],
+            })
+            await send({"type": "http.response.body", "body": content})
+            return
+
+        await self.app(scope, receive, send)
 
 
 # ============================================================
@@ -328,60 +352,70 @@ def get_audit_logger() -> AuditLogger:
 # ============================================================
 
 
-class APIKeyAuthMiddleware(BaseHTTPMiddleware):
-    """API密钥认证中间件"""
+class APIKeyAuthMiddleware:
+    """API密钥认证中间件（纯ASGI）"""
 
-    # 不需要认证的路径
     PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
 
     def __init__(self, app, api_keys: Optional[Dict[str, str]] = None, enabled: bool = False):
-        super().__init__(app)
+        self.app = app
         self.api_keys = api_keys or {}
         self.enabled = enabled
 
-    async def dispatch(self, request: Request, call_next):
-        # 未启用时跳过
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         if not self.enabled:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # 公开路径不需要认证
-        if request.url.path in self.PUBLIC_PATHS:
-            return await call_next(request)
+        path = scope.get("path", "")
+        if path in self.PUBLIC_PATHS:
+            await self.app(scope, receive, send)
+            return
 
-        # 从Header或Query获取API Key
-        api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+        # 从header获取API Key
+        headers = dict(scope.get("headers", []))
+        api_key = headers.get(b"x-api-key", b"").decode()
+
+        # 从query获取API Key
+        if not api_key:
+            query_string = scope.get("query_string", b"").decode()
+            for param in query_string.split("&"):
+                if param.startswith("api_key="):
+                    api_key = param[8:]
+                    break
+
+        client_ip = scope.get("client", ("unknown",))[0]
 
         if not api_key:
             audit = get_audit_logger()
             await audit.log_event(
                 event_type="missing_api_key",
-                client_ip=request.client.host if request.client else "unknown",
-                path=request.url.path,
-                method=request.method,
+                client_ip=client_ip,
+                path=path,
+                method=scope.get("method", ""),
                 severity="WARNING",
             )
-            return JSONResponse(
-                status_code=401,
-                content={"error": "Missing API key", "message": "请提供有效的API密钥"},
-            )
+            content = json.dumps({"error": "Missing API key", "message": "请提供有效的API密钥"}).encode()
+            await send({"type": "http.response.start", "status": 401,
+                        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(content)).encode())]})
+            await send({"type": "http.response.body", "body": content})
+            return
 
-        # 验证API Key
         key_hash = hashlib.sha256(api_key.encode()).hexdigest()
         if api_key not in self.api_keys:
             audit = get_audit_logger()
-            await audit.log_auth_attempt(
-                client_ip=request.client.host if request.client else "unknown",
-                success=False,
-                api_key_hash=key_hash,
-            )
-            return JSONResponse(
-                status_code=403,
-                content={"error": "Invalid API key", "message": "API密钥无效"},
-            )
+            await audit.log_auth_attempt(client_ip=client_ip, success=False, api_key_hash=key_hash)
+            content = json.dumps({"error": "Invalid API key", "message": "API密钥无效"}).encode()
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(content)).encode())]})
+            await send({"type": "http.response.body", "body": content})
+            return
 
-        # 认证通过
-        request.state.client_name = self.api_keys[api_key]
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
 
 # ============================================================
@@ -389,40 +423,51 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 # ============================================================
 
 
-class InputValidationMiddleware(BaseHTTPMiddleware):
-    """输入验证中间件 — 自动检测并拦截恶意请求"""
+class InputValidationMiddleware:
+    """输入验证中间件 — 自动检测并拦截恶意请求（纯ASGI）"""
 
     SKIP_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/stats", "/app"}
 
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path in self.SKIP_PATHS:
-            return await call_next(request)
+    def __init__(self, app):
+        self.app = app
 
-        client_ip = request.client.host if request.client else "unknown"
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+
+        if path in self.SKIP_PATHS:
+            await self.app(scope, receive, send)
+            return
+
+        client_ip = scope.get("client", ("unknown",))[0]
         audit = get_audit_logger()
 
         # 检查路径遍历
-        if InputValidator.check_path_traversal(request.url.path):
-            await audit.log_injection_attempt(
-                client_ip, request.url.path, "path_traversal", request.url.path
-            )
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Invalid path", "message": "请求路径包含非法字符"},
-            )
+        if InputValidator.check_path_traversal(path):
+            await audit.log_injection_attempt(client_ip, path, "path_traversal", path)
+            content = json.dumps({"error": "Invalid path", "message": "请求路径包含非法字符"}).encode()
+            await send({"type": "http.response.start", "status": 400,
+                        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(content)).encode())]})
+            await send({"type": "http.response.body", "body": content})
+            return
 
         # 检查查询参数
-        for key, value in request.query_params.items():
-            if InputValidator.check_sql_injection(value):
-                await audit.log_injection_attempt(
-                    client_ip, request.url.path, "sql_injection", f"{key}={value}"
-                )
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "Invalid parameter", "message": "查询参数包含非法字符"},
-                )
+        query_string = scope.get("query_string", b"").decode()
+        for param in query_string.split("&"):
+            if "=" in param:
+                key, value = param.split("=", 1)
+                if InputValidator.check_sql_injection(value):
+                    await audit.log_injection_attempt(client_ip, path, "sql_injection", f"{key}={value}")
+                    content = json.dumps({"error": "Invalid parameter", "message": "查询参数包含非法字符"}).encode()
+                    await send({"type": "http.response.start", "status": 400,
+                                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(content)).encode())]})
+                    await send({"type": "http.response.body", "body": content})
+                    return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
 
 # ============================================================
@@ -447,6 +492,7 @@ def get_secure_cors_config(
             "http://localhost:3000",
             "http://localhost:5173",
             "http://localhost:8000",
+            "http://localhost:8001",
         ]
 
     return {

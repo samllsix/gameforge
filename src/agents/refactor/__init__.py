@@ -136,7 +136,7 @@ class RefactorAgent(BaseAgent):
 请以JSON格式输出。"""
 
         try:
-            result = self.llm.chat_json(
+            result = await self.llm.chat_json(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

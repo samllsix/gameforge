@@ -1,6 +1,7 @@
 """GameForge - API中间件模块
 
 提供认证、限流、日志、并发控制等中间件功能。
+所有中间件使用纯ASGI实现，不缓冲流式响应。
 """
 
 import time
@@ -10,15 +11,44 @@ from typing import Dict, Any, Optional
 from collections import defaultdict
 from datetime import datetime
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-
 from src.core.concurrency import RateLimiter, ConcurrencyManager
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """速率限制中间件 — 基于客户端IP限制请求频率"""
+def _get_client_ip(scope) -> str:
+    """从ASGI scope获取客户端IP"""
+    client = scope.get("client")
+    return client[0] if client else "unknown"
+
+
+def _get_path(scope) -> str:
+    """从ASGI scope获取请求路径"""
+    return scope.get("path", "")
+
+
+async def _send_json_error(send, status_code: int, body: dict, extra_headers: dict = None):
+    """发送JSON错误响应"""
+    content = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(content)).encode()),
+    ]
+    if extra_headers:
+        for k, v in extra_headers.items():
+            headers.append((k.encode(), str(v).encode()))
+
+    await send({
+        "type": "http.response.start",
+        "status": status_code,
+        "headers": headers,
+    })
+    await send({
+        "type": "http.response.body",
+        "body": content,
+    })
+
+
+class RateLimitMiddleware:
+    """速率限制中间件 — 基于客户端IP限制请求频率（纯ASGI）"""
 
     def __init__(
         self,
@@ -27,83 +57,101 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         window_seconds: int = 60,
         exclude_paths: Optional[list] = None,
     ):
-        super().__init__(app)
+        self.app = app
         self.limiter = RateLimiter(
             max_requests=max_requests, window_seconds=window_seconds
         )
         self.exclude_paths = exclude_paths or ["/health", "/docs", "/openapi.json"]
 
-    async def dispatch(self, request: Request, call_next):
-        # 排除不需要限流的路径
-        if request.url.path in self.exclude_paths:
-            return await call_next(request)
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        client_ip = request.client.host if request.client else "unknown"
+        path = _get_path(scope)
+
+        # 排除不需要限流的路径
+        if path in self.exclude_paths:
+            await self.app(scope, receive, send)
+            return
+
+        client_ip = _get_client_ip(scope)
         allowed = await self.limiter.is_allowed(client_ip)
 
         if not allowed:
-            remaining = await self.limiter.get_remaining(client_ip)
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "error": "Rate limit exceeded",
-                    "message": f"请求过于频繁，请在{self.limiter.window_seconds}秒后重试",
-                    "retry_after": self.limiter.window_seconds,
-                },
-                headers={"Retry-After": str(self.limiter.window_seconds)},
-            )
+            await _send_json_error(send, 429, {
+                "error": "Rate limit exceeded",
+                "message": f"请求过于频繁，请在{self.limiter.window_seconds}秒后重试",
+                "retry_after": self.limiter.window_seconds,
+            }, {"Retry-After": str(self.limiter.window_seconds)})
+            return
 
-        response = await call_next(request)
+        # 添加限流头到响应
         remaining = await self.limiter.get_remaining(client_ip)
-        response.headers["X-RateLimit-Limit"] = str(self.limiter.max_requests)
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
-        return response
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"x-ratelimit-limit", str(self.limiter.max_requests).encode()))
+                headers.append((b"x-ratelimit-remaining", str(remaining).encode()))
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
-class ConcurrencyLimitMiddleware(BaseHTTPMiddleware):
-    """并发控制中间件 — 限制同时处理的请求数"""
+class ConcurrencyLimitMiddleware:
+    """并发控制中间件 — 限制同时处理的请求数（纯ASGI）"""
 
     def __init__(self, app, max_concurrent: int = 20):
-        super().__init__(app)
+        self.app = app
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.active_count = 0
         self._lock = asyncio.Lock()
 
-    async def dispatch(self, request: Request, call_next):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = _get_path(scope)
+
         # 健康检查不受并发限制
-        if request.url.path in ("/health", "/docs", "/openapi.json"):
-            return await call_next(request)
+        if path in ("/health", "/docs", "/openapi.json"):
+            await self.app(scope, receive, send)
+            return
 
         # 尝试获取信号量（非阻塞）
-        acquired = self.semaphore.locked()
         if self.semaphore.locked() and self.semaphore._value == 0:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "error": "Service overloaded",
-                    "message": "服务器繁忙，请稍后重试",
-                    "active_requests": self.active_count,
-                },
-                headers={"Retry-After": "5"},
-            )
+            await _send_json_error(send, 503, {
+                "error": "Service overloaded",
+                "message": "服务器繁忙，请稍后重试",
+                "active_requests": self.active_count,
+            }, {"Retry-After": "5"})
+            return
 
         async with self.semaphore:
             async with self._lock:
                 self.active_count += 1
             try:
-                response = await call_next(request)
-                response.headers["X-Active-Requests"] = str(self.active_count)
-                return response
+                async def send_with_headers(message):
+                    if message["type"] == "http.response.start":
+                        headers = list(message.get("headers", []))
+                        headers.append((b"x-active-requests", str(self.active_count).encode()))
+                        message["headers"] = headers
+                    await send(message)
+
+                await self.app(scope, receive, send_with_headers)
             finally:
                 async with self._lock:
                     self.active_count -= 1
 
 
-class RequestMetricsMiddleware(BaseHTTPMiddleware):
-    """请求指标中间件 — 记录请求耗时和统计"""
+class RequestMetricsMiddleware:
+    """请求指标中间件 — 记录请求耗时和统计（纯ASGI）"""
 
     def __init__(self, app, log_file: Optional[str] = None):
-        super().__init__(app)
+        self.app = app
         self.log_file = log_file
         self.stats = {
             "total_requests": 0,
@@ -113,43 +161,34 @@ class RequestMetricsMiddleware(BaseHTTPMiddleware):
         }
         self._lock = asyncio.Lock()
 
-    async def dispatch(self, request: Request, call_next):
-        start_time = time.time()
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        response = await call_next(request)
+        start_time = time.time()
+        path = _get_path(scope)
+
+        # 捕获状态码
+        status_code = [200]
+
+        async def send_with_metrics(message):
+            if message["type"] == "http.response.start":
+                status_code[0] = message.get("status", 200)
+                headers = list(message.get("headers", []))
+                duration = time.time() - start_time
+                headers.append((b"x-response-time", f"{duration:.3f}s".encode()))
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_metrics)
 
         duration = time.time() - start_time
         async with self._lock:
             self.stats["total_requests"] += 1
             self.stats["total_duration"] += duration
-            self.stats["status_codes"][response.status_code] += 1
-            self.stats["paths"][request.url.path] += 1
-
-        response.headers["X-Response-Time"] = f"{duration:.3f}s"
-
-        # 异步写日志（不阻塞响应）
-        if self.log_file:
-            asyncio.create_task(self._write_log(request, response, duration))
-
-        return response
-
-    async def _write_log(self, request: Request, response, duration: float):
-        """异步写入请求日志"""
-        try:
-            entry = {
-                "timestamp": datetime.now().isoformat(),
-                "method": request.method,
-                "path": request.url.path,
-                "status": response.status_code,
-                "duration_ms": round(duration * 1000, 2),
-                "client_ip": request.client.host if request.client else "unknown",
-            }
-            import aiofiles
-
-            async with aiofiles.open(self.log_file, "a", encoding="utf-8") as f:
-                await f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
-            pass  # 日志写入失败不影响请求处理
+            self.stats["status_codes"][status_code[0]] += 1
+            self.stats["paths"][path] += 1
 
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
