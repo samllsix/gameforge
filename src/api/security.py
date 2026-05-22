@@ -163,7 +163,7 @@ class InputValidator:
     @classmethod
     def validate_engine(cls, engine: str) -> Dict[str, Any]:
         """验证引擎类型"""
-        allowed = {"unity", "unreal", "godot", "generic"}
+        allowed = {"unity", "unreal"}
         if engine.lower() not in allowed:
             return {"valid": False, "error": f"不支持的引擎: {engine}，支持: {', '.join(allowed)}"}
         return {"valid": True, "error": None}

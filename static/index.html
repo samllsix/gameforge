@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GameForge - AI游戏开发平台</title>
-    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 <body>
     <header>
@@ -15,7 +15,6 @@
                 <select id="engine" class="header-select">
                     <option value="unity">Unity</option>
                     <option value="unreal">Unreal</option>
-                    <option value="godot">Godot</option>
                 </select>
                 <input type="text" id="projectName" class="header-input" value="GameForge Project" placeholder="项目名称">
                 <button class="btn-icon" id="historyBtn" title="历史记录">
@@ -27,36 +26,97 @@
         </div>
     </header>
 
-    <main class="chat-container">
-        <div class="chat-messages" id="chatMessages">
-            <div class="welcome-message">
-                <div class="welcome-icon">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                    </svg>
-                </div>
-                <h2>欢迎使用 GameForge</h2>
-                <p>描述你想要的游戏，AI将自动为你生成完整的游戏代码。</p>
-                <div class="welcome-examples">
-                    <button class="example-btn">创建一个2D平台跳跃游戏，玩家可以左右移动和跳跃，有计分系统</button>
-                    <button class="example-btn">制作一个太空射击游戏，有敌人、子弹和爆炸效果</button>
-                    <button class="example-btn">开发一个RPG战斗系统，包含角色、技能和回合制战斗</button>
+    <div class="main-layout">
+        <!-- 左侧：聊天区域 -->
+        <main class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+                <div class="welcome-message">
+                    <div class="welcome-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                        </svg>
+                    </div>
+                    <h2>欢迎使用 GameForge</h2>
+                    <p>描述你想要的游戏，AI将自动为你生成完整的游戏代码。</p>
+                    <div class="welcome-examples">
+                        <button class="example-btn">创建一个2D平台跳跃游戏，玩家可以左右移动和跳跃，有计分系统</button>
+                        <button class="example-btn">制作一个太空射击游戏，有敌人、子弹和爆炸效果</button>
+                        <button class="example-btn">开发一个RPG战斗系统，包含角色、技能和回合制战斗</button>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <div class="chat-input-area">
-            <div class="input-wrapper">
-                <textarea id="requirements" placeholder="描述你想要的游戏..." rows="1"></textarea>
-                <button id="submitBtn" class="send-btn" title="发送 (Enter)">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                    </svg>
-                </button>
+            <div class="chat-input-area">
+                <div class="input-wrapper">
+                    <textarea id="requirements" placeholder="描述你想要的游戏..." rows="1"></textarea>
+                    <button id="submitBtn" class="send-btn" title="发送 (Enter)">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="input-hint">Enter 发送，Shift+Enter 换行</div>
             </div>
-            <div class="input-hint">Enter 发送，Shift+Enter 换行</div>
-        </div>
-    </main>
+        </main>
+
+        <!-- 右侧：工程视图 -->
+        <aside class="engineering-panel" id="engineeringPanel">
+            <div class="panel-header">
+                <h3>工程视图</h3>
+            </div>
+
+            <!-- 阶段时间线 -->
+            <div class="panel-section">
+                <h4>生成进度</h4>
+                <div class="phase-timeline" id="phaseTimeline">
+                    <div class="timeline-item pending" data-phase="designing">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">游戏设计</div>
+                    </div>
+                    <div class="timeline-item pending" data-phase="planning">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">任务规划</div>
+                    </div>
+                    <div class="timeline-item pending" data-phase="generating">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">代码生成</div>
+                    </div>
+                    <div class="timeline-item pending" data-phase="reviewing">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">代码审查</div>
+                    </div>
+                    <div class="timeline-item pending" data-phase="testing">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">测试生成</div>
+                    </div>
+                    <div class="timeline-item pending" data-phase="scene">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">场景构建</div>
+                    </div>
+                    <div class="timeline-item pending" data-phase="complete">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">完成</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 文件树 -->
+            <div class="panel-section">
+                <h4>生成文件</h4>
+                <div class="file-tree" id="fileTree">
+                    <p class="empty-state">等待生成...</p>
+                </div>
+            </div>
+
+            <!-- 代码预览 -->
+            <div class="panel-section code-preview-section">
+                <h4>代码预览</h4>
+                <div class="code-preview" id="codePreview">
+                    <pre><code id="previewCode">// 选择文件查看代码</code></pre>
+                </div>
+            </div>
+        </aside>
+    </div>
 
     <!-- 历史记录模态框 -->
     <div class="modal-overlay" id="historyModal" style="display:none">
@@ -71,6 +131,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=6"></script>
+    <script src="/static/lib/highlight.min.js"></script>
+    <script src="/static/app.js?v=8"></script>
 </body>
 </html>

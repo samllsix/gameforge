@@ -151,6 +151,8 @@ unity:
   project_path: D:/Unity/GameForge
   timeout: 300
   auto_refresh: true
+  http_port: 8765
+  auto_build_scene: false
 
 # Project Templates
 templates:

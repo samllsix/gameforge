@@ -1,5 +1,6 @@
 """共享测试 fixtures"""
 
+import asyncio
 import pytest
 from pathlib import Path
 import tempfile
@@ -9,6 +10,10 @@ import os
 # 确保项目根目录在 sys.path 中
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# 修复Windows + Python 3.13的ProactorEventLoop socket权限问题
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @pytest.fixture(autouse=True)
@@ -123,3 +128,11 @@ def temp_dir():
     """临时目录fixture"""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         yield Path(tmp)
+
+
+@pytest.fixture
+def test_output_dir():
+    """项目内测试输出目录fixture（持久化，便于调试）"""
+    output_dir = Path(__file__).parent / "_test_output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    yield output_dir

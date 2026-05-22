@@ -27,6 +27,10 @@ class TaskType(str, Enum):
     DESIGN = "design"
     REVIEW = "review"
     FIX = "fix"
+    SCENE = "scene"
+    UI = "ui"
+    CONFIG = "config"
+    DOCUMENTATION = "documentation"
 
 
 class AgentType(str, Enum):
@@ -38,6 +42,7 @@ class AgentType(str, Enum):
     TEST_GENERATOR = "test_generator"
     DEBUGGER = "debugger"
     REFACTOR = "refactor"
+    SCENE_GENERATOR = "scene_generator"
 
 
 class Task(BaseModel):
@@ -123,6 +128,23 @@ class GameDevState(TypedDict):
     # 上下文信息
     project_context: Dict[str, Any]
     error_log: List[str]
+
+    # 场景生成
+    scene_description: Optional[Dict[str, Any]]
+    scene_status: str
+    scene_error: Optional[str]
+
+    # Game Design Model — 游戏整体设计模型
+    game_design_model: Optional[Dict[str, Any]]
+
+    # 代码元数据
+    file_metadata: Dict[str, Any]
+
+    # 一致性校验
+    validation_result: Optional[Dict[str, Any]]
+
+    # 警告
+    warnings: List[str]
 
 
 class ProjectContext(BaseModel):

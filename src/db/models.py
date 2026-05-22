@@ -57,6 +57,14 @@ class GenerationHistory(Base):
     fix_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Phase 4.6: 完整历史数据
+    task_plan = Column(JSON, nullable=True)
+    review_result = Column(JSON, nullable=True)
+    compile_result = Column(JSON, nullable=True)
+    fix_history = Column(JSON, nullable=True)
+    scene_description = Column(JSON, nullable=True)
+    status = Column(String(20), default="completed")
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -64,7 +72,20 @@ class GenerationHistory(Base):
             "engine": self.engine,
             "task_count": self.task_count,
             "fix_count": self.fix_count,
+            "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def to_detail_dict(self):
+        return {
+            **self.to_dict(),
+            "requirements": self.requirements,
+            "files_generated": self.files_generated,
+            "task_plan": self.task_plan,
+            "review_result": self.review_result,
+            "compile_result": self.compile_result,
+            "fix_history": self.fix_history,
+            "scene_description": self.scene_description,
         }
 
 

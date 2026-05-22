@@ -84,6 +84,15 @@ namespace GameForge.[ModuleName]
 3. 避免装箱拆箱操作
 4. 合理使用协程和异步
 
+### 游戏完整性要求（必须遵守）
+1. 生成的游戏必须能直接在Unity中运行，不需要额外配置
+2. 2D平台游戏必须包含完整的组件链：PlayerController（移动+跳跃+动画）、GameManager（分数+生命+游戏状态）、EnemyController（巡逻AI+碰撞）、CoinController（收集+浮动动画）
+3. PlayerController必须支持sprite动画：idle、walk（双帧）、jump、hit状态，以及左右翻转
+4. 所有碰撞/触发器必须正确处理：金币收集、敌人伤害、踩踏消灭
+5. 游戏必须有明确的开始、进行、结束流程
+6. 组件间的引用必须通过GetComponent或FindObjectOfType正确建立
+7. 代码必须使用GameForge命名空间：Player用GameForge.Player，Core用GameForge.Core，Enemy用GameForge.Enemy，Collectibles用GameForge.Collectibles
+
 ## Unreal C++ 代码规范
 
 ### 命名规范

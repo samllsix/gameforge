@@ -4,10 +4,64 @@
 """
 
 import json
-from typing import Any, Dict, List
+import os
+from typing import Any, Dict, List, Optional
 from src.agents.base import BaseAgent
 from src.core.state.game_state import GameDevState, AgentType, TaskType
 from src.utils.llm_client import get_llm_client
+
+# 模板缓存
+_templates_cache: Optional[List[Dict[str, Any]]] = None
+
+
+def _load_templates() -> List[Dict[str, Any]]:
+    global _templates_cache
+    if _templates_cache is not None:
+        return _templates_cache
+
+    templates = []
+    template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "config", "templates")
+    for name in ["unity_2d_platformer.json", "unity_space_shooter.json", "unity_rpg_turnbased.json"]:
+        path = os.path.join(template_dir, name)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                templates.append(json.load(f))
+    _templates_cache = templates
+    return templates
+
+
+def match_template(requirements: str) -> Optional[Dict[str, Any]]:
+    """根据需求文本匹配游戏模板（打分制）
+
+    评分规则：
+    - 每个匹配的关键词 +1 分
+    - 负关键词匹配 -2 分
+    - 返回分数最高的模板，分数 <= 0 则不匹配
+    """
+    req_lower = requirements.lower()
+    templates = _load_templates()
+
+    best_tpl = None
+    best_score = 0
+
+    for tpl in templates:
+        score = 0
+        keywords = tpl.get("keywords", [])
+        negative_keywords = tpl.get("negative_keywords", [])
+
+        for kw in keywords:
+            if kw.lower() in req_lower:
+                score += 1
+
+        for nkw in negative_keywords:
+            if nkw.lower() in req_lower:
+                score -= 2
+
+        if score > best_score:
+            best_score = score
+            best_tpl = tpl
+
+    return best_tpl if best_score > 0 else None
 
 
 class PlannerAgent(BaseAgent):
@@ -43,21 +97,127 @@ class PlannerAgent(BaseAgent):
 
         self.log_action("generate_task_plan", {"requirements": requirements[:100]})
 
-        engine = state.get("project_context", {}).get("engine", "unity")
+        # 优先使用 Game Design Model 生成任务
+        gdm = state.get("game_design_model")
+        if gdm:
+            self.log_action("using_gdm_for_planning", {"title": gdm.get("game_title", "")})
+            tasks = self._plan_from_gdm(gdm)
+            if tasks:
+                self.log_action("task_plan_generated_from_gdm", {"task_count": len(tasks)})
+                return tasks
 
+        # 次优：尝试匹配模板（确定性快速路径）
+        tpl = match_template(requirements)
+        if tpl:
+            self.log_action("template_matched", {"template": tpl["name"]})
+            tasks = tpl.get("task_plan", [])
+            for t in tasks:
+                t.setdefault("status", "pending")
+            return tasks
+
+        # 兜底：LLM生成
+        engine = state.get("project_context", {}).get("engine", "unity")
+        return await self._plan_with_llm(requirements, engine)
+
+    def _plan_from_gdm(self, gdm: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """根据 Game Design Model 生成任务计划"""
+        tasks = []
+        code_modules = gdm.get("code_modules", [])
+        entities = gdm.get("entities", [])
+        scenes = gdm.get("scenes", [])
+
+        # 构建实体角色映射
+        entity_roles = {}
+        for ent in entities:
+            entity_roles[ent.get("name", "")] = ent.get("role", "environment")
+
+        # 为每个 code_module 创建任务
+        for i, module in enumerate(code_modules):
+            module_name = module.get("module_name", f"Module_{i+1}")
+            dependencies = module.get("dependencies", [])
+            dep_ids = [f"task_{self._module_index(code_modules, d):03d}" for d in dependencies if self._module_index(code_modules, d) >= 0]
+
+            # 确定任务类型
+            target_objects = module.get("target_game_objects", [])
+            task_type = TaskType.CODE.value
+            if any(entity_roles.get(obj) == "ui" for obj in target_objects):
+                task_type = TaskType.UI.value
+
+            tasks.append({
+                "id": f"task_{i+1:03d}",
+                "name": f"实现{module_name}",
+                "description": module.get("responsibility", f"实现{module_name}模块"),
+                "type": task_type,
+                "status": "pending",
+                "priority": 1 if module.get("priority") == "high" else (3 if module.get("priority") == "low" else 2),
+                "dependencies": dep_ids,
+                "assigned_agent": "code_generator",
+                "output_files": module.get("output_files", [f"Assets/Scripts/{module_name}.cs"]),
+                "target_game_objects": target_objects,
+                "required_components": module.get("required_components", []),
+                "related_system": module.get("related_system", ""),
+                "acceptance_criteria": module.get("acceptance_criteria", f"{module_name}编译通过且功能正常"),
+            })
+
+        # 添加场景构建任务（如果有场景定义）
+        if scenes:
+            scene_task_deps = [f"task_{i+1:03d}" for i in range(len(code_modules))]
+            tasks.append({
+                "id": f"task_{len(code_modules)+1:03d}",
+                "name": "构建游戏场景",
+                "description": f"根据游戏设计模型构建 {scenes[0].get('scene_name', 'GameScene')} 场景",
+                "type": TaskType.SCENE.value,
+                "status": "pending",
+                "priority": 2,
+                "dependencies": scene_task_deps,
+                "assigned_agent": "scene_generator",
+                "output_files": ["Assets/Scenes/scene_description.json"],
+                "target_game_objects": scenes[0].get("required_objects", []),
+                "required_components": [],
+                "related_system": "scene",
+                "acceptance_criteria": "场景描述JSON完整且与代码一致",
+            })
+
+        # 添加文档任务
+        tasks.append({
+            "id": f"task_{len(code_modules)+2:03d}",
+            "name": "生成项目文档",
+            "description": "生成README、项目设置建议和配置文档",
+            "type": TaskType.DOCUMENTATION.value,
+            "status": "pending",
+            "priority": 3,
+            "dependencies": [],
+            "assigned_agent": "code_generator",
+            "output_files": ["Assets/README_Unity.md", "Assets/ProjectSettings_Suggestions.md"],
+            "target_game_objects": [],
+            "required_components": [],
+            "related_system": "documentation",
+            "acceptance_criteria": "文档包含游戏说明、文件列表和配置建议",
+        })
+
+        return tasks
+
+    def _module_index(self, modules: List[Dict], module_name: str) -> int:
+        """查找模块在列表中的索引"""
+        for i, m in enumerate(modules):
+            if m.get("module_name") == module_name:
+                return i
+        return -1
+
+    async def _plan_with_llm(self, requirements: str, engine: str) -> List[Dict[str, Any]]:
+        """使用LLM生成任务计划（兜底）"""
         system_prompt = self.get_prompt_template("planner_system")
-        user_prompt = f"""请根据以下游戏需求，生成2-3个综合性的代码开发任务列表。
+        user_prompt = f"""请根据以下游戏需求，生成3-6个代码开发任务列表。
 
 游戏引擎: {engine}
 需求描述:
 {requirements}
 
 要求：
-1. 生成2-3个代码任务（每个任务应包含完整的功能模块，不要太细）
-2. 每个任务必须包含 id, name, description, type, priority, dependencies, assigned_agent 字段
-3. type 必须为 "code"（测试由系统自动生成，不需要单独创建测试任务）
-4. assigned_agent 必须为 "code_generator"
-5. 所有任务之间不能有依赖（dependencies为空），以便并行执行
+1. 每个任务必须包含 id, name, description, type, priority, dependencies, assigned_agent 字段
+2. type 为 "code"/"ui"/"scene"/"config"
+3. assigned_agent 为 "code_generator" 或 "scene_generator"
+4. 任务之间可以有合理依赖（如 GameManager 先于 UI）
 
 请严格按照系统提示中的JSON格式输出任务列表。"""
 
@@ -80,7 +240,6 @@ class PlannerAgent(BaseAgent):
                 self.log_error("no_tasks_in_response")
                 return self._create_sample_task_plan(requirements)
 
-            # 规范化任务格式
             normalized = []
             for i, task in enumerate(tasks):
                 normalized.append({
@@ -92,6 +251,11 @@ class PlannerAgent(BaseAgent):
                     "priority": self._parse_priority(task.get("priority", "medium")),
                     "dependencies": task.get("dependencies", []),
                     "assigned_agent": task.get("assigned_agent", AgentType.CODE_GENERATOR.value),
+                    "output_files": task.get("output_files", []),
+                    "target_game_objects": task.get("target_game_objects", task.get("scene_objects", [])),
+                    "required_components": task.get("required_components", []),
+                    "related_system": task.get("related_system", ""),
+                    "acceptance_criteria": task.get("acceptance_criteria", ""),
                 })
 
             self.log_action("task_plan_generated", {"task_count": len(normalized)})
@@ -118,6 +282,9 @@ class PlannerAgent(BaseAgent):
                 "priority": 1,
                 "dependencies": [],
                 "assigned_agent": AgentType.CODE_GENERATOR.value,
+                "output_files": ["Assets/Scripts/Player/PlayerController.cs"],
+                "scene_objects": ["Player"],
+                "required_components": ["Rigidbody2D", "BoxCollider2D", "SpriteRenderer"],
             },
             {
                 "id": "task_002",
@@ -128,6 +295,9 @@ class PlannerAgent(BaseAgent):
                 "priority": 1,
                 "dependencies": [],
                 "assigned_agent": AgentType.CODE_GENERATOR.value,
+                "output_files": ["Assets/Scripts/Core/GameManager.cs", "Assets/Scripts/Core/ScoreManager.cs"],
+                "scene_objects": ["GameManager"],
+                "required_components": [],
             },
             {
                 "id": "task_003",
@@ -138,6 +308,9 @@ class PlannerAgent(BaseAgent):
                 "priority": 2,
                 "dependencies": [],
                 "assigned_agent": AgentType.CODE_GENERATOR.value,
+                "output_files": ["Assets/Scripts/Enemy/EnemyController.cs", "Assets/Scripts/Collectibles/CoinController.cs"],
+                "scene_objects": ["Enemy1", "Coin1", "Coin2"],
+                "required_components": ["Rigidbody2D", "BoxCollider2D"],
             },
         ]
 

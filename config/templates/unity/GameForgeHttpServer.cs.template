@@ -1,0 +1,917 @@
+#if UNITY_EDITOR
+using UnityEngine;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Text;
+using System.Threading;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
+namespace GameForge.Editor
+{
+    /// <summary>
+    /// GameForge Unity Editor HTTP Server
+    /// 在Unity Editor内运行HTTP服务器，接收Python后端的场景构建和代码导入请求。
+    ///
+    /// 启动方式：Unity菜单 → GameForge → Start HTTP Server
+    /// 默认端口：8765
+    /// </summary>
+    [InitializeOnLoad]
+    public class GameForgeHttpServer : EditorWindow
+    {
+        private const int DEFAULT_PORT = 8765;
+        private const string VERSION = "1.0.0";
+
+        private static HttpListener listener;
+        private static bool isRunning;
+        private static int port = DEFAULT_PORT;
+        private static Thread listenerThread;
+        private static readonly Queue<Action> mainThreadActions = new Queue<Action>();
+        private static readonly object queueLock = new object();
+        private static List<CompilerMessage> lastCompileErrors = new List<CompilerMessage>();
+        private static List<CompilerMessage> lastCompileWarnings = new List<CompilerMessage>();
+
+        static GameForgeHttpServer()
+        {
+            EditorApplication.update += ProcessMainThreadQueue;
+            AssemblyCompilationEvents.assemblyCompilationFinished += OnCompilationFinished;
+        }
+
+        [MenuItem("GameForge/Start HTTP Server")]
+        public static void StartServer()
+        {
+            if (isRunning)
+            {
+                Debug.Log("[GameForge] HTTP Server already running on port " + port);
+                return;
+            }
+
+            try
+            {
+                listener = new HttpListener();
+                listener.Prefixes.Add($"http://localhost:{port}/");
+                listener.Start();
+                isRunning = true;
+
+                listenerThread = new Thread(HandleRequests) { IsBackground = true };
+                listenerThread.Start();
+
+                Debug.Log($"[GameForge] HTTP Server started on http://localhost:{port}");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[GameForge] Failed to start HTTP Server: {e.Message}");
+                isRunning = false;
+            }
+        }
+
+        [MenuItem("GameForge/Stop HTTP Server")]
+        public static void StopServer()
+        {
+            if (!isRunning) return;
+
+            isRunning = false;
+            try
+            {
+                listener?.Stop();
+                listener?.Close();
+            }
+            catch { }
+
+            Debug.Log("[GameForge] HTTP Server stopped");
+        }
+
+        [MenuItem("GameForge/Check Server Status")]
+        public static void CheckStatus()
+        {
+            Debug.Log(isRunning
+                ? $"[GameForge] HTTP Server is running on http://localhost:{port}"
+                : "[GameForge] HTTP Server is not running");
+        }
+
+        private static void HandleRequests()
+        {
+            while (isRunning && listener != null && listener.IsListening)
+            {
+                try
+                {
+                    var context = listener.GetContext();
+                    ThreadPool.QueueUserWorkItem(_ => ProcessRequest(context));
+                }
+                catch (HttpListenerException)
+                {
+                    break;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[GameForge] Listener error: {e.Message}");
+                }
+            }
+        }
+
+        private static void ProcessRequest(HttpListenerContext context)
+        {
+            var request = context.Request;
+            var response = context.Response;
+            string path = request.Url.AbsolutePath;
+            string method = request.HttpMethod;
+
+            try
+            {
+                string responseBody;
+                int statusCode = 200;
+
+                if (method == "GET" && path == "/api/health")
+                {
+                    responseBody = HandleHealth();
+                }
+                else if (method == "POST" && path == "/api/import")
+                {
+                    string body = ReadRequestBody(request);
+                    responseBody = HandleImport(body);
+                }
+                else if (method == "POST" && path == "/api/scene/generate")
+                {
+                    if (EditorApplication.isCompiling)
+                    {
+                        responseBody = JsonConvert.SerializeObject(new { status = "pending" });
+                    }
+                    else
+                    {
+                        string body = ReadRequestBody(request);
+                        var result = HandleSceneGenerate(body);
+                        responseBody = result.json;
+                        statusCode = result.statusCode;
+                    }
+                }
+                else if (method == "POST" && path == "/api/compile")
+                {
+                    responseBody = HandleCompile();
+                }
+                else if (method == "GET" && path == "/api/compile/errors")
+                {
+                    responseBody = HandleGetCompileErrors();
+                }
+                else
+                {
+                    statusCode = 404;
+                    responseBody = JsonConvert.SerializeObject(new
+                    {
+                        error = "Not Found",
+                        message = $"Unknown endpoint: {method} {path}"
+                    });
+                }
+
+                SendResponse(response, statusCode, responseBody);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[GameForge] Request error on {path}: {e}");
+                SendResponse(response, 500, JsonConvert.SerializeObject(new
+                {
+                    error = "Internal Error",
+                    message = e.Message
+                }));
+            }
+        }
+
+        // ==================== Health ====================
+
+        private static string HandleHealth()
+        {
+            return JsonConvert.SerializeObject(new
+            {
+                status = "ok",
+                version = VERSION,
+                unity_version = Application.unityVersion,
+            });
+        }
+
+        // ==================== Import ====================
+
+        private static string HandleImport(string body)
+        {
+            var data = JObject.Parse(body);
+            var files = data["files"] as JObject;
+            if (files == null)
+            {
+                return JsonConvert.SerializeObject(new { status = "error", error = "Missing 'files' field" });
+            }
+
+            var imported = new List<string>();
+            var failed = new List<string>();
+
+            foreach (var prop in files.Properties())
+            {
+                string filePath = prop.Name;
+                string content = prop.Value.ToString();
+
+                try
+                {
+                    string fullPath = Path.Combine(Application.dataPath, "..", filePath);
+                    string dir = Path.GetDirectoryName(fullPath);
+                    if (!Directory.Exists(dir))
+                        Directory.CreateDirectory(dir);
+
+                    File.WriteAllText(fullPath, content, Encoding.UTF8);
+                    imported.Add(filePath);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[GameForge] Failed to import {filePath}: {e.Message}");
+                    failed.Add(filePath);
+                }
+            }
+
+            EnqueueOnMainThread(() => AssetDatabase.Refresh());
+
+            return JsonConvert.SerializeObject(new
+            {
+                status = "success",
+                imported,
+                failed,
+            });
+        }
+
+        // ==================== Scene Generate ====================
+
+        private static (string json, int statusCode) HandleSceneGenerate(string body)
+        {
+            var desc = JObject.Parse(body);
+            string sceneName = desc["scene_name"]?.ToString() ?? "GameScene";
+            bool newScene = desc["new_scene"]?.ToObject<bool>() ?? true;
+
+            // 在主线程执行场景构建
+            string resultJson = "";
+            int resultStatus = 200;
+
+            var resetEvent = new ManualResetEvent(false);
+
+            EnqueueOnMainThread(() =>
+            {
+                try
+                {
+                    if (newScene)
+                    {
+                        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                        EditorSceneManager.SetActiveScene(scene);
+                    }
+
+                    // Camera
+                    var cameraObj = desc["camera"];
+                    if (cameraObj != null)
+                    {
+                        CreateCamera(cameraObj);
+                    }
+
+                    // Lighting
+                    var lightingObj = desc["lighting"];
+                    if (lightingObj != null)
+                    {
+                        CreateLight(lightingObj);
+                    }
+                    else
+                    {
+                        // Default directional light
+                        var lightGo = new GameObject("Directional Light");
+                        var light = lightGo.AddComponent<Light>();
+                        light.type = LightType.Directional;
+                        lightGo.transform.rotation = Quaternion.Euler(50, -30, 0);
+                    }
+
+                    // Game Objects
+                    var gameObjects = desc["game_objects"] as JArray;
+                    int objectCount = 0;
+                    if (gameObjects != null)
+                    {
+                        foreach (var objDesc in gameObjects)
+                        {
+                            CreateGameObject(objDesc);
+                            objectCount++;
+                        }
+                    }
+
+                    // Save scene
+                    string sceneDir = "Assets/Scenes";
+                    if (!Directory.Exists(sceneDir))
+                        Directory.CreateDirectory(sceneDir);
+
+                    string scenePath = $"{sceneDir}/{sceneName}.unity";
+                    EditorSceneManager.SaveScene(SceneManager.GetActiveScene(), scenePath);
+
+                    resultJson = JsonConvert.SerializeObject(new
+                    {
+                        status = "success",
+                        scene_path = scenePath,
+                        object_count = objectCount,
+                    });
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[GameForge] Scene generation failed: {e}");
+                    resultStatus = 500;
+                    resultJson = JsonConvert.SerializeObject(new
+                    {
+                        status = "error",
+                        error = e.Message,
+                    });
+                }
+                finally
+                {
+                    resetEvent.Set();
+                }
+            });
+
+            resetEvent.WaitOne(30000);
+            return (resultJson, resultStatus);
+        }
+
+        private static void CreateCamera(JToken cameraDesc)
+        {
+            var camGo = new GameObject("Main Camera");
+            camGo.tag = "MainCamera";
+
+            var cam = camGo.AddComponent<Camera>();
+
+            var pos = cameraDesc["position"];
+            if (pos != null)
+                camGo.transform.position = ParseVector3(pos);
+
+            bool ortho = cameraDesc["orthographic"]?.ToObject<bool>() ?? false;
+            cam.orthographic = ortho;
+            if (ortho)
+            {
+                float size = cameraDesc["orthographic_size"]?.ToObject<float>() ?? 5f;
+                cam.orthographicSize = size;
+            }
+
+            var bgColor = cameraDesc["background_color"];
+            if (bgColor != null)
+                cam.backgroundColor = ParseColor(bgColor);
+
+            cam.clearFlags = CameraClearFlags.SolidColor;
+        }
+
+        private static void CreateLight(JToken lightDesc)
+        {
+            var lightGo = new GameObject("Directional Light");
+            var light = lightGo.AddComponent<Light>();
+            light.type = LightType.Directional;
+
+            string lightType = lightDesc["type"]?.ToString() ?? "directional";
+            switch (lightType)
+            {
+                case "point":
+                    light.type = LightType.Point;
+                    break;
+                case "spot":
+                    light.type = LightType.Spot;
+                    break;
+                default:
+                    light.type = LightType.Directional;
+                    break;
+            }
+
+            light.intensity = lightDesc["intensity"]?.ToObject<float>() ?? 1f;
+
+            var rot = lightDesc["rotation"];
+            if (rot != null)
+                lightGo.transform.rotation = Quaternion.Euler(ParseVector3(rot));
+        }
+
+        private static void CreateGameObject(JToken objDesc)
+        {
+            string name = objDesc["name"]?.ToString() ?? "GameObject";
+            string type = objDesc["type"]?.ToString() ?? "Empty";
+
+            GameObject go;
+
+            switch (type.ToLower())
+            {
+                case "cube":
+                    go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    go.name = name;
+                    break;
+                case "sphere":
+                    go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    go.name = name;
+                    break;
+                case "cylinder":
+                    go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                    go.name = name;
+                    break;
+                case "plane":
+                    go = GameObject.CreatePrimitive(PrimitiveType.Plane);
+                    go.name = name;
+                    break;
+                case "quad":
+                    go = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                    go.name = name;
+                    break;
+                case "sprite":
+                    go = new GameObject(name);
+                    go.AddComponent<SpriteRenderer>();
+                    break;
+                case "camera":
+                    go = new GameObject(name);
+                    go.AddComponent<Camera>();
+                    break;
+                case "directionallight":
+                    go = new GameObject(name);
+                    var dirLight = go.AddComponent<Light>();
+                    dirLight.type = LightType.Directional;
+                    break;
+                case "pointlight":
+                    go = new GameObject(name);
+                    var pointLight = go.AddComponent<Light>();
+                    pointLight.type = LightType.Point;
+                    break;
+                default: // Empty
+                    go = new GameObject(name);
+                    break;
+            }
+
+            // Transform
+            var pos = objDesc["position"];
+            if (pos != null) go.transform.position = ParseVector3(pos);
+
+            var rot = objDesc["rotation"];
+            if (rot != null) go.transform.rotation = Quaternion.Euler(ParseVector3(rot));
+
+            var scale = objDesc["scale"];
+            if (scale != null) go.transform.localScale = ParseVector3(scale);
+
+            // Tag
+            string tag = objDesc["tag"]?.ToString();
+            if (!string.IsNullOrEmpty(tag))
+            {
+                try { go.tag = tag; }
+                catch { Debug.LogWarning($"[GameForge] Tag '{tag}' not defined, skipping"); }
+            }
+
+            // Layer
+            int layer = objDesc["layer"]?.ToObject<int>() ?? 0;
+            go.layer = layer;
+
+            // Static
+            bool isStatic = objDesc["is_static"]?.ToObject<bool>() ?? false;
+            if (isStatic)
+                go.isStatic = true;
+
+            // Color
+            var color = objDesc["color"];
+            if (color != null)
+            {
+                var renderer = go.GetComponent<Renderer>();
+                if (renderer != null)
+                {
+                    renderer.sharedMaterial = new Material(Shader.Find("Standard"))
+                    {
+                        color = ParseColor(color)
+                    };
+                }
+            }
+
+            // Material preset
+            string material = objDesc["material"]?.ToString();
+            if (!string.IsNullOrEmpty(material))
+            {
+                var renderer = go.GetComponent<Renderer>();
+                if (renderer != null)
+                {
+                    renderer.sharedMaterial = new Material(Shader.Find("Standard"))
+                    {
+                        color = GetMaterialColor(material)
+                    };
+                }
+            }
+
+            // Components
+            var components = objDesc["components"] as JArray;
+            if (components != null)
+            {
+                foreach (var compDesc in components)
+                {
+                    AddComponent(go, compDesc);
+                }
+            }
+        }
+
+        private static void AddComponent(GameObject go, JToken compDesc)
+        {
+            string compType = compDesc["type"]?.ToString() ?? "";
+            var props = compDesc["properties"] as JObject;
+
+            switch (compType)
+            {
+                case "Rigidbody":
+                    var rb = go.AddComponent<Rigidbody>();
+                    if (props != null) ApplyRigidbodyProperties(rb, props);
+                    break;
+
+                case "Rigidbody2D":
+                    var rb2d = go.AddComponent<Rigidbody2D>();
+                    if (props != null) ApplyRigidbody2DProperties(rb2d, props);
+                    break;
+
+                case "BoxCollider":
+                    var bc = go.AddComponent<BoxCollider>();
+                    if (props != null && props["size"] != null)
+                        bc.size = ParseVector3(props["size"]);
+                    break;
+
+                case "SphereCollider":
+                    var sc = go.AddComponent<SphereCollider>();
+                    if (props != null && props["radius"] != null)
+                        sc.radius = props["radius"].ToObject<float>();
+                    break;
+
+                case "BoxCollider2D":
+                    var bc2d = go.AddComponent<BoxCollider2D>();
+                    if (props != null)
+                    {
+                        if (props["size"] != null)
+                            bc2d.size = ParseVector2(props["size"]);
+                        if (props["isTrigger"] != null)
+                            bc2d.isTrigger = props["isTrigger"].ToObject<bool>();
+                        if (props["offset"] != null)
+                            bc2d.offset = ParseVector2(props["offset"]);
+                    }
+                    break;
+
+                case "CircleCollider2D":
+                    var cc2d = go.AddComponent<CircleCollider2D>();
+                    if (props != null)
+                    {
+                        if (props["radius"] != null)
+                            cc2d.radius = props["radius"].ToObject<float>();
+                        if (props["isTrigger"] != null)
+                            cc2d.isTrigger = props["isTrigger"].ToObject<bool>();
+                    }
+                    break;
+
+                case "SpriteRenderer":
+                    go.AddComponent<SpriteRenderer>();
+                    break;
+
+                case "Animator":
+                    go.AddComponent<Animator>();
+                    break;
+
+                case "CharacterController":
+                    go.AddComponent<CharacterController>();
+                    break;
+
+                default:
+                    // 尝试作为自定义脚本组件添加
+                    TryAddScriptComponent(go, compType, props);
+                    break;
+            }
+        }
+
+        private static void TryAddScriptComponent(GameObject go, string typeName, JObject props)
+        {
+            // 在已加载的程序集中查找类型
+            Type scriptType = null;
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                scriptType = assembly.GetType(typeName);
+                if (scriptType != null) break;
+            }
+
+            if (scriptType == null)
+            {
+                // 尝试常见命名空间
+                string[] namespaces = { "", "GameForge.", "GameForge.Player.", "GameForge.Core.", "GameForge.Enemy." };
+                foreach (var ns in namespaces)
+                {
+                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        scriptType = assembly.GetType(ns + typeName);
+                        if (scriptType != null) break;
+                    }
+                    if (scriptType != null) break;
+                }
+            }
+
+            if (scriptType != null)
+            {
+                var comp = go.AddComponent(scriptType);
+                if (props != null)
+                {
+                    ApplySerializedProperties(comp, props);
+                }
+                Debug.Log($"[GameForge] Attached script {typeName} to {go.name}");
+            }
+            else
+            {
+                Debug.LogWarning($"[GameForge] Script type '{typeName}' not found, skipping. Will be available after compilation.");
+            }
+        }
+
+        private static void ApplyRigidbodyProperties(Rigidbody rb, JObject props)
+        {
+            if (props["mass"] != null) rb.mass = props["mass"].ToObject<float>();
+            if (props["drag"] != null) rb.drag = props["drag"].ToObject<float>();
+            if (props["angularDrag"] != null) rb.angularDrag = props["angularDrag"].ToObject<float>();
+            if (props["useGravity"] != null) rb.useGravity = props["useGravity"].ToObject<bool>();
+            if (props["isKinematic"] != null) rb.isKinematic = props["isKinematic"].ToObject<bool>();
+            if (props["freezeRotation"] != null && props["freezeRotation"].ToObject<bool>())
+                rb.constraints = RigidbodyConstraints.FreezeRotation;
+            if (props["interpolation"] != null)
+            {
+                string interp = props["interpolation"].ToString().ToLower();
+                if (interp == "interpolate") rb.interpolation = RigidbodyInterpolation.Interpolate;
+                else if (interp == "extrapolate") rb.interpolation = RigidbodyInterpolation.Extrapolate;
+            }
+            if (props["collisionDetectionMode"] != null)
+            {
+                string mode = props["collisionDetectionMode"].ToString().ToLower();
+                if (mode == "continuous") rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+                else if (mode == "continuousdynamic") rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            }
+        }
+
+        private static void ApplyRigidbody2DProperties(Rigidbody2D rb, JObject props)
+        {
+            if (props["mass"] != null) rb.mass = props["mass"].ToObject<float>();
+            if (props["drag"] != null) rb.drag = props["drag"].ToObject<float>();
+            if (props["angularDrag"] != null) rb.angularDrag = props["angularDrag"].ToObject<float>();
+            if (props["gravityScale"] != null) rb.gravityScale = props["gravityScale"].ToObject<float>();
+            if (props["isKinematic"] != null) rb.isKinematic = props["isKinematic"].ToObject<bool>();
+            if (props["freezeRotation"] != null && props["freezeRotation"].ToObject<bool>())
+                rb.constraints = RigidbodyConstraints2D.FreezeRotation;
+            if (props["bodyType"] != null)
+            {
+                string bt = props["bodyType"].ToString().ToLower();
+                if (bt == "static") rb.bodyType = RigidbodyType2D.Static;
+                else if (bt == "kinematic") rb.bodyType = RigidbodyType2D.Kinematic;
+                else rb.bodyType = RigidbodyType2D.Dynamic;
+            }
+            if (props["interpolation"] != null)
+            {
+                string interp = props["interpolation"].ToString().ToLower();
+                if (interp == "interpolate") rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+                else if (interp == "extrapolate") rb.interpolation = RigidbodyInterpolation2D.Extrapolate;
+            }
+            if (props["collisionDetectionMode"] != null)
+            {
+                string mode = props["collisionDetectionMode"].ToString().ToLower();
+                if (mode == "continuous") rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
+                else rb.collisionDetectionMode = CollisionDetectionMode2D.Discrete;
+            }
+        }
+
+        private static void ApplySerializedProperties(Component comp, JObject props)
+        {
+            var so = new SerializedObject(comp);
+            foreach (var prop in props.Properties())
+            {
+                var sp = so.FindProperty(prop.Name);
+                if (sp == null) continue;
+
+                switch (sp.propertyType)
+                {
+                    case SerializedPropertyType.Integer:
+                        sp.intValue = prop.Value.ToObject<int>();
+                        break;
+                    case SerializedPropertyType.Float:
+                        sp.floatValue = prop.Value.ToObject<float>();
+                        break;
+                    case SerializedPropertyType.Boolean:
+                        sp.boolValue = prop.Value.ToObject<bool>();
+                        break;
+                    case SerializedPropertyType.String:
+                        sp.stringValue = prop.Value.ToString();
+                        break;
+                    case SerializedPropertyType.Enum:
+                        sp.enumValueIndex = prop.Value.ToObject<int>();
+                        break;
+                    case SerializedPropertyType.Vector2:
+                        sp.vector2Value = ParseVector2(prop.Value);
+                        break;
+                    case SerializedPropertyType.Vector3:
+                        sp.vector3Value = ParseVector3(prop.Value);
+                        break;
+                    case SerializedPropertyType.Color:
+                        sp.colorValue = ParseColor(prop.Value);
+                        break;
+                }
+            }
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        // ==================== Compile ====================
+
+        private static string HandleCompile()
+        {
+            if (EditorApplication.isCompiling)
+            {
+                return JsonConvert.SerializeObject(new { status = "compiling" });
+            }
+
+            EnqueueOnMainThread(() =>
+            {
+                lastCompileErrors.Clear();
+                lastCompileWarnings.Clear();
+                AssetDatabase.Refresh();
+            });
+
+            // Wait for compilation to finish
+            int maxWait = 30;
+            while (EditorApplication.isCompiling && maxWait > 0)
+            {
+                Thread.Sleep(1000);
+                maxWait--;
+            }
+
+            var errors = lastCompileErrors.Select(e => new
+            {
+                file = e.file,
+                line = e.line,
+                column = e.column,
+                code = ExtractErrorCode(e.message),
+                message = e.message,
+            }).ToList();
+
+            var warnings = lastCompileWarnings.Select(w => new
+            {
+                file = w.file,
+                line = w.line,
+                code = ExtractErrorCode(w.message),
+                message = w.message,
+            }).ToList();
+
+            return JsonConvert.SerializeObject(new
+            {
+                status = errors.Count > 0 ? "error" : "success",
+                errors,
+                warnings,
+            });
+        }
+
+        private static string HandleGetCompileErrors()
+        {
+            var errors = lastCompileErrors.Select(e => new
+            {
+                file = e.file,
+                line = e.line,
+                column = e.column,
+                code = ExtractErrorCode(e.message),
+                message = e.message,
+            }).ToList();
+
+            var warnings = lastCompileWarnings.Select(w => new
+            {
+                file = w.file,
+                line = w.line,
+                code = ExtractErrorCode(w.message),
+                message = w.message,
+            }).ToList();
+
+            return JsonConvert.SerializeObject(new
+            {
+                status = errors.Count > 0 ? "error" : "success",
+                errors,
+                warnings,
+            });
+        }
+
+        // ==================== Compilation Events ====================
+
+        private static void OnCompilationFinished(string assemblyPath, CompilerMessage[] messages)
+        {
+            foreach (var msg in messages)
+            {
+                if (msg.type == CompilerMessageType.Error)
+                    lastCompileErrors.Add(msg);
+                else if (msg.type == CompilerMessageType.Warning)
+                    lastCompileWarnings.Add(msg);
+            }
+        }
+
+        // ==================== Helpers ====================
+
+        private static string ReadRequestBody(HttpListenerRequest request)
+        {
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            {
+                return reader.ReadToEnd();
+            }
+        }
+
+        private static void SendResponse(HttpListenerResponse response, int statusCode, string body)
+        {
+            try
+            {
+                response.StatusCode = statusCode;
+                response.ContentType = "application/json";
+                response.Headers.Add("Access-Control-Allow-Origin", "*");
+                response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+
+                byte[] buffer = Encoding.UTF8.GetBytes(body);
+                response.ContentLength64 = buffer.Length;
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+                response.OutputStream.Close();
+            }
+            catch { }
+        }
+
+        private static void EnqueueOnMainThread(Action action)
+        {
+            lock (queueLock)
+            {
+                mainThreadActions.Enqueue(action);
+            }
+        }
+
+        private static void ProcessMainThreadQueue()
+        {
+            lock (queueLock)
+            {
+                while (mainThreadActions.Count > 0)
+                {
+                    try
+                    {
+                        mainThreadActions.Dequeue()?.Invoke();
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogError($"[GameForge] Main thread action error: {e}");
+                    }
+                }
+            }
+        }
+
+        private static Vector3 ParseVector3(JToken token)
+        {
+            if (token is JArray arr && arr.Count >= 3)
+                return new Vector3(arr[0].ToObject<float>(), arr[1].ToObject<float>(), arr[2].ToObject<float>());
+            return Vector3.zero;
+        }
+
+        private static Vector2 ParseVector2(JToken token)
+        {
+            if (token is JArray arr && arr.Count >= 2)
+                return new Vector2(arr[0].ToObject<float>(), arr[1].ToObject<float>());
+            return Vector2.zero;
+        }
+
+        private static Color ParseColor(JToken token)
+        {
+            if (token is JArray arr && arr.Count >= 4)
+                return new Color(arr[0].ToObject<float>(), arr[1].ToObject<float>(), arr[2].ToObject<float>(), arr[3].ToObject<float>());
+            if (token is JArray arr3 && arr3.Count >= 3)
+                return new Color(arr3[0].ToObject<float>(), arr3[1].ToObject<float>(), arr3[2].ToObject<float>(), 1f);
+            return Color.white;
+        }
+
+        private static Color GetMaterialColor(string name)
+        {
+            switch (name.ToLower())
+            {
+                case "red": return Color.red;
+                case "green": return Color.green;
+                case "blue": return Color.blue;
+                case "yellow": return Color.yellow;
+                case "orange": return new Color(1f, 0.5f, 0f);
+                case "purple": return new Color(0.5f, 0f, 0.5f);
+                case "pink": return new Color(1f, 0.4f, 0.7f);
+                case "cyan": return Color.cyan;
+                case "white": return Color.white;
+                case "black": return Color.black;
+                case "gray": case "grey": return Color.gray;
+                case "brown": return new Color(0.6f, 0.3f, 0.1f);
+                case "gold": return new Color(1f, 0.84f, 0f);
+                case "silver": return new Color(0.75f, 0.75f, 0.75f);
+                case "player": return new Color(0.4f, 0.6f, 1f);
+                case "enemy": return new Color(1f, 0.3f, 0.3f);
+                case "ground": return new Color(0.4f, 0.8f, 0.3f);
+                case "platform": return new Color(0.5f, 0.5f, 0.5f);
+                case "coin": return new Color(1f, 0.84f, 0f);
+                case "water": return new Color(0.2f, 0.5f, 1f);
+                case "lava": return new Color(1f, 0.3f, 0f);
+                case "ice": return new Color(0.8f, 0.95f, 1f);
+                case "wood": return new Color(0.6f, 0.4f, 0.2f);
+                case "stone": return new Color(0.5f, 0.5f, 0.5f);
+                case "metal": return new Color(0.7f, 0.7f, 0.8f);
+                default: return Color.white;
+            }
+        }
+
+        private static string ExtractErrorCode(string message)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(message, @"(CS\d{4})");
+            return match.Success ? match.Groups[1].Value : "";
+        }
+    }
+}
+#endif

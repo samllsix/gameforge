@@ -55,7 +55,19 @@ class DebuggerAgent(BaseAgent):
             if path.endswith(".cs"):
                 code_context += f"\n### {path}\n```csharp\n{content}\n```\n"
 
+        # 解析Unity编译错误（结构化）
+        parsed_errors = []
+        for err in error_log:
+            parsed = self._parse_unity_error(err)
+            if parsed:
+                parsed_errors.append(parsed)
+
         error_text = "\n".join(error_log)
+        parsed_context = ""
+        if parsed_errors:
+            parsed_context = "\n\n## 解析后的错误详情\n"
+            for pe in parsed_errors:
+                parsed_context += f"- **{pe.get('code', 'Unknown')}**: {pe.get('file', '?')}:{pe.get('line', '?')} — {pe.get('message', '')}\n"
 
         system_prompt = self.get_prompt_template("debugger_system")
         user_prompt = f"""请分析以下错误并生成修复方案。
@@ -64,6 +76,7 @@ class DebuggerAgent(BaseAgent):
 ```
 {error_text}
 ```
+{parsed_context}
 
 ## 相关代码
 {code_context}
@@ -146,6 +159,43 @@ class DebuggerAgent(BaseAgent):
         """兼容旧接口"""
         error_log = state.get("error_log", [])
         return await self.analyze_and_fix(state, error_log)
+
+    def _parse_unity_error(self, error_line: str) -> Optional[Dict[str, Any]]:
+        """解析Unity编译错误行
+
+        Unity错误格式:
+        Assets/Scripts/Player/PlayerController.cs(15,10): error CS0246: The type or namespace 'X' could not be found
+        Assets/Scripts/Core/GameManager.cs(42): error CS1061: Type 'Y' does not contain a definition for 'Z'
+
+        Returns:
+            解析结果 {"file", "line", "column", "code", "message"} 或 None
+        """
+        # 匹配 Unity 编译错误格式
+        match = re.match(
+            r'^(.+?)\((\d+)(?:,\s*(\d+))?\):\s*error\s+(CS\d+):\s*(.+)$',
+            error_line.strip()
+        )
+        if match:
+            return {
+                "file": match.group(1),
+                "line": int(match.group(2)),
+                "column": int(match.group(3)) if match.group(3) else 0,
+                "code": match.group(4),
+                "message": match.group(5).strip(),
+            }
+
+        # 匹配简化的错误格式
+        simple_match = re.match(r'^(?:error|Error)[:\s]+(.+)$', error_line.strip())
+        if simple_match:
+            return {
+                "file": "",
+                "line": 0,
+                "column": 0,
+                "code": "",
+                "message": simple_match.group(1).strip(),
+            }
+
+        return None
 
     def analyze_error(self, error_message: str, stack_trace: str = "") -> Dict[str, Any]:
         error_patterns = {

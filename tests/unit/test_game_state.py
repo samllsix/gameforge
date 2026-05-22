@@ -24,7 +24,11 @@ class TestEnums:
         assert TaskType.DESIGN.value == "design"
         assert TaskType.REVIEW.value == "review"
         assert TaskType.FIX.value == "fix"
-        assert len(TaskType) == 6
+        assert TaskType.SCENE.value == "scene"
+        assert TaskType.UI.value == "ui"
+        assert TaskType.CONFIG.value == "config"
+        assert TaskType.DOCUMENTATION.value == "documentation"
+        assert len(TaskType) == 10
 
     def test_agent_type_values(self):
         assert AgentType.ORCHESTRATOR.value == "orchestrator"
@@ -33,7 +37,8 @@ class TestEnums:
         assert AgentType.CODE_REVIEWER.value == "code_reviewer"
         assert AgentType.TEST_GENERATOR.value == "test_generator"
         assert AgentType.DEBUGGER.value == "debugger"
-        assert len(AgentType) == 7
+        assert AgentType.SCENE_GENERATOR.value == "scene_generator"
+        assert len(AgentType) == 8
 
 
 class TestTaskModel:

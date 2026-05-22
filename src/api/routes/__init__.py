@@ -1,6 +1,7 @@
-"""GameForge - API路由模块
+"""GameForge - 扩展API路由模块
 
-定义FastAPI路由，按功能分组。所有阻塞操作使用run_in_executor异步化。
+只包含main.py中没有的独立路由：编译、导入、评测。
+避免与主路由重复定义。
 """
 
 import asyncio
@@ -8,104 +9,15 @@ from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 
 from src.api.schemas import (
-    GenerateRequest,
-    GenerateResponse,
-    TaskPlanRequest,
-    TaskPlanResponse,
     CompileRequest,
     CompileResponse,
     ImportRequest,
     ImportResponse,
     EvalRequest,
     EvalResponse,
-    HealthResponse,
-    AgentListResponse,
-    AgentInfo,
 )
 
 router = APIRouter()
-
-
-@router.get("/health", response_model=HealthResponse)
-async def health_check():
-    """健康检查"""
-    return HealthResponse()
-
-
-@router.get("/agents", response_model=AgentListResponse)
-async def list_agents():
-    """列出所有可用的Agent"""
-    agents = [
-        AgentInfo(name="orchestrator", description="编排Agent - 任务调度和流程控制"),
-        AgentInfo(name="planner", description="规划Agent - 解析需求并生成任务计划"),
-        AgentInfo(name="code_generator", description="代码生成Agent - 生成游戏代码"),
-        AgentInfo(name="code_reviewer", description="代码审查Agent - 审查代码质量"),
-        AgentInfo(name="test_generator", description="测试生成Agent - 生成测试用例"),
-        AgentInfo(name="debugger", description="调试Agent - 分析错误并生成修复方案"),
-        AgentInfo(name="refactor", description="重构Agent - 分析代码质量并优化重构"),
-    ]
-    return AgentListResponse(agents=agents)
-
-
-@router.post("/generate", response_model=GenerateResponse)
-async def generate_code(request: GenerateRequest):
-    """生成游戏代码"""
-    try:
-        from src.core.graph.workflow import create_workflow
-        from src.cli import load_config
-
-        config = load_config()
-        workflow = create_workflow(config)
-
-        result = await workflow.run(
-            {
-                "project_context": {
-                    "engine": request.engine,
-                    "project_name": request.project_name,
-                    "requirements": request.requirements,
-                },
-            }
-        )
-
-        return GenerateResponse(
-            success=True,
-            code_generated=result.get("code_generated", {}),
-            task_count=len(result.get("task_plan", [])),
-            fix_count=len(result.get("fix_history", [])),
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/plan", response_model=TaskPlanResponse)
-async def plan_tasks(request: TaskPlanRequest):
-    """规划任务"""
-    try:
-        from src.agents.planner import PlannerAgent
-        from src.cli import load_config
-
-        config = load_config()
-        planner = PlannerAgent(config)
-
-        state = {
-            "project_context": {"requirements": request.requirements, "engine": "unity"},
-            "task_plan": [],
-            "code_generated": {},
-            "code_artifacts": [],
-            "test_results": None,
-            "test_report": None,
-            "fix_history": [],
-            "fix_attempts": 0,
-            "current_phase": "planning",
-            "is_complete": False,
-            "requires_human_input": False,
-            "error_log": [],
-        }
-
-        tasks = await planner.plan(state)
-        return TaskPlanResponse(tasks=tasks)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/compile", response_model=CompileResponse)

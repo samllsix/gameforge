@@ -23,6 +23,11 @@ class GameForgeLogger:
             log_dir: 日志目录
             prefix: 日志文件前缀
         """
+        # 修复Windows控制台中文乱码
+        if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 

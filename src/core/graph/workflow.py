@@ -4,6 +4,7 @@
 """
 
 import asyncio
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, END
 
@@ -14,6 +15,8 @@ from src.agents.code_generator import CodeGeneratorAgent
 from src.agents.code_reviewer import CodeReviewerAgent
 from src.agents.test_generator import TestGeneratorAgent
 from src.agents.debugger import DebuggerAgent
+from src.agents.scene_generator import SceneGeneratorAgent
+from src.agents.game_designer import GameDesignerAgent
 
 
 class GameDevWorkflow:
@@ -27,11 +30,13 @@ class GameDevWorkflow:
         """
         self.config = config
         self.orchestrator = OrchestratorAgent(config)
+        self.game_designer = GameDesignerAgent(config)
         self.planner = PlannerAgent(config)
         self.code_generator = CodeGeneratorAgent(config)
         self.code_reviewer = CodeReviewerAgent(config)
         self.test_generator = TestGeneratorAgent(config)
         self.debugger = DebuggerAgent(config)
+        self.scene_generator = SceneGeneratorAgent(config)
 
         self.workflow = self._build_workflow()
 
@@ -75,6 +80,17 @@ class GameDevWorkflow:
         )
 
         return workflow.compile()
+
+    async def _game_designer_node(self, state: GameDevState) -> Dict[str, Any]:
+        """游戏设计节点 — 生成 Game Design Model"""
+        try:
+            result = await self.game_designer.execute(state)
+            return {
+                "game_design_model": result.get("game_design_model"),
+                "current_phase": "design_complete",
+            }
+        except Exception as e:
+            return {"error_log": [f"GameDesigner failed: {e}"], "current_phase": "error"}
 
     async def _planner_node(self, state: GameDevState) -> Dict[str, Any]:
         """规划节点 - 解析需求并生成任务计划"""
@@ -125,7 +141,7 @@ class GameDevWorkflow:
         """代码审查节点 - 审查生成的代码"""
         try:
             review_result = await self.code_reviewer.review(state)
-            return {"current_phase": "code_reviewed"}
+            return {"current_phase": "code_reviewed", "review_result": review_result}
         except Exception as e:
             return {"error_log": [f"Code reviewer failed: {e}"], "current_phase": "error"}
 
@@ -217,7 +233,8 @@ class GameDevWorkflow:
         elif task_type == "test":
             return "test_generator"
         else:
-            return "code_generator"
+            # scene/documentation/config/ui 任务由共享产物逻辑处理
+            return END
 
     def _is_task_completed(self, task_plan: List[Dict], task_id: str) -> bool:
         """检查任务是否已完成"""
@@ -241,12 +258,24 @@ class GameDevWorkflow:
                 ready.append(task)
         return ready
 
+    # 非代码任务类型 — 由共享产物逻辑处理，不进入 CodeGenerator
+    _NON_CODE_TASK_TYPES = {
+        TaskType.SCENE.value,
+        TaskType.DOCUMENTATION.value,
+        TaskType.CONFIG.value,
+        TaskType.UI.value,
+        "scene", "documentation", "config", "ui",
+    }
+
     async def _execute_tasks_parallel(self, state: GameDevState, tasks: List[Dict]) -> Dict[str, Any]:
         """并行执行多个独立任务"""
         async def _process_single_task(task):
             task_type = task.get("type", "code")
             if task_type == TaskType.TEST.value:
                 return await self.test_generator.generate(state), task, "test"
+            elif task_type in self._NON_CODE_TASK_TYPES:
+                # 非代码任务直接返回空产物，标记完成
+                return [], task, "artifact"
             else:
                 return await self.code_generator.generate(state, task), task, "code"
 
@@ -288,6 +317,10 @@ class GameDevWorkflow:
 
     async def _run_with_parallel_support(self, state: GameDevState) -> GameDevState:
         """运行工作流（支持并行任务执行）"""
+        # Phase 0: 游戏设计
+        design_result = await self._game_designer_node(state)
+        state.update(design_result)
+
         # Phase 1: 规划
         plan_result = await self._planner_node(state)
         state.update(plan_result)
@@ -333,6 +366,15 @@ class GameDevWorkflow:
                     # 测试任务 → 直接生成测试
                     test_result = await self._test_generator_node(state)
                     state.update(test_result)
+                elif task_type in self._NON_CODE_TASK_TYPES:
+                    # scene/documentation/config/ui 任务 → 标记完成，由共享产物逻辑生成
+                    task_plan = state.get("task_plan", [])
+                    for t in task_plan:
+                        if t.get("id") == task.get("id"):
+                            t["status"] = TaskStatus.COMPLETED.value
+                            break
+                    state["task_plan"] = task_plan
+                    continue
                 else:
                     # 代码任务 → 生成 + 审查 + 测试（并行）
                     gen_result = await self._code_generator_node(state)
@@ -362,6 +404,218 @@ class GameDevWorkflow:
 
         return state
 
+    async def _unity_compile_loop(self, state: GameDevState, event_callback, max_rounds: int = 3):
+        """Unity编译闭环：导入→编译→读错误→自动修复→重编译
+
+        Args:
+            state: 当前状态
+            event_callback: SSE事件回调
+            max_rounds: 最大修复轮数
+        """
+        from src.engine.unity.unity_http_client import UnityHTTPClient
+
+        client = UnityHTTPClient()
+        if not await client.check_health():
+            await event_callback("compile_result", {
+                "status": "skipped",
+                "message": "Unity Editor未启动，跳过编译闭环",
+            })
+            return
+
+        code_files = state.get("code_generated", {})
+        cs_files = {k: v for k, v in code_files.items() if k.endswith(".cs")}
+        if not cs_files:
+            return
+
+        # 导入代码文件
+        await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到Unity..."})
+        import_result = await client.import_files(cs_files)
+        if import_result.get("status") == "error":
+            await event_callback("compile_result", {
+                "status": "error",
+                "message": f"导入失败: {import_result.get('error', '')}",
+            })
+            return
+
+        for round_num in range(max_rounds):
+            # 编译
+            await event_callback("phase_start", {
+                "phase": "compiling",
+                "message": f"正在编译 (第{round_num + 1}轮)...",
+            })
+
+            compile_result = await client.compile_scripts()
+            errors = compile_result.get("errors", [])
+
+            if not errors:
+                await event_callback("compile_result", {
+                    "status": "success",
+                    "message": f"编译成功！共{len(cs_files)}个文件",
+                    "round": round_num + 1,
+                })
+                return
+
+            # 有错误 → 通知前端
+            await event_callback("compile_result", {
+                "status": "error",
+                "message": f"编译发现{len(errors)}个错误",
+                "errors": errors[:10],  # 最多显示10个
+                "round": round_num + 1,
+            })
+
+            # 自动修复
+            await event_callback("phase_start", {
+                "phase": "debugging",
+                "message": f"正在自动修复编译错误 (第{round_num + 1}轮)...",
+            })
+
+            # 将错误转为error_log，调用debugger
+            error_log = []
+            for err in errors:
+                if isinstance(err, dict):
+                    line = err.get("line", "")
+                    file = err.get("file", "")
+                    msg = err.get("message", "")
+                    code = err.get("code", "")
+                    error_log.append(f"{file}({line}): error {code}: {msg}")
+                else:
+                    error_log.append(str(err))
+
+            state["error_log"] = error_log
+            debug_result = await self._debugger_node(state)
+            state.update(debug_result)
+
+            # 将修复后的代码重新导入
+            updated_files = state.get("code_generated", {})
+            updated_cs = {k: v for k, v in updated_files.items() if k.endswith(".cs")}
+            if updated_cs != cs_files:
+                cs_files = updated_cs
+                await client.import_files(cs_files)
+
+        # 超过最大轮数
+        await event_callback("compile_result", {
+            "status": "partial",
+            "message": f"经过{max_rounds}轮修复仍有编译错误，可能需要人工介入",
+        })
+
+    async def _run_scene_generation(self, state: GameDevState, event_callback):
+        """并行运行场景生成（与代码生成同时进行）"""
+        await event_callback("scene_start", {"message": "正在生成Unity场景..."})
+        try:
+            result = await self.scene_generator.execute(state)
+            status = result.get("scene_status", "error")
+            state["scene_status"] = status
+            state["scene_description"] = result.get("scene_description")
+            state["scene_path"] = result.get("scene_path", "")
+            state["scene_error"] = result.get("scene_error")
+
+            # 保存编译结果（auto_build=true时）
+            if result.get("compile_errors"):
+                state.setdefault("scene_compile_errors", []).extend(result["compile_errors"])
+
+            # 始终将场景描述JSON纳入code_generated输出
+            scene_desc = result.get("scene_description")
+            if scene_desc:
+                import json
+                scene_json = json.dumps(scene_desc, indent=2, ensure_ascii=False)
+                state["code_generated"]["Assets/Scenes/scene_description.json"] = scene_json
+
+            if status == "built":
+                compile_status = result.get("compile_status", "unknown")
+                msg = "Unity场景已生成！请在Unity Editor中查看"
+                if compile_status == "error":
+                    msg = f"Unity场景已生成，但有编译错误（{len(result.get('compile_errors', []))}个）"
+                await event_callback("scene_complete", {
+                    "message": msg,
+                    "scene_path": result.get("scene_path", ""),
+                    "object_count": result.get("object_count", 0),
+                    "compile_status": compile_status,
+                    "compile_errors": result.get("compile_errors", []),
+                })
+            elif status == "skipped":
+                await event_callback("scene_skipped", {
+                    "message": result.get("message", "场景描述已生成，Unity未构建"),
+                    "reason": result.get("scene_skip_reason", "unknown"),
+                })
+            else:
+                await event_callback("scene_error", {
+                    "message": result.get("scene_error", "场景生成失败"),
+                })
+        except Exception as e:
+            state["scene_status"] = "error"
+            state["scene_error"] = str(e)
+            await event_callback("scene_error", {"message": str(e)})
+
+    def _add_project_artifacts(self, state: GameDevState) -> None:
+        """生成完整项目产物（共享逻辑，run() 和 run_with_streaming() 都调用）
+
+        生成：GameDesignModel.json, CodeMetadata.json, ValidationReport.json,
+              scene_description.json, README_Unity.md, ProjectSettings_Suggestions.md,
+              GameForgeHttpServer.cs
+        """
+        import json as _json
+
+        code_generated = state.setdefault("code_generated", {})
+
+        # README 和项目配置建议
+        try:
+            from src.agents.code_generator import CodeGeneratorAgent
+            code_gen = CodeGeneratorAgent(self.config)
+            project_name = state.get("project_context", {}).get("project_name", "GameForge")
+            code_files = state.get("code_generated", {})
+            task_plan = state.get("task_plan", [])
+
+            if "Assets/README_Unity.md" not in code_generated:
+                readme = code_gen.generate_readme(project_name, task_plan, code_files)
+                code_generated["Assets/README_Unity.md"] = readme
+
+            if "Assets/ProjectSettings_Suggestions.md" not in code_generated:
+                settings = code_gen.generate_project_settings(code_files)
+                code_generated["Assets/ProjectSettings_Suggestions.md"] = settings
+        except Exception as e:
+            state.setdefault("warnings", []).append(f"README/设置文档生成失败: {e}")
+
+        # scene_description.json
+        scene_desc = state.get("scene_description")
+        if scene_desc and "Assets/Scenes/scene_description.json" not in code_generated:
+            code_generated["Assets/Scenes/scene_description.json"] = _json.dumps(scene_desc, indent=2, ensure_ascii=False)
+
+        # GameDesignModel.json — 完整游戏设计模型
+        if "Assets/GameDesignModel.json" not in code_generated:
+            full_gdm = state.get("game_design_model", {})
+            full_gdm["_meta"] = {
+                "project_name": state.get("project_context", {}).get("project_name", "GameForge"),
+                "engine": state.get("project_context", {}).get("engine", "unity"),
+                "task_count": len(state.get("task_plan", [])),
+                "scene_status": state.get("scene_status", "pending"),
+                "generated_at": __import__("datetime").datetime.now().isoformat(),
+            }
+            code_generated["Assets/GameDesignModel.json"] = _json.dumps(full_gdm, indent=2, ensure_ascii=False)
+
+        # CodeMetadata.json
+        if "Assets/CodeMetadata.json" not in code_generated:
+            file_metadata = state.get("file_metadata", {})
+            cm = {
+                "files": list(code_generated.keys()),
+                "file_metadata": file_metadata,
+                "total_files": len(code_generated),
+                "cs_files": len([f for f in code_generated if f.endswith(".cs")]),
+            }
+            code_generated["Assets/CodeMetadata.json"] = _json.dumps(cm, indent=2, ensure_ascii=False)
+
+        # ValidationReport.json
+        if "Assets/ValidationReport.json" not in code_generated:
+            validation_result = state.get("validation_result")
+            if validation_result:
+                code_generated["Assets/ValidationReport.json"] = _json.dumps(validation_result, indent=2, ensure_ascii=False)
+
+        # Unity Editor HTTP Server 插件（始终输出）
+        if "Assets/Editor/GameForgeHttpServer.cs" not in code_generated:
+            template_path = Path(__file__).parent.parent.parent.parent / "config" / "templates" / "unity" / "GameForgeHttpServer.cs.template"
+            if template_path.exists():
+                plugin_content = template_path.read_text(encoding="utf-8")
+                code_generated["Assets/Editor/GameForgeHttpServer.cs"] = plugin_content
+
     async def run(self, input_state: Dict[str, Any]) -> Dict[str, Any]:
         """运行工作流
 
@@ -386,9 +640,45 @@ class GameDevWorkflow:
             "requires_human_input": False,
             "project_context": input_state.get("project_context", {}),
             "error_log": [],
+            "scene_description": None,
+            "scene_status": "pending",
+            "scene_error": None,
+            "game_design_model": None,
+            "file_metadata": {},
+            "validation_result": None,
+            "warnings": [],
         }
 
+        # 生成场景描述（如果配置允许）
+        scene_task = asyncio.create_task(
+            self._run_scene_generation(initial_state, lambda *a: asyncio.sleep(0))
+        )
+
         final_state = await self._run_with_parallel_support(initial_state)
+
+        # 等待场景生成完成
+        try:
+            await asyncio.wait_for(scene_task, timeout=60)
+        except Exception:
+            pass
+
+        # 一致性校验
+        try:
+            from src.utils.consistency_validator import validate_code_scene_consistency
+            scene_desc = final_state.get("scene_description", {})
+            if scene_desc:
+                consistency = validate_code_scene_consistency(
+                    code_files=final_state.get("code_generated", {}),
+                    scene_desc=scene_desc,
+                    gdm=final_state.get("game_design_model"),
+                    file_metadata=final_state.get("file_metadata"),
+                )
+                final_state["validation_result"] = consistency.to_dict()
+        except Exception:
+            pass
+
+        # 生成完整项目产物
+        self._add_project_artifacts(final_state)
         return final_state
 
     async def run_with_streaming(
@@ -418,13 +708,35 @@ class GameDevWorkflow:
             "requires_human_input": False,
             "project_context": input_state.get("project_context", {}),
             "error_log": [],
+            "scene_description": None,
+            "scene_status": "pending",
+            "scene_error": None,
+            "game_design_model": None,
+            "file_metadata": {},
+            "validation_result": None,
+            "warnings": [],
         }
 
         state = initial_state
 
         try:
+            # Phase 0: 游戏设计 — 生成 Game Design Model
+            await event_callback("phase_start", {"phase": "designing", "message": "正在分析需求，设计游戏整体结构..."})
+            design_result = await self._game_designer_node(state)
+            state.update(design_result)
+            gdm = state.get("game_design_model", {})
+            await event_callback("game_design", {
+                "phase": "design_complete",
+                "game_title": gdm.get("game_title", ""),
+                "genre": gdm.get("genre", ""),
+                "camera_mode": gdm.get("camera_mode", ""),
+                "systems": [s.get("name", "") for s in gdm.get("main_systems", [])],
+                "entities": [e.get("name", "") for e in gdm.get("entities", [])],
+                "message": f"游戏设计完成：{gdm.get('game_title', '未命名')}，包含 {len(gdm.get('main_systems', []))} 个系统，{len(gdm.get('entities', []))} 个实体",
+            })
+
             # Phase 1: 规划
-            await event_callback("phase_start", {"phase": "planning", "message": "正在分析需求并生成任务计划..."})
+            await event_callback("phase_start", {"phase": "planning", "message": "正在根据游戏设计生成任务计划..."})
             plan_result = await self._planner_node(state)
             state.update(plan_result)
             await event_callback("task_plan", {
@@ -435,6 +747,11 @@ class GameDevWorkflow:
                 ],
                 "message": f"任务计划生成完成，共{len(state.get('task_plan', []))}个任务",
             })
+
+            # 并行启动场景生成（不阻塞代码生成）
+            scene_task = asyncio.create_task(
+                self._run_scene_generation(state, event_callback)
+            )
 
             max_iterations = self.config.get("agents", {}).get("orchestrator", {}).get("max_iterations", 10)
 
@@ -481,6 +798,10 @@ class GameDevWorkflow:
                     )
                     state.update(review_result)
                     state.update(test_result)
+
+                    # 发送审查结果事件
+                    if review_result.get("review_result"):
+                        await event_callback("review_result", review_result["review_result"])
 
                     # 发送测试生成的文件
                     for file_path, content in state.get("code_generated", {}).items():
@@ -530,6 +851,10 @@ class GameDevWorkflow:
                         state.update(review_result)
                         state.update(test_result)
 
+                        # 发送审查结果事件
+                        if review_result.get("review_result"):
+                            await event_callback("review_result", review_result["review_result"])
+
                     # 只发送新生成的文件
                     for file_path, content in state.get("code_generated", {}).items():
                         if file_path not in sent_files:
@@ -540,12 +865,80 @@ class GameDevWorkflow:
                 else:
                     break
 
+            # 等待场景生成完成（如果还没完成的话）
+            try:
+                await asyncio.wait_for(scene_task, timeout=60)
+            except asyncio.TimeoutError:
+                state.setdefault("warnings", []).append("场景生成超时")
+                await event_callback("scene_error", {"message": "场景生成超时"})
+            except Exception as e:
+                state.setdefault("warnings", []).append(f"场景生成异常: {e}")
+
+            # Unity编译闭环（仅在 auto_build_scene=true 时执行）
+            unity_config = self.config.get("unity", {})
+            auto_build = unity_config.get("auto_build_scene", False)
+            auto_compile = unity_config.get("auto_compile", False)
+            if auto_build or auto_compile:
+                try:
+                    await self._unity_compile_loop(state, event_callback, max_rounds=3)
+                except Exception as e:
+                    state.setdefault("warnings", []).append(f"Unity编译闭环异常: {e}")
+                    await event_callback("warning", {"message": f"编译闭环跳过: {e}"})
+
+            # 代码静态校验
+            try:
+                from src.utils.code_validator import validate_unity_code
+                validation = validate_unity_code(state.get("code_generated", {}))
+                if validation.has_issues:
+                    for err in validation.errors[:5]:
+                        state.setdefault("warnings", []).append(f"校验错误: {err['file']}:{err['line']} — {err['message']}")
+                    for warn in validation.warnings[:5]:
+                        state.setdefault("warnings", []).append(f"校验警告: {warn['file']}:{warn['line']} — {warn['message']}")
+                    await event_callback("warning", {
+                        "message": f"代码校验发现 {validation.to_dict()['error_count']} 个错误, {validation.to_dict()['warning_count']} 个警告",
+                        "validation": validation.to_dict(),
+                    })
+            except Exception as e:
+                state.setdefault("warnings", []).append(f"代码校验异常: {e}")
+
+            # 代码与场景一致性校验
+            try:
+                from src.utils.consistency_validator import validate_code_scene_consistency
+                scene_desc = state.get("scene_description", {})
+                if scene_desc:
+                    consistency = validate_code_scene_consistency(
+                        code_files=state.get("code_generated", {}),
+                        scene_desc=scene_desc,
+                        gdm=state.get("game_design_model"),
+                        file_metadata=state.get("file_metadata"),
+                    )
+                    state["validation_result"] = consistency.to_dict()
+                    if consistency.has_errors:
+                        for err in consistency.errors[:5]:
+                            state.setdefault("warnings", []).append(f"一致性错误: {err['message']}")
+                    if consistency.warnings:
+                        for warn in consistency.warnings[:5]:
+                            state.setdefault("warnings", []).append(f"一致性警告: {warn['message']}")
+                    if consistency.has_issues:
+                        await event_callback("warning", {
+                            "message": f"一致性校验发现 {len(consistency.errors)} 个错误, {len(consistency.warnings)} 个警告",
+                            "validation": consistency.to_dict(),
+                        })
+            except Exception as e:
+                state.setdefault("warnings", []).append(f"一致性校验异常: {e}")
+
+            # 生成完整项目产物（共享逻辑）
+            self._add_project_artifacts(state)
+
             await event_callback("complete", {
                 "phase": "complete",
                 "message": "代码生成完成！",
                 "files": state.get("code_generated", {}),
                 "task_count": len(state.get("task_plan", [])),
                 "fix_count": len(state.get("fix_history", [])),
+                "scene_status": state.get("scene_status", "pending"),
+                "scene_path": state.get("scene_path", ""),
+                "warnings": state.get("warnings", []),
             })
 
         except Exception as e:

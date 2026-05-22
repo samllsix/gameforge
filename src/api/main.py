@@ -11,7 +11,6 @@ import yaml
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
 from typing import Dict, Any, List, Optional
 import uvicorn
 
@@ -30,6 +29,13 @@ from src.api.security import (
     InputValidationMiddleware,
     get_secure_cors_config,
     get_audit_logger,
+)
+from src.api.schemas import (
+    GenerateRequest,
+    GenerateResponse,
+    TaskPlanRequest,
+    TaskPlanResponse,
+    TaskStatusResponse,
 )
 
 
@@ -110,82 +116,7 @@ from src.api.routes import router as routes_router
 app.include_router(routes_router, prefix="/api/v1/ext", tags=["extended"])
 
 
-# ========== 请求/响应模型（带输入验证） ==========
-
-
-class GenerateRequest(BaseModel):
-    """代码生成请求"""
-
-    requirements: str
-    engine: str = "unity"
-    project_name: str = "GameForge Project"
-
-    @field_validator("requirements")
-    @classmethod
-    def validate_requirements(cls, v):
-        result = InputValidator.validate_requirements(v)
-        if not result["valid"]:
-            raise ValueError(result["error"])
-        return result["sanitized"]
-
-    @field_validator("engine")
-    @classmethod
-    def validate_engine(cls, v):
-        result = InputValidator.validate_engine(v)
-        if not result["valid"]:
-            raise ValueError(result["error"])
-        return v.lower()
-
-    @field_validator("project_name")
-    @classmethod
-    def validate_project_name(cls, v):
-        result = InputValidator.validate_project_name(v)
-        if not result["valid"]:
-            raise ValueError(result["error"])
-        return v
-
-
-class GenerateResponse(BaseModel):
-    """代码生成响应"""
-
-    success: bool
-    task_id: Optional[str] = None
-    code_generated: Dict[str, str] = {}
-    task_count: int = 0
-    fix_count: int = 0
-    message: str = ""
-
-
-class TaskPlanRequest(BaseModel):
-    """任务规划请求"""
-
-    requirements: str
-
-    @field_validator("requirements")
-    @classmethod
-    def validate_requirements(cls, v):
-        result = InputValidator.validate_requirements(v)
-        if not result["valid"]:
-            raise ValueError(result["error"])
-        return result["sanitized"]
-
-
-class TaskPlanResponse(BaseModel):
-    """任务规划响应"""
-
-    success: bool
-    task_id: Optional[str] = None
-    tasks: List[Dict[str, Any]] = []
-    message: str = ""
-
-
-class TaskStatusResponse(BaseModel):
-    """任务状态响应"""
-
-    task_id: str
-    status: str
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+# ========== 请求/响应模型（从schemas模块统一导入） ==========
 
 
 # ========== 初始化 ==========
@@ -294,6 +225,12 @@ async def generate_code(request: GenerateRequest):
                         files_generated=result.get("code_generated", {}),
                         task_count=len(result.get("task_plan", [])),
                         fix_count=len(result.get("fix_history", [])),
+                        task_plan=result.get("task_plan"),
+                        review_result=result.get("review_result"),
+                        compile_result=result.get("compile_result"),
+                        fix_history=result.get("fix_history"),
+                        scene_description=result.get("scene_description"),
+                        status="completed" if not result.get("error_log") else "failed",
                     )
                     db.add(history)
                     db.commit()
@@ -541,6 +478,43 @@ async def get_generation_history(limit: int = 20):
             "history": [r.to_dict() for r in records],
             "total": len(records),
         }
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/history/{history_id}")
+async def get_generation_history_detail(history_id: int):
+    """获取单条生成历史详情（按ID）"""
+    from src.db.session import get_db
+    from src.db.models import GenerationHistory
+
+    db = get_db()
+    try:
+        record = db.query(GenerationHistory).filter(GenerationHistory.id == history_id).first()
+        if not record:
+            raise HTTPException(status_code=404, detail=f"历史记录 {history_id} 不存在")
+        return record.to_detail_dict()
+    finally:
+        db.close()
+
+
+@app.get("/api/v1/history/by_task/{task_id}")
+async def get_history_by_task_id(task_id: str):
+    """获取生成历史详情（按task_id）"""
+    if not task_id.isalnum() or len(task_id) > 20:
+        raise HTTPException(status_code=400, detail="无效的任务ID格式")
+
+    from src.db.session import get_db
+    from src.db.models import GenerationHistory
+
+    db = get_db()
+    try:
+        record = db.query(GenerationHistory).filter(
+            GenerationHistory.task_id == task_id
+        ).order_by(GenerationHistory.created_at.desc()).first()
+        if not record:
+            raise HTTPException(status_code=404, detail=f"任务 {task_id} 的历史记录不存在")
+        return record.to_detail_dict()
     finally:
         db.close()
 

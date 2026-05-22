@@ -3,7 +3,7 @@
 定义请求和响应的Pydantic模型。
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -14,13 +14,41 @@ class GenerateRequest(BaseModel):
     engine: str = Field(default="unity", description="游戏引擎 (unity/unreal)")
     project_name: str = Field(default="GameForge Project", description="项目名称")
 
+    @field_validator("requirements")
+    @classmethod
+    def validate_requirements(cls, v):
+        from src.api.security import InputValidator
+        result = InputValidator.validate_requirements(v)
+        if not result["valid"]:
+            raise ValueError(result["error"])
+        return result["sanitized"]
+
+    @field_validator("engine")
+    @classmethod
+    def validate_engine(cls, v):
+        from src.api.security import InputValidator
+        result = InputValidator.validate_engine(v)
+        if not result["valid"]:
+            raise ValueError(result["error"])
+        return v.lower()
+
+    @field_validator("project_name")
+    @classmethod
+    def validate_project_name(cls, v):
+        from src.api.security import InputValidator
+        result = InputValidator.validate_project_name(v)
+        if not result["valid"]:
+            raise ValueError(result["error"])
+        return v
+
 
 class GenerateResponse(BaseModel):
     """代码生成响应"""
     success: bool
-    code_generated: Dict[str, str]
-    task_count: int
-    fix_count: int
+    task_id: Optional[str] = None
+    code_generated: Dict[str, str] = {}
+    task_count: int = 0
+    fix_count: int = 0
     message: str = ""
 
 
@@ -28,10 +56,30 @@ class TaskPlanRequest(BaseModel):
     """任务规划请求"""
     requirements: str = Field(..., description="游戏需求描述")
 
+    @field_validator("requirements")
+    @classmethod
+    def validate_requirements(cls, v):
+        from src.api.security import InputValidator
+        result = InputValidator.validate_requirements(v)
+        if not result["valid"]:
+            raise ValueError(result["error"])
+        return result["sanitized"]
+
 
 class TaskPlanResponse(BaseModel):
     """任务规划响应"""
-    tasks: List[Dict[str, Any]]
+    success: bool
+    task_id: Optional[str] = None
+    tasks: List[Dict[str, Any]] = []
+    message: str = ""
+
+
+class TaskStatusResponse(BaseModel):
+    """任务状态响应"""
+    task_id: str
+    status: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
 
 
 class CompileRequest(BaseModel):
