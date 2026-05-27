@@ -159,13 +159,7 @@ class LLMClient:
             recovery_timeout=llm_config.get("circuit_breaker_recovery", 60.0),
         )
 
-        # 使用同步客户端作为回退（兼容旧调用）
-        from openai import OpenAI
-
-        self._sync_client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-        )
+        self._sync_client = None
         # 异步客户端延迟初始化
         self._async_client: Optional[AsyncOpenAI] = None
 
@@ -175,6 +169,17 @@ class LLMClient:
             pool = await LLMClientPool.get_instance()
             self._async_client = pool.get_client(self.base_url, self.api_key)
         return self._async_client
+
+    def _get_sync_client(self):
+        """Lazily create the sync client only for legacy sync calls."""
+        if self._sync_client is None:
+            from openai import OpenAI
+
+            self._sync_client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+            )
+        return self._sync_client
 
     async def chat(
         self,
@@ -238,7 +243,8 @@ class LLMClient:
         last_error = None
         for attempt in range(self.retry_config.max_retries + 1):
             try:
-                response = self._sync_client.chat.completions.create(
+                client = self._get_sync_client()
+                response = client.chat.completions.create(
                     model=model or self.default_model,
                     messages=messages,
                     temperature=temperature,

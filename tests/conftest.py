@@ -124,6 +124,16 @@ def completed_state(sample_game_state):
 
 
 @pytest.fixture
+def tmp_path(request):
+    """每个测试独立的临时目录，落到项目内 .tmp/pytest/（避免 Windows 系统目录权限问题）"""
+    t_id = request.node.nodeid.replace("/", os.sep).replace("\\", os.sep)
+    t_id = t_id.replace(":", "_")
+    path = PROJECT_ROOT / ".tmp" / "pytest" / t_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.fixture
 def temp_dir():
     """临时目录fixture"""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:

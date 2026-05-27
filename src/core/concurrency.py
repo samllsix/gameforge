@@ -39,6 +39,7 @@ class QueuedTask:
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     priority: int = 0  # 优先级，数值越小优先级越高
+    completion_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class ConcurrencyManager:
@@ -162,44 +163,55 @@ class ConcurrencyManager:
             self._processor_task = asyncio.create_task(self._process_queue())
 
     async def _process_queue(self):
-        """队列处理循环"""
+        """队列处理循环 — 每个任务独立调度，真正并发执行"""
         try:
             while not self.task_queue.empty():
-                priority, submit_time, task_id, handler = (
-                    await self.task_queue.get()
-                )
+                workers = []
+                while not self.task_queue.empty():
+                    priority, submit_time, task_id, handler = (
+                        await self.task_queue.get()
+                    )
 
-                task = self.active_tasks.get(task_id)
-                if not task or task.status == TaskStatus.CANCELLED:
-                    continue
+                    task = self.active_tasks.get(task_id)
+                    if not task or task.status == TaskStatus.CANCELLED:
+                        continue
 
-                # 使用工作流信号量控制并发
-                async with self.workflow_semaphore:
-                    task.status = TaskStatus.RUNNING
-                    task.started_at = time.time()
-                    self._persist_task(task)
-                    logger.info("task_started", task_id=task_id)
+                    workers.append(
+                        asyncio.create_task(self._run_task(task, handler))
+                    )
 
-                    try:
-                        result = await handler(task.payload)
-                        task.status = TaskStatus.COMPLETED
-                        task.result = result
-                        self.stats["total_completed"] += 1
-                        logger.info(
-                            "task_completed",
-                            task_id=task_id,
-                            duration=time.time() - task.started_at,
-                        )
-                    except Exception as e:
-                        task.status = TaskStatus.FAILED
-                        task.error = str(e)
-                        self.stats["total_failed"] += 1
-                        logger.error("task_failed", task_id=task_id, error=str(e))
-                    finally:
-                        task.completed_at = time.time()
-                        self._persist_task(task)
+                if workers:
+                    await asyncio.gather(*workers, return_exceptions=True)
         finally:
             self._processor_running = False
+
+    async def _run_task(self, task: QueuedTask, handler: Callable):
+        """执行单个任务（受信号量限制并发数）"""
+        async with self.workflow_semaphore:
+            task.status = TaskStatus.RUNNING
+            task.started_at = time.time()
+            self._persist_task(task)
+            logger.info("task_started", task_id=task.task_id)
+
+            try:
+                result = await handler(task.payload)
+                task.status = TaskStatus.COMPLETED
+                task.result = result
+                self.stats["total_completed"] += 1
+                logger.info(
+                    "task_completed",
+                    task_id=task.task_id,
+                    duration=time.time() - task.started_at,
+                )
+            except Exception as e:
+                task.status = TaskStatus.FAILED
+                task.error = str(e)
+                self.stats["total_failed"] += 1
+                logger.error("task_failed", task_id=task.task_id, error=str(e))
+            finally:
+                task.completed_at = time.time()
+                self._persist_task(task)
+                task.completion_event.set()
 
     async def get_task_status(self, task_id: str) -> Optional[QueuedTask]:
         """获取任务状态"""
@@ -217,17 +229,20 @@ class ConcurrencyManager:
         Returns:
             任务信息，超时返回None
         """
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            task = self.active_tasks.get(task_id)
-            if task and task.status in (
-                TaskStatus.COMPLETED,
-                TaskStatus.FAILED,
-                TaskStatus.CANCELLED,
-            ):
-                return task
-            await asyncio.sleep(0.5)
-        return None
+        task = self.active_tasks.get(task_id)
+        if not task:
+            return None
+        if task.status in (
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        ):
+            return task
+        try:
+            await asyncio.wait_for(task.completion_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+        return task
 
     def get_stats(self) -> Dict[str, Any]:
         """获取并发统计信息"""

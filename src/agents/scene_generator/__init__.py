@@ -127,116 +127,125 @@ class SceneGeneratorAgent(BaseAgent):
         self, requirements: str, task_plan: List[Dict], engine: str,
         gdm: Optional[Dict] = None, file_metadata: Optional[Dict] = None
     ) -> Optional[Dict]:
-        """调用LLM生成场景描述JSON — 基于Game Design Model和代码元数据"""
+        """三级降级生成场景描述：
+        Level 1: 模板匹配 → 确定性 IR → scene_description
+        Level 2: LLM 生成 Scene IR → Pydantic 校验 → scene_description
+        Level 3: 硬编码 fallback 场景
+        """
+        gdm = gdm or {}
+        file_metadata = file_metadata or {}
+
+        # ── Level 1: 模板匹配 ────────────────────────────────
+        try:
+            from src.agents.scene_templates import match_template, fill_template
+            from src.agents.scene_ir_to_desc import ir_to_scene_description
+
+            tpl_name = match_template(gdm)
+            if tpl_name:
+                ir = fill_template(tpl_name, gdm)
+                scene_desc = ir_to_scene_description(ir, file_metadata)
+                self.log_action("scene_generated_via_template", {"template": tpl_name})
+                return scene_desc
+        except Exception as e:
+            self.log_error("template_scene_failed", {"error": str(e)})
+
+        # ── Level 2: LLM 生成 Scene IR ──────────────────────
+        try:
+            scene_desc = await self._generate_via_llm_ir(requirements, task_plan, gdm, file_metadata)
+            if scene_desc:
+                return scene_desc
+        except Exception as e:
+            self.log_error("llm_ir_scene_failed", {"error": str(e)})
+
+        # ── Level 3: 硬编码 fallback ─────────────────────────
+        return self._fallback_scene(requirements, task_plan)
+
+    async def _generate_via_llm_ir(
+        self, requirements: str, task_plan: List[Dict],
+        gdm: Dict, file_metadata: Dict,
+    ) -> Optional[Dict]:
+        """LLM 生成 Scene IR（抽象中间表示），然后确定性转换为 scene_description。"""
         from src.utils.llm_client import get_llm_client
+        from src.agents.scene_ir import repair_scene_ir
+        from src.agents.scene_ir_to_desc import ir_to_scene_description
 
         llm = get_llm_client(self.config)
 
-        system_prompt = self.get_prompt_template("scene_generator_system")
-        if not system_prompt:
-            system_prompt = self._default_system_prompt()
-
-        # Build task summary
+        # 构建简洁的上下文
         task_summary = ""
         for t in task_plan:
-            task_summary += f"- {t.get('name', '未知')}: {t.get('description', '')}\n"
+            task_summary += f"- {t.get('name', '')}: {t.get('description', '')}\n"
 
-        # GDM context
-        gdm_context = ""
-        if gdm:
-            gdm_context = f"""
-## 游戏设计模型
-- 游戏名称: {gdm.get('game_title', '')}
-- 游戏类型: {gdm.get('genre', '')}
-- 视角模式: {gdm.get('camera_mode', '')}
-- 核心循环: {gdm.get('core_loop', '')}
+        entity_lines = ""
+        for ent in gdm.get("entities", []):
+            entity_lines += f"- {ent.get('name', '')} ({ent.get('role', '')}): {ent.get('components', [])}\n"
 
-### 实体定义
-"""
-            for ent in gdm.get("entities", []):
-                gdm_context += f"- {ent.get('name', '')} (角色: {ent.get('role', '')}): 组件 {ent.get('components', [])}\n"
+        script_lines = ""
+        for fpath, meta in file_metadata.items():
+            if fpath.endswith(".cs"):
+                script_lines += f"- {meta.get('class_name', '')} → {meta.get('target_game_object', '')}\n"
 
-            # 场景定义
-            scenes = gdm.get("scenes", [])
-            if scenes:
-                gdm_context += "\n### 场景定义\n"
-                for scene in scenes:
-                    gdm_context += f"- {scene.get('scene_name', '')}: {scene.get('purpose', '')}\n"
-                    gdm_context += f"  需要的对象: {scene.get('required_objects', [])}\n"
-                    if scene.get("spawn_points"):
-                        gdm_context += f"  生成点: {scene.get('spawn_points', [])}\n"
-                    if scene.get("UI_canvas"):
-                        gdm_context += f"  UI: {scene.get('UI_canvas', {})}\n"
-
-            # 输入映射
-            input_map = gdm.get("input_map", [])
-            if input_map:
-                gdm_context += "\n### 输入映射\n"
-                for inp in input_map:
-                    gdm_context += f"- {inp.get('name', '')} ({inp.get('type', '')}): {inp.get('description', '')}\n"
-
-            # Tags/Layers
-            tags_layers = gdm.get("tags_layers", {})
-            if tags_layers.get("tags"):
-                gdm_context += f"\n### 必需Tags: {', '.join(tags_layers['tags'])}\n"
-            if tags_layers.get("layers"):
-                gdm_context += f"### 必需Layers: {', '.join(l.get('name', '') + '(' + str(l.get('index', '')) + ')' for l in tags_layers['layers'])}\n"
-
-        # Code metadata context — 确保场景挂载真实存在的脚本
-        metadata_context = ""
-        if file_metadata:
-            metadata_context = "\n## 已生成的代码文件（场景中只能挂载这些脚本）\n"
-            for fpath, meta in file_metadata.items():
-                if fpath.endswith(".cs"):
-                    cls = meta.get("class_name", "")
-                    target = meta.get("target_game_object", "")
-                    comps = meta.get("required_components", [])
-                    metadata_context += f"- {fpath}: 类名={cls}, 挂载对象={target}, 需要组件={comps}\n"
-
-        user_prompt = f"""请根据以下游戏需求、任务计划和已生成代码，生成Unity场景描述JSON。
+        user_prompt = f"""生成场景中间表示（Scene IR），只需输出JSON。
 
 ## 游戏需求
 {requirements}
 
-## 任务计划
+## 任务
 {task_summary}
-{gdm_context}
-{metadata_context}
 
-## 输出要求
-- 只输出JSON，无额外文本
-- JSON格式必须符合SceneDescription规范
-- game_objects中的组件type使用Unity组件全名（如Rigidbody2D, BoxCollider2D）或脚本类名
-- 所有坐标使用Unity坐标系（Y轴向上）
-- 场景中的脚本组件必须来自已生成的代码文件
-- 根据游戏设计模型中的实体定义创建对应的GameObject
-- 根据场景定义放置对象、设置相机和灯光
-- 如果有UI_canvas定义，创建UI Canvas和相关UI元素
-- 如果有spawn_points，在场景中放置生成点
-- 确保Player有PlayerController组件，Enemy有EnemyController组件等
-"""
+## GDM
+- 类型: {gdm.get('genre', '')}
+- 视角: {gdm.get('camera_mode', '')}
+- 核心循环: {gdm.get('core_loop', '')}
+
+## 实体
+{entity_lines}
+
+## 可用脚本
+{script_lines}
+
+## Scene IR JSON 格式
+```json
+{{
+  "scene_name": "GameScene",
+  "genre": "platformer|shooter|rpg|puzzle|runner|tower_defense",
+  "layout": "linear|arena|open_world|grid|room_based",
+  "difficulty": "easy|medium|hard",
+  "camera": {{"mode": "2d_side_view|top_down|3d_third_person|3d_first_person", "follow_target": "Player", "background": "sky_blue|space_black|forest_green|dungeon_dark|sunset_orange|warm_beige"}},
+  "entities": [
+    {{"name": "Player", "role": "player|ground|platform|obstacle|enemy|npc|pickup|spawner|manager|decoration|boundary", "count": 1, "spawn_zone": "center|top|bottom|left|right|random", "script": "PlayerController"}}
+  ],
+  "theme": "森林|太空|地下城 等（可选）"
+}}
+```
+
+只输出JSON，无额外文本。"""
 
         try:
             response = await llm.chat(
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": "你是场景设计助手。根据游戏需求输出 Scene IR JSON（抽象中间表示），不要输出完整的 Unity 场景 JSON。只输出JSON。"},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
-                max_tokens=4096,
+                max_tokens=2048,
             )
 
-            # Extract JSON from response
-            scene_json = self._extract_json(response)
-            if scene_json:
-                return scene_json
+            raw_ir = self._extract_json(response)
+            if not raw_ir:
+                return None
 
-            self.log_error("no_valid_json_in_response", {"response_preview": response[:200]})
-            return self._fallback_scene(requirements, task_plan)
+            # Pydantic 校验 + 自动修复
+            ir = repair_scene_ir(raw_ir, gdm)
+
+            # 确定性转换
+            scene_desc = ir_to_scene_description(ir, file_metadata)
+            self.log_action("scene_generated_via_llm_ir", {"genre": ir.genre, "entities": len(ir.entities)})
+            return scene_desc
 
         except Exception as e:
-            self.log_error("llm_call_failed", {"error": str(e)})
-            return self._fallback_scene(requirements, task_plan)
+            self.log_error("llm_ir_parse_failed", {"error": str(e)})
+            return None
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """从LLM响应中提取JSON"""

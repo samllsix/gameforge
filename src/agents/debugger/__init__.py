@@ -118,19 +118,43 @@ class DebuggerAgent(BaseAgent):
                 self.log_error("debugger_parse_error")
                 return self._fallback_fix(state, error_log)
 
-            # 应用修复
+            # 应用修复到 code_generated
+            fixes = result.get("fixes", [])
+            updated_code = dict(code_generated)
+            apply_results = []
+
+            for fix in fixes:
+                file_path = fix.get("file", "")
+                changes = fix.get("changes", [])
+                for change in changes:
+                    change_type = change.get("type", "")
+                    try:
+                        if change_type == "replace":
+                            ok = self._apply_replace(updated_code, file_path, change)
+                        elif change_type == "insert":
+                            ok = self._apply_insert(updated_code, file_path, change)
+                        elif change_type == "delete":
+                            ok = self._apply_delete(updated_code, file_path, change)
+                        else:
+                            ok = False
+                        apply_results.append({"file": file_path, "type": change_type, "success": ok})
+                    except Exception as apply_err:
+                        apply_results.append({"file": file_path, "type": change_type, "success": False, "error": str(apply_err)})
+
             fix_record = {
                 "error_type": result.get("error_type", "unknown"),
                 "error_message": result.get("error_message", ""),
                 "root_cause": result.get("root_cause", ""),
-                "fixes_applied": result.get("fixes", []),
+                "fixes_applied": fixes,
+                "apply_results": apply_results,
                 "confidence": result.get("confidence", 0.5),
-                "success": True,
+                "success": all(r["success"] for r in apply_results) if apply_results else False,
             }
 
             fix_history = state.get("fix_history", []) + [fix_record]
 
             return {
+                "code_generated": updated_code,
                 "fix_history": fix_history,
                 "fix_attempts": state.get("fix_attempts", 0) + 1,
             }
@@ -138,6 +162,47 @@ class DebuggerAgent(BaseAgent):
         except Exception as e:
             self.log_error("debugger_llm_error", {"error": str(e)})
             return self._fallback_fix(state, error_log)
+
+    def _apply_replace(self, code_files: Dict[str, str], file_path: str, change: Dict[str, Any]) -> bool:
+        """替换代码片段"""
+        if file_path not in code_files:
+            return False
+        old_code = change.get("old_code", "")
+        new_code = change.get("new_code", "")
+        if not old_code:
+            return False
+        content = code_files[file_path]
+        if old_code not in content:
+            return False
+        code_files[file_path] = content.replace(old_code, new_code, 1)
+        return True
+
+    def _apply_insert(self, code_files: Dict[str, str], file_path: str, change: Dict[str, Any]) -> bool:
+        """在指定行号后插入代码"""
+        if file_path not in code_files:
+            return False
+        new_code = change.get("new_code", "")
+        line = change.get("line", 0)
+        if not new_code:
+            return False
+        lines = code_files[file_path].split("\n")
+        insert_at = min(max(line, 0), len(lines))
+        lines.insert(insert_at, new_code)
+        code_files[file_path] = "\n".join(lines)
+        return True
+
+    def _apply_delete(self, code_files: Dict[str, str], file_path: str, change: Dict[str, Any]) -> bool:
+        """删除代码片段"""
+        if file_path not in code_files:
+            return False
+        old_code = change.get("old_code", "")
+        if not old_code:
+            return False
+        content = code_files[file_path]
+        if old_code not in content:
+            return False
+        code_files[file_path] = content.replace(old_code, "", 1)
+        return True
 
     def _fallback_fix(self, state: GameDevState, error_log: List[str]) -> Dict[str, Any]:
         """LLM调用失败时的回退修复"""
@@ -151,6 +216,7 @@ class DebuggerAgent(BaseAgent):
         }
 
         return {
+            "code_generated": state.get("code_generated", {}),
             "fix_history": state.get("fix_history", []) + [fix_record],
             "fix_attempts": state.get("fix_attempts", 0) + 1,
         }

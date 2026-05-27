@@ -56,6 +56,7 @@ htmlcov/
 .ruff_cache/
 tests/_test_output/
 tests/.tmp/
+.tmp/pytest/
 
 # Docker
 docker-compose.override.yml

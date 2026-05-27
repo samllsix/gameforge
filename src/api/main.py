@@ -8,9 +8,11 @@ import os
 import asyncio
 import json
 import yaml
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import StreamingResponse, Response
 from typing import Dict, Any, List, Optional
 import uvicorn
 
@@ -41,18 +43,47 @@ from src.api.schemas import (
 
 def load_config() -> Dict[str, Any]:
     """加载配置文件"""
-    config_path = os.path.join("config", "config.yaml")
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    config_path = os.path.join(project_root, "config", "config.yaml")
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
     return {}
 
 
+config = load_config()
+API_VERSION = str(config.get("app", {}).get("version", "0.3.0"))
+_sync_generation_semaphore = asyncio.Semaphore(2)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application startup/shutdown lifecycle."""
+    from src.db.session import init_db
+
+    init_db()
+    await ConcurrencyManager.get_instance(
+        max_concurrent_workflows=5,
+        max_concurrent_llm_calls=10,
+        max_queue_size=100,
+    )
+    audit = get_audit_logger()
+    await audit.log_event(
+        event_type="server_startup",
+        client_ip="system",
+        path="/",
+        method="SYSTEM",
+        details={"version": API_VERSION},
+    )
+    yield
+
+
 # 创建FastAPI应用
 app = FastAPI(
     title="GameForge API",
     description="游戏研发全流程AI Agent协作平台 — 支持高并发与安全防护",
-    version="0.3.0",
+    version=API_VERSION,
+    lifespan=lifespan,
 )
 
 # ========== 中间件注册（顺序很重要：后注册的先执行） ==========
@@ -63,6 +94,9 @@ app.add_middleware(SecurityHeadersMiddleware)
 # 2. CORS（限制允许的源）
 cors_config = get_secure_cors_config()
 app.add_middleware(CORSMiddleware, **cors_config)
+
+# 3. GZip 压缩（对 CSS/JS/HTML 响应压缩 ~70%）
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # 3. 请求体大小限制 (2MB)
 app.add_middleware(RequestBodyLimitMiddleware, max_size_bytes=2_097_152)
@@ -99,16 +133,39 @@ app.add_middleware(
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 _static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static")
+
+
+class StaticCacheMiddleware(BaseHTTPMiddleware):
+    """为静态资源添加缓存头"""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/static/"):
+            # 开发阶段：每次验证，避免 HTML/JS 版本不一致
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        elif path == "/app":
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+app.add_middleware(StaticCacheMiddleware)
 
 
 @app.get("/app")
 async def serve_frontend():
     """前端页面"""
-    return FileResponse(os.path.join(_static_dir, "index.html"))
+    return FileResponse(
+        os.path.join(_static_dir, "index.html"),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
 
 
 # 挂载额外路由模块
@@ -116,35 +173,12 @@ from src.api.routes import router as routes_router
 app.include_router(routes_router, prefix="/api/v1/ext", tags=["extended"])
 
 
+
+
 # ========== 请求/响应模型（从schemas模块统一导入） ==========
 
 
 # ========== 初始化 ==========
-
-config = load_config()
-
-
-@app.on_event("startup")
-async def startup():
-    """应用启动时初始化"""
-    # 初始化数据库
-    from src.db.session import init_db
-    init_db()
-
-    await ConcurrencyManager.get_instance(
-        max_concurrent_workflows=5,
-        max_concurrent_llm_calls=10,
-        max_queue_size=100,
-    )
-    audit = get_audit_logger()
-    await audit.log_event(
-        event_type="server_startup",
-        client_ip="system",
-        path="/",
-        method="SYSTEM",
-        details={"version": "0.4.0"},
-    )
-
 
 # ========== API路由 ==========
 
@@ -154,7 +188,7 @@ async def root():
     """根路径"""
     return {
         "name": "GameForge API",
-        "version": "0.3.0",
+        "version": API_VERSION,
         "description": "游戏研发全流程AI Agent协作平台 — 支持高并发与安全防护",
         "security": {
             "rate_limiting": "60 req/min/IP",
@@ -264,16 +298,17 @@ async def generate_code(request: GenerateRequest):
 async def generate_code_sync(request: GenerateRequest):
     """生成游戏代码（同步等待模式）"""
     try:
-        workflow = create_workflow(config)
-        result = await workflow.run(
-            {
-                "project_context": {
-                    "engine": request.engine,
-                    "project_name": request.project_name,
-                    "requirements": request.requirements,
-                },
-            }
-        )
+        async with _sync_generation_semaphore:
+            workflow = create_workflow(config)
+            result = await workflow.run(
+                {
+                    "project_context": {
+                        "engine": request.engine,
+                        "project_name": request.project_name,
+                        "requirements": request.requirements,
+                    },
+                }
+            )
         return GenerateResponse(
             success=True,
             code_generated=result.get("code_generated", {}),

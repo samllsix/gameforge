@@ -355,7 +355,7 @@ def get_audit_logger() -> AuditLogger:
 class APIKeyAuthMiddleware:
     """API密钥认证中间件（纯ASGI）"""
 
-    PUBLIC_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc"}
+    PUBLIC_PATHS = {"/", "/app", "/health", "/docs", "/openapi.json", "/redoc"}
 
     def __init__(self, app, api_keys: Optional[Dict[str, str]] = None, enabled: bool = False):
         self.app = app
@@ -372,21 +372,13 @@ class APIKeyAuthMiddleware:
             return
 
         path = scope.get("path", "")
-        if path in self.PUBLIC_PATHS:
+        if path in self.PUBLIC_PATHS or path.startswith("/static/"):
             await self.app(scope, receive, send)
             return
 
         # 从header获取API Key
         headers = dict(scope.get("headers", []))
         api_key = headers.get(b"x-api-key", b"").decode()
-
-        # 从query获取API Key
-        if not api_key:
-            query_string = scope.get("query_string", b"").decode()
-            for param in query_string.split("&"):
-                if param.startswith("api_key="):
-                    api_key = param[8:]
-                    break
 
         client_ip = scope.get("client", ("unknown",))[0]
 

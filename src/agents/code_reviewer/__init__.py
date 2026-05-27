@@ -19,8 +19,16 @@ class CodeReviewerAgent(BaseAgent):
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         self.log_action("code_reviewer_execute")
         review_result = await self.review(state)
+        passed = review_result.get("passed", False)
+        status = review_result.get("status", "")
+        if status == "review_unavailable":
+            phase = "code_review_unavailable"
+        elif passed:
+            phase = "code_review_passed"
+        else:
+            phase = "code_review_failed"
         return {
-            "current_phase": "code_review_passed" if review_result.get("passed", True) else "code_review_failed",
+            "current_phase": phase,
             "review_result": review_result,
         }
 
@@ -73,11 +81,11 @@ class CodeReviewerAgent(BaseAgent):
 
             if result.get("parse_error"):
                 self.log_error("review_parse_error")
-                return {"score": 70, "issues": [], "passed": True, "note": "Review parsing failed"}
+                return {"score": 0, "issues": [], "passed": False, "status": "review_unavailable", "note": "Review parsing failed"}
 
             self.log_action("review_complete", {"score": result.get("score", 0)})
             return result
 
         except Exception as e:
             self.log_error("reviewer_llm_error", {"error": str(e)})
-            return {"score": 70, "issues": [], "passed": True, "note": f"Review error: {e}"}
+            return {"score": 0, "issues": [], "passed": False, "status": "review_unavailable", "note": f"Review error: {e}"}

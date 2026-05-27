@@ -3,6 +3,7 @@
 import pytest
 import asyncio
 import time
+from typing import Dict
 from src.core.concurrency import (
     ConcurrencyManager,
     RateLimiter,
@@ -187,6 +188,46 @@ class TestConcurrencyIntegration:
                 allowed_count += 1
 
         assert allowed_count == 10
+
+        ConcurrencyManager._instance = None
+
+    @pytest.mark.asyncio
+    async def test_true_concurrent_execution(self):
+        """证明多个任务真正并发执行，而非串行"""
+        ConcurrencyManager._instance = None
+        manager = await ConcurrencyManager.get_instance(
+            max_concurrent_workflows=3,
+            max_concurrent_llm_calls=5,
+            max_queue_size=50,
+        )
+
+        timestamps: Dict[str, list] = {"starts": [], "finishes": []}
+        lock = asyncio.Lock()
+
+        async def slow_handler(payload):
+            async with lock:
+                timestamps["starts"].append(time.time())
+            await asyncio.sleep(0.5)
+            async with lock:
+                timestamps["finishes"].append(time.time())
+            return {"id": payload["id"]}
+
+        task_ids = []
+        for i in range(6):
+            tid = await manager.submit_task("batch", {"id": i}, slow_handler)
+            task_ids.append(tid)
+
+        start_time = time.time()
+        for tid in task_ids:
+            task = await manager.wait_for_task(tid, timeout=15)
+            assert task.status == TaskStatus.COMPLETED
+        total_time = time.time() - start_time
+
+        # 如果串行: 6 × 0.5s = 3s
+        # 并发度3: 两批 × 0.5s ≈ 1s，加上开销应 < 2s
+        assert total_time < 2.0, (
+            f"Tasks ran serially ({total_time:.2f}s), expected concurrent (< 2s)"
+        )
 
         ConcurrencyManager._instance = None
 

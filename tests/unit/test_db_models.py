@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import datetime
+from pathlib import Path
 
 from src.db.models import TaskRecord, GenerationHistory, AuditLog, Base
 from src.db.session import get_engine, init_db, get_db, reset_db
@@ -10,8 +11,11 @@ from src.db.session import get_engine, init_db, get_db, reset_db
 @pytest.fixture(autouse=True)
 def clean_db(tmp_path):
     """每个测试使用独立的SQLite数据库"""
-    db_url = f"sqlite:///{tmp_path}/test.db"
+    db_path = tmp_path / "test.db"
+    db_url = f"sqlite:///{db_path}"
     reset_db()
+    if db_path.exists():
+        db_path.unlink()
     init_db(db_url)
     yield
     reset_db()

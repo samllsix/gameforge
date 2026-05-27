@@ -6,6 +6,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+from pathlib import Path
 import structlog
 
 from src.core.state.game_state import GameDevState, AgentType
@@ -102,13 +103,11 @@ class BaseAgent(ABC):
         Returns:
             模板内容
         """
-        import os
-        template_path = os.path.join(
-            "config", "prompts", f"{template_name}.txt"
-        )
+        project_root = Path(__file__).resolve().parents[2]
+        template_path = project_root / "config" / "prompts" / f"{template_name}.txt"
 
-        if os.path.exists(template_path):
-            with open(template_path, "r", encoding="utf-8") as f:
+        if template_path.exists():
+            with template_path.open("r", encoding="utf-8") as f:
                 return f.read()
 
         self.logger.warning("prompt_template_not_found", template=template_name)

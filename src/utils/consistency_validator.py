@@ -233,24 +233,43 @@ def _extract_scripts_from_scene(scene_desc: Dict[str, Any]) -> Set[str]:
 def _is_unity_builtin(type_name: str) -> bool:
     """检查是否是Unity内置组件类型"""
     builtins = {
+        # Physics
         "Rigidbody", "Rigidbody2D", "BoxCollider", "BoxCollider2D",
         "SphereCollider", "CircleCollider2D", "CapsuleCollider",
-        "MeshCollider", "MeshRenderer", "SpriteRenderer",
+        "CapsuleCollider2D", "MeshCollider", "PolygonCollider2D",
+        "TerrainCollider", "WheelCollider",
+        # Rendering
+        "MeshRenderer", "SpriteRenderer", "SkinnedMeshRenderer",
+        "LineRenderer", "TrailRenderer", "Projector", "ReflectionProbe",
+        "CanvasRenderer",
+        # UI
+        "Canvas", "CanvasScaler", "GraphicRaycaster", "RectTransform",
+        "EventSystem", "StandaloneInputModule", "InputModule",
+        "Text", "TextMeshProUGUI", "TextMeshPro",
+        "Image", "RawImage", "Button", "Slider", "Scrollbar",
+        "Toggle", "Dropdown", "InputField", "ScrollRect",
+        "GridLayoutGroup", "HorizontalLayoutGroup", "VerticalLayoutGroup",
+        "ContentSizeFitter", "AspectRatioFitter", "LayoutElement",
+        "Mask", "RectMask2D",
+        # Animation / Audio
         "Animator", "Animation", "AudioSource", "AudioListener",
-        "Camera", "Light", "Canvas", "CanvasScaler", "GraphicRaycaster",
-        "EventSystem", "StandaloneInputModule", "Text", "TextMeshProUGUI",
-        "Image", "Button", "Slider", "Scrollbar", "Toggle", "Dropdown",
-        "InputField", "ScrollRect", "GridLayoutGroup", "HorizontalLayoutGroup",
-        "VerticalLayoutGroup", "ContentSizeFitter", "AspectRatioFitter",
+        # Camera / Lighting
+        "Camera", "Light", "FlareLayer",
+        # Navigation
         "CharacterController", "NavMeshAgent", "NavMeshObstacle",
-        "ParticleSystem", "TrailRenderer", "LineRenderer",
-        "TrailRenderer", "Projector", "ReflectionProbe",
-        "Terrain", "TerrainCollider", "WheelCollider",
+        # Particles
+        "ParticleSystem",
+        # Joints
         "ConstantForce", "FixedJoint", "HingeJoint", "SpringJoint",
         "CharacterJoint", "ConfigurableJoint",
         "ConstantForce2D", "FixedJoint2D", "HingeJoint2D", "SpringJoint2D",
         "DistanceJoint2D", "SliderJoint2D", "WheelJoint2D",
+        # Effectors
         "AreaEffector2D", "BuoyancyEffector2D", "PointEffector2D",
         "PlatformEffector2D", "SurfaceEffector2D",
+        # Terrain
+        "Terrain",
+        # Misc
+        "LODGroup", "OcclusionPortal", "OcclusionArea",
     }
     return type_name in builtins

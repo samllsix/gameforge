@@ -235,13 +235,13 @@ class GameDesignerAgent(BaseAgent):
                 "required_components": ["Rigidbody2D", "BoxCollider2D"],
             })
 
-        if any(w in req_lower for w in ["金币", "coin", "道具", "item", "拾取"]):
+        if any(w in req_lower for w in ["金币", "coin", "道具", "item", "拾取", "collectible"]):
             code_modules.append({
-                "module_name": "PickupController",
-                "responsibility": "道具拾取逻辑",
-                "output_files": ["Assets/Scripts/Collectibles/PickupController.cs"],
+                "module_name": "CoinController",
+                "responsibility": "金币/道具收集逻辑",
+                "output_files": ["Assets/Scripts/Collectibles/CoinController.cs"],
                 "dependencies": ["GameManager"],
-                "target_game_objects": ["Pickup"],
+                "target_game_objects": ["Coin"],
                 "required_components": ["BoxCollider2D"],
             })
 

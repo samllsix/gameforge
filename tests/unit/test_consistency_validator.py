@@ -207,3 +207,55 @@ public class Player : MonoBehaviour {
         )
         # Player object missing HealthSystem component (not a Unity built-in)
         assert any(w["type"] == "missing_component" for w in result.warnings)
+
+
+class TestPlatformerNamingConsistency:
+    """验证平台跳跃生成结果中 scene 引用脚本和生成代码类名一致"""
+
+    def test_coincontroller_no_missing_script(self):
+        """场景引用 CoinController 时，代码中必须存在 CoinController 类"""
+        code_files = {
+            "Assets/Scripts/Player/PlayerController.cs": "public class PlayerController : MonoBehaviour {}",
+            "Assets/Scripts/Core/GameManager.cs": "public class GameManager : MonoBehaviour {}",
+            "Assets/Scripts/Enemy/EnemyController.cs": "public class EnemyController : MonoBehaviour {}",
+            "Assets/Scripts/Collectibles/CoinController.cs": "public class CoinController : MonoBehaviour {}",
+        }
+        scene = {
+            "game_objects": [
+                {"name": "Player", "components": [{"type": "PlayerController"}, {"type": "Rigidbody2D"}]},
+                {"name": "GameManager", "components": [{"type": "GameManager"}]},
+                {"name": "Enemy", "components": [{"type": "EnemyController"}, {"type": "Rigidbody2D"}]},
+                {"name": "Coin1", "components": [{"type": "CoinController"}, {"type": "BoxCollider2D"}]},
+                {"name": "Coin2", "components": [{"type": "CoinController"}, {"type": "BoxCollider2D"}]},
+            ]
+        }
+        result = validate_code_scene_consistency(code_files, scene)
+        missing = [e for e in result.errors if e["type"] == "missing_script"]
+        assert missing == [], f"Unexpected missing_script errors: {missing}"
+
+    def test_pickupcontroller_not_in_scene(self):
+        """如果代码生成的是 CoinController，场景不应引用 PickupController"""
+        code_files = {
+            "Assets/Scripts/Collectibles/CoinController.cs": "public class CoinController : MonoBehaviour {}",
+        }
+        scene = {
+            "game_objects": [
+                {"name": "Coin", "components": [{"type": "CoinController"}]},
+            ]
+        }
+        result = validate_code_scene_consistency(code_files, scene)
+        assert not result.has_errors
+
+    def test_mismatch_detected(self):
+        """场景引用 CoinController 但代码只有 PickupController → 应报 missing_script"""
+        code_files = {
+            "Assets/Scripts/Collectibles/PickupController.cs": "public class PickupController : MonoBehaviour {}",
+        }
+        scene = {
+            "game_objects": [
+                {"name": "Coin", "components": [{"type": "CoinController"}]},
+            ]
+        }
+        result = validate_code_scene_consistency(code_files, scene)
+        assert result.has_errors
+        assert any(e["type"] == "missing_script" for e in result.errors)

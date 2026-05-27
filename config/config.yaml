@@ -100,7 +100,7 @@ vector_db:
 
 # Database Configuration
 database:
-  url: postgresql://gameforge:gameforge123@localhost:5433/gameforge
+  url: sqlite:///data/gameforge.db
   echo: false
   pool_size: 5
   max_overflow: 10

@@ -561,8 +561,8 @@ namespace ...
                 return "Assets/Scripts/Camera/CameraFollow.cs"
             elif "Enemy" in task_name or "敌人" in task_name:
                 return "Assets/Scripts/Enemy/EnemyController.cs"
-            elif "Coin" in task_name or "金币" in task_name or "Pickup" in task_name or "拾取" in task_name:
-                return "Assets/Scripts/Pickup/PickupController.cs"
+            elif "Coin" in task_name or "金币" in task_name or "Pickup" in task_name or "拾取" in task_name or "Collectible" in task_name or "收集" in task_name:
+                return "Assets/Scripts/Collectibles/CoinController.cs"
             elif "UI" in task_name or "HUD" in task_name or "界面" in task_name:
                 return "Assets/Scripts/UI/UIManager.cs"
             elif "测试" in task_name or "Test" in task_name:
@@ -587,7 +587,7 @@ namespace ...
                 return self._generate_game_manager_code(engine)
             elif "Enemy" in task_name or "敌人" in task_name:
                 return self._generate_enemy_code(engine)
-            elif "Coin" in task_name or "金币" in task_name or "Collectible" in task_name or "收集" in task_name:
+            elif "Coin" in task_name or "金币" in task_name or "Collectible" in task_name or "收集" in task_name or "Pickup" in task_name or "拾取" in task_name:
                 return self._generate_coin_code(engine)
             elif "Camera" in task_name or "摄像机" in task_name or "相机" in task_name:
                 return self._generate_camera_follow_code(engine)

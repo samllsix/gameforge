@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, END
@@ -286,7 +287,7 @@ class GameDevWorkflow:
 
         merged_code = dict(state.get("code_generated", {}))
         merged_artifacts = list(state.get("code_artifacts", []))
-        updated_plan = [dict(t) for t in state.get("task_plan", [])]
+        updated_plan = copy.deepcopy(state.get("task_plan", []))
 
         errors = []
         for result in results:
@@ -546,6 +547,50 @@ class GameDevWorkflow:
             state["scene_error"] = str(e)
             await event_callback("scene_error", {"message": str(e)})
 
+    def _sanitize_scene_scripts(self, state: GameDevState) -> None:
+        """清理场景描述中引用的不存在脚本，替换为Unity内置组件或移除"""
+        import re as _re
+        scene_desc = state.get("scene_description")
+        if not scene_desc:
+            return
+
+        code_generated = state.get("code_generated", {})
+        # 提取所有生成的类名
+        generated_classes = set()
+        for fpath, content in code_generated.items():
+            if fpath.endswith(".cs"):
+                m = _re.search(r'public\s+(?:partial\s+)?(?:class|struct|interface)\s+(\w+)', content)
+                if m:
+                    generated_classes.add(m.group(1))
+
+        from src.utils.consistency_validator import _is_unity_builtin
+        removed_scripts = []
+
+        def _clean_components(components):
+            cleaned = []
+            for comp in components:
+                comp_type = comp.get("type", "")
+                if not comp_type:
+                    cleaned.append(comp)
+                elif _is_unity_builtin(comp_type) or comp_type in generated_classes:
+                    cleaned.append(comp)
+                else:
+                    removed_scripts.append(comp_type)
+            return cleaned
+
+        def _clean_object(obj):
+            obj["components"] = _clean_components(obj.get("components", []))
+            for child in obj.get("children", []):
+                _clean_object(child)
+
+        for obj in scene_desc.get("game_objects", []):
+            _clean_object(obj)
+
+        if removed_scripts:
+            state.setdefault("warnings", []).append(
+                f"场景描述中引用了未生成的脚本（已移除）: {', '.join(set(removed_scripts))}"
+            )
+
     def _add_project_artifacts(self, state: GameDevState) -> None:
         """生成完整项目产物（共享逻辑，run() 和 run_with_streaming() 都调用）
 
@@ -556,6 +601,9 @@ class GameDevWorkflow:
         import json as _json
 
         code_generated = state.setdefault("code_generated", {})
+
+        # 清理场景中引用的不存在脚本
+        self._sanitize_scene_scripts(state)
 
         # README 和项目配置建议
         try:
@@ -575,9 +623,9 @@ class GameDevWorkflow:
         except Exception as e:
             state.setdefault("warnings", []).append(f"README/设置文档生成失败: {e}")
 
-        # scene_description.json
+        # scene_description.json（使用清理后的版本）
         scene_desc = state.get("scene_description")
-        if scene_desc and "Assets/Scenes/scene_description.json" not in code_generated:
+        if scene_desc:
             code_generated["Assets/Scenes/scene_description.json"] = _json.dumps(scene_desc, indent=2, ensure_ascii=False)
 
         # GameDesignModel.json — 完整游戏设计模型
@@ -616,6 +664,16 @@ class GameDevWorkflow:
                 plugin_content = template_path.read_text(encoding="utf-8")
                 code_generated["Assets/Editor/GameForgeHttpServer.cs"] = plugin_content
 
+        # 生成完整 Unity 项目模板（Packages/manifest.json, ProjectSettings/*.asset, .meta）
+        try:
+            from src.engine.unity.project_generator import UnityProjectGenerator
+            project_files = UnityProjectGenerator().generate_all(state)
+            for path, content in project_files.items():
+                if path not in code_generated:
+                    code_generated[path] = content
+        except Exception as e:
+            state.setdefault("warnings", []).append(f"Unity项目模板生成失败: {e}")
+
     async def run(self, input_state: Dict[str, Any]) -> Dict[str, Any]:
         """运行工作流
 
@@ -650,8 +708,19 @@ class GameDevWorkflow:
         }
 
         # 生成场景描述（如果配置允许）
+        async def record_scene_event(event_type: str, data: dict):
+            if event_type == "scene_error":
+                message = data.get("message", "Scene generation failed")
+                initial_state["scene_error"] = message
+                initial_state["scene_status"] = "error"
+                initial_state.setdefault("warnings", []).append(message)
+                initial_state.setdefault("error_log", []).append(message)
+            elif event_type == "scene_skipped":
+                message = data.get("message", "Scene generation skipped")
+                initial_state.setdefault("warnings", []).append(message)
+
         scene_task = asyncio.create_task(
-            self._run_scene_generation(initial_state, lambda *a: asyncio.sleep(0))
+            self._run_scene_generation(initial_state, record_scene_event)
         )
 
         final_state = await self._run_with_parallel_support(initial_state)
@@ -659,8 +728,19 @@ class GameDevWorkflow:
         # 等待场景生成完成
         try:
             await asyncio.wait_for(scene_task, timeout=60)
-        except Exception:
-            pass
+        except asyncio.TimeoutError:
+            final_state["scene_status"] = "error"
+            final_state["scene_error"] = "Scene generation timed out"
+            final_state.setdefault("warnings", []).append(final_state["scene_error"])
+            final_state.setdefault("error_log", []).append(final_state["scene_error"])
+        except Exception as e:
+            final_state["scene_status"] = "error"
+            final_state["scene_error"] = str(e)
+            final_state.setdefault("warnings", []).append(f"Scene generation failed: {e}")
+            final_state.setdefault("error_log", []).append(f"Scene generation failed: {e}")
+
+        # 场景脚本清理（在一致性校验之前）
+        self._sanitize_scene_scripts(final_state)
 
         # 一致性校验
         try:
@@ -900,6 +980,9 @@ class GameDevWorkflow:
                     })
             except Exception as e:
                 state.setdefault("warnings", []).append(f"代码校验异常: {e}")
+
+            # 场景脚本清理（在一致性校验之前）
+            self._sanitize_scene_scripts(state)
 
             # 代码与场景一致性校验
             try:
