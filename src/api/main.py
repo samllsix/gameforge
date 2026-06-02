@@ -220,6 +220,16 @@ async def get_stats():
     }
 
 
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus指标端点"""
+    from src.utils.metrics import get_metrics, get_content_type
+    metrics_data = get_metrics()
+    if metrics_data is None:
+        return Response(content="# prometheus-client not installed\n", media_type="text/plain")
+    return Response(content=metrics_data, media_type=get_content_type())
+
+
 @app.post("/api/v1/generate", response_model=GenerateResponse)
 async def generate_code(request: GenerateRequest):
     """生成游戏代码（异步队列模式）"""

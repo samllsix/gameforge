@@ -29,6 +29,10 @@ llm:
   # 熔断器配置
   circuit_breaker_threshold: 5
   circuit_breaker_recovery: 60.0
+  # LLM响应缓存（仅对 temperature=0 的请求生效，Redis不可用时自动禁用）
+  cache:
+    enabled: true
+    ttl: 3600
   # Provider注册表 — 每个provider对应一组 base_url + api_key 环境变量
   providers:
     mimo:

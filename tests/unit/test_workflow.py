@@ -15,13 +15,14 @@ class TestWorkflowInit:
         assert wf.code_reviewer is not None
         assert wf.test_generator is not None
         assert wf.debugger is not None
-        assert wf.workflow is not None
+        assert wf.graph is not None
 
     def test_workflow_has_nodes(self, sample_config):
         wf = GameDevWorkflow(sample_config)
-        nodes = wf.workflow.get_graph().nodes
+        nodes = wf.graph.get_graph().nodes
         node_names = {name for name, _ in nodes.items()}
-        expected = {"planner", "code_generator", "code_reviewer", "test_generator", "orchestrator", "__start__", "__end__"}
+        expected = {"game_designer", "planner", "code_generator", "code_reviewer",
+                    "test_generator", "orchestrator", "debugger", "__start__", "__end__"}
         assert expected.issubset(node_names)
 
 
@@ -31,7 +32,7 @@ class TestWorkflowRouting:
         state = sample_game_state.copy()
         state["current_task_id"] = "task-001"  # code type task
         state["current_phase"] = "task_assigned"
-        route = wf._route_next_task(state)
+        route = wf._route_next(state)
         assert route == "code_generator"
 
     def test_route_test_task(self, sample_config, sample_game_state):
@@ -39,29 +40,36 @@ class TestWorkflowRouting:
         state = sample_game_state.copy()
         state["current_task_id"] = "task-003"  # test type task
         state["current_phase"] = "task_assigned"
-        route = wf._route_next_task(state)
+        route = wf._route_next(state)
         assert route == "test_generator"
 
     def test_route_complete(self, sample_config, sample_game_state):
         wf = GameDevWorkflow(sample_config)
         state = sample_game_state.copy()
         state["current_phase"] = "workflow_complete"
-        route = wf._route_next_task(state)
+        route = wf._route_next(state)
         assert route == "__end__"
 
     def test_route_no_task_id(self, sample_config, sample_game_state):
         wf = GameDevWorkflow(sample_config)
         state = sample_game_state.copy()
         state["current_task_id"] = None
-        route = wf._route_next_task(state)
+        route = wf._route_next(state)
         assert route == "__end__"
 
     def test_route_nonexistent_task(self, sample_config, sample_game_state):
         wf = GameDevWorkflow(sample_config)
         state = sample_game_state.copy()
         state["current_task_id"] = "nonexistent"
-        route = wf._route_next_task(state)
+        route = wf._route_next(state)
         assert route == "__end__"
+
+    def test_route_needs_fix(self, sample_config, sample_game_state):
+        wf = GameDevWorkflow(sample_config)
+        state = sample_game_state.copy()
+        state["current_phase"] = "needs_fix"
+        route = wf._route_next(state)
+        assert route == "debugger"
 
 
 class TestTaskCompletion:
@@ -96,6 +104,16 @@ class TestOrchestratorNode:
         result = await wf._orchestrator_node(completed_state)
         assert result["is_complete"] is True
         assert result["current_phase"] == "workflow_complete"
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_routes_to_debugger_on_error(self, sample_config, sample_game_state):
+        wf = GameDevWorkflow(sample_config)
+        state = sample_game_state.copy()
+        state["error_log"] = ["CS0246: type not found"]
+        state["current_phase"] = "error"
+        result = await wf._orchestrator_node(state)
+        assert result["current_phase"] == "needs_fix"
+        assert result["fix_attempts"] == 1
 
 
 class TestCreateWorkflow:

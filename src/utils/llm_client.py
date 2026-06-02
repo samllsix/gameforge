@@ -11,11 +11,14 @@ import time
 import random
 import asyncio
 import threading
+import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+
+logger = logging.getLogger("GameForge.llm")
 
 load_dotenv()
 
@@ -139,7 +142,8 @@ class LLMClient:
     def __init__(self, config: Dict[str, Any],
                  provider_base_url: Optional[str] = None,
                  provider_api_key: Optional[str] = None,
-                 default_model: Optional[str] = None):
+                 default_model: Optional[str] = None,
+                 provider_name: Optional[str] = None):
         """初始化LLM客户端
 
         Args:
@@ -147,9 +151,11 @@ class LLMClient:
             provider_base_url: Provider的API地址（优先于config中的base_url）
             provider_api_key: Provider的API密钥（优先于环境变量MIMO_API_KEY）
             default_model: 默认模型名（优先于config中的default_model）
+            provider_name: Provider名称（用于指标标签，如 'mimo', 'deepseek'）
         """
         llm_config = config.get("llm", {})
         self.default_model = default_model or llm_config.get("default_model", "mimo-v2.5-pro")
+        self.provider_name = provider_name or "unknown"
         self.base_url = provider_base_url or llm_config.get(
             "base_url",
             os.getenv("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1"),
@@ -166,6 +172,11 @@ class LLMClient:
             failure_threshold=llm_config.get("circuit_breaker_threshold", 5),
             recovery_timeout=llm_config.get("circuit_breaker_recovery", 60.0),
         )
+
+        # 缓存配置
+        cache_config = llm_config.get("cache", {})
+        self.cache_enabled = cache_config.get("enabled", False)
+        self.cache_ttl = cache_config.get("ttl", 3600)
 
         self._sync_client = None
         # 异步客户端延迟初始化
@@ -196,7 +207,7 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> str:
-        """异步发送聊天请求（带重试和熔断）
+        """异步发送聊天请求（带重试、熔断和可选缓存）
 
         Args:
             messages: 消息列表
@@ -207,27 +218,81 @@ class LLMClient:
         Returns:
             模型回复文本
         """
+        # 缓存查找（仅 temperature=0 时启用，确保确定性输出）
+        if self.cache_enabled and temperature == 0:
+            from src.utils.redis_client import cache_get, make_cache_key
+            cache_key = make_cache_key(
+                "llm",
+                model=model or self.default_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            cached = await cache_get(cache_key)
+            if cached is not None:
+                logger.debug(f"缓存命中: {cache_key[:32]}...")
+                # 记录缓存命中指标
+                try:
+                    from src.utils.metrics import record_llm_call
+                    record_llm_call(
+                        provider=self.base_url.split("//")[1].split(".")[0] if "//" in self.base_url else "unknown",
+                        model=model or self.default_model,
+                        method="chat",
+                        duration=0,
+                        success=True,
+                        cached=True,
+                    )
+                except Exception:
+                    pass
+                return cached
+
         if not await self.circuit_breaker.can_execute():
             raise RuntimeError(f"Circuit breaker OPEN for {self.base_url}. Try again later.")
 
+        _provider = self.provider_name
+        _model = model or self.default_model
+        _start_time = time.time()
         last_error = None
+
         for attempt in range(self.retry_config.max_retries + 1):
             try:
                 client = await self._get_async_client()
                 response = await client.chat.completions.create(
-                    model=model or self.default_model,
+                    model=_model,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
                 await self.circuit_breaker.record_success()
-                return response.choices[0].message.content
+                result = response.choices[0].message.content
+
+                # 记录成功指标
+                try:
+                    from src.utils.metrics import record_llm_call
+                    record_llm_call(_provider, _model, "chat", time.time() - _start_time, True)
+                except Exception:
+                    pass
+
+                # 写入缓存（仅 temperature=0 时）
+                if self.cache_enabled and temperature == 0:
+                    from src.utils.redis_client import cache_set
+                    await cache_set(cache_key, result, ttl=self.cache_ttl)
+
+                return result
             except Exception as e:
                 last_error = e
                 await self.circuit_breaker.record_failure()
                 if attempt < self.retry_config.max_retries:
                     delay = self.retry_config.get_delay(attempt)
                     await asyncio.sleep(delay)
+
+        # 记录失败指标
+        try:
+            from src.utils.metrics import record_llm_call
+            record_llm_call(_provider, _model, "chat", time.time() - _start_time, False)
+        except Exception:
+            pass
+
         raise last_error
 
     def chat_sync(
@@ -367,5 +432,6 @@ def get_llm_client(config: Dict[str, Any],
                 provider_base_url=base_url,
                 provider_api_key=api_key,
                 default_model=model,
+                provider_name=provider or "default",
             )
         return _client_cache[cache_key]

@@ -3,11 +3,21 @@
 定义了Multi-Agent协作过程中的状态数据结构。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 from typing_extensions import TypedDict
+from operator import add
 from pydantic import BaseModel, Field
 from enum import Enum
 from datetime import datetime
+
+
+def merge_dicts(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
+    """合并两个字典，新值覆盖旧值（用于 code_generated 等字段）"""
+    if old is None:
+        return new or {}
+    if new is None:
+        return old
+    return {**old, **new}
 
 
 class TaskStatus(str, Enum):
@@ -102,21 +112,27 @@ class FixRecord(BaseModel):
 
 
 class GameDevState(TypedDict):
-    """游戏开发状态 - LangGraph状态图核心数据结构"""
+    """游戏开发状态 - LangGraph状态图核心数据结构
+
+    使用 Annotated 类型标记 reducer：
+    - list + add: 多节点返回值自动追加合并（error_log, warnings, fix_history, code_artifacts）
+    - dict + merge_dicts: 多节点返回值自动字典合并（code_generated）
+    - 普通类型: 后写入覆盖前值（current_phase, current_task_id 等）
+    """
     # 任务规划
     task_plan: List[Dict[str, Any]]
     current_task_id: Optional[str]
 
-    # 代码生成
-    code_generated: Dict[str, str]
-    code_artifacts: List[Dict[str, Any]]
+    # 代码生成 — reducer: 字典合并
+    code_generated: Annotated[Dict[str, str], merge_dicts]
+    code_artifacts: Annotated[List[Dict[str, Any]], add]
 
     # 测试结果
     test_results: Optional[Dict[str, Any]]
     test_report: Optional[Dict[str, Any]]
 
-    # 修复历史
-    fix_history: List[Dict[str, Any]]
+    # 修复历史 — reducer: 列表追加
+    fix_history: Annotated[List[Dict[str, Any]], add]
     fix_attempts: int
 
     # 流程控制
@@ -127,7 +143,7 @@ class GameDevState(TypedDict):
 
     # 上下文信息
     project_context: Dict[str, Any]
-    error_log: List[str]
+    error_log: Annotated[List[str], add]
 
     # 场景生成
     scene_description: Optional[Dict[str, Any]]
@@ -143,8 +159,8 @@ class GameDevState(TypedDict):
     # 一致性校验
     validation_result: Optional[Dict[str, Any]]
 
-    # 警告
-    warnings: List[str]
+    # 警告 — reducer: 列表追加
+    warnings: Annotated[List[str], add]
 
 
 class ProjectContext(BaseModel):

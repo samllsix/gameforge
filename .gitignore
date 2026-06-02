@@ -85,3 +85,7 @@ temp/
 
 # Claude Code local settings
 .claude/
+
+# Binaries
+*.exe
+cloudflared.exe

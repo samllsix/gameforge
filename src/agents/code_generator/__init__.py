@@ -424,6 +424,25 @@ namespace ...
 
 如果需要生成多个文件，每个文件用单独的代码块。"""
 
+        # RAG：从向量库检索相似代码作为参考
+        rag_context = ""
+        try:
+            from src.utils.vector_store import search_similar_code
+            similar = await search_similar_code(
+                query=task.get("description", task.get("name", "")),
+                engine=engine,
+                limit=2,
+            )
+            if similar:
+                rag_context = "\n\n## 相似代码参考（来自历史生成）\n"
+                for ref in similar:
+                    rag_context += f"\n### {ref['task_name']} (相似度: {ref['score']:.2f})\n```\n{ref['code_preview']}\n```\n"
+        except Exception:
+            pass  # 向量检索失败不影响生成
+
+        if rag_context:
+            user_prompt = user_prompt + rag_context
+
         try:
             response = await self.llm.chat(
                 messages=[
@@ -442,6 +461,21 @@ namespace ...
                 return self._fallback_generate(task, engine)
 
             self.log_action("code_generated", {"file_count": len(artifacts)})
+
+            # 存入向量库（异步，不阻塞返回）
+            try:
+                from src.utils.vector_store import store_code
+                for art in artifacts:
+                    await store_code(
+                        code=art["content"],
+                        file_path=art["file_path"],
+                        task_name=task.get("name", ""),
+                        engine=engine,
+                        task_type="code",
+                    )
+            except Exception:
+                pass  # 存储失败不影响生成
+
             return artifacts
 
         except Exception as e:
