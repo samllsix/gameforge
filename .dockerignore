@@ -1,0 +1,61 @@
+# Version control
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+tests/
+.tmp/
+
+# Logs & temp
+logs/
+*.log
+temp/
+*.tmp
+
+# Output artifacts (not needed in image)
+output/
+output_*/
+
+# Docker (don't recurse)
+docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment (secrets injected at runtime, not baked in)
+.env
+.env.local
+.env.production
+
+# Claude Code
+.claude/
+
+# Memory
+.memory/
+
+# Data (mounted as volume at runtime)
+data/

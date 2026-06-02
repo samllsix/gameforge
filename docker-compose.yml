@@ -1,0 +1,98 @@
+# ═══════════════════════════════════════════════════════
+#  GameForge — Docker Compose (Development)
+# ═══════════════════════════════════════════════════════
+#
+#  启动方式：
+#    仅应用（SQLite）：  docker compose up
+#    含 Redis + PG：    docker compose --profile deps up
+#
+#  覆盖配置：复制为 docker-compose.override.yml 后自由修改
+# ═══════════════════════════════════════════════════════
+
+services:
+  # ── GameForge API ──────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: gameforge-app
+    ports:
+      - "8001:8001"
+    environment:
+      - GAMEFORGE_ENV=development
+      - GAMEFORGE_DEBUG=true
+      # 默认使用 SQLite，无需外部数据库
+      # 如需 PostgreSQL，取消下面的注释：
+      # - DATABASE_URL=postgresql://gameforge:gameforge@postgres:5432/gameforge
+      # 如需 Redis，取消下面的注释：
+      # - REDIS_HOST=redis
+    volumes:
+      # 持久化数据目录
+      - gameforge-data:/app/data
+      # 持久化日志
+      - gameforge-logs:/app/logs
+      # 挂载代码目录（开发时热重载）
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./static:/app/static:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - gameforge
+
+  # ── Redis（可选） ──────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: gameforge-redis
+    profiles:
+      - deps
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - gameforge
+
+  # ── PostgreSQL（可选） ─────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: gameforge-postgres
+    profiles:
+      - deps
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: gameforge
+      POSTGRES_USER: gameforge
+      POSTGRES_PASSWORD: gameforge
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gameforge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - gameforge
+
+volumes:
+  gameforge-data:
+  gameforge-logs:
+  redis-data:
+  postgres-data:
+
+networks:
+  gameforge:
+    driver: bridge
