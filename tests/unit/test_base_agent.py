@@ -33,7 +33,7 @@ class TestBaseAgent:
         agent = ConcreteAgent(AgentType.DEBUGGER, config)
         # debugger config not found → falls back to default dict
         assert agent.llm_config["model"] == "mimo-v2.5-pro"
-        assert agent.llm_config["provider"] == "openai"
+        assert agent.llm_config["provider"] == "mimo"
 
     @pytest.mark.asyncio
     async def test_execute(self, sample_config):

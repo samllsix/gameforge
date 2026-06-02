@@ -14,7 +14,7 @@ class CodeReviewerAgent(BaseAgent):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(AgentType.CODE_REVIEWER, config)
-        self.llm = get_llm_client(config)
+        self.llm = get_llm_client(config, provider=self.provider, model=self.model)
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         self.log_action("code_reviewer_execute")
@@ -75,6 +75,7 @@ class CodeReviewerAgent(BaseAgent):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                model=self.model,
                 temperature=self.llm_config.get("temperature", 0.2),
                 max_tokens=self.llm_config.get("max_tokens", 4096),
             )

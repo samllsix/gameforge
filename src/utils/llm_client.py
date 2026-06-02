@@ -10,6 +10,7 @@ import re
 import time
 import random
 import asyncio
+import threading
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -82,6 +83,7 @@ class CircuitBreaker:
             self.last_failure_time = time.time()
             if self.failure_count >= self.failure_threshold:
                 self.state = CircuitState.OPEN
+                self.failure_count = 0
 
     def get_state(self) -> str:
         return self.state.value
@@ -132,21 +134,27 @@ class LLMClientPool:
 
 
 class LLMClient:
-    """LLM客户端 — 封装异步OpenAI兼容API调用"""
+    """LLM客户端 — 封装异步OpenAI兼容API调用，支持多Provider路由"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any],
+                 provider_base_url: Optional[str] = None,
+                 provider_api_key: Optional[str] = None,
+                 default_model: Optional[str] = None):
         """初始化LLM客户端
 
         Args:
-            config: 配置字典，包含llm相关配置
+            config: 配置字典，包含llm相关配置（重试、熔断等）
+            provider_base_url: Provider的API地址（优先于config中的base_url）
+            provider_api_key: Provider的API密钥（优先于环境变量MIMO_API_KEY）
+            default_model: 默认模型名（优先于config中的default_model）
         """
         llm_config = config.get("llm", {})
-        self.default_model = llm_config.get("default_model", "mimo-v2.5-pro")
-        self.base_url = llm_config.get(
+        self.default_model = default_model or llm_config.get("default_model", "mimo-v2.5-pro")
+        self.base_url = provider_base_url or llm_config.get(
             "base_url",
             os.getenv("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1"),
         )
-        self.api_key = os.getenv("MIMO_API_KEY", "")
+        self.api_key = provider_api_key or os.getenv("MIMO_API_KEY", "")
 
         # 重试和熔断配置
         self.retry_config = RetryConfig(
@@ -306,22 +314,58 @@ class LLMClient:
 
 # 全局客户端缓存（兼容旧的get_llm_client调用）
 _client_cache: Dict[str, LLMClient] = {}
-_cache_lock = asyncio.Lock()
+_cache_lock = threading.Lock()
 
 
-def get_llm_client(config: Dict[str, Any]) -> LLMClient:
-    """获取LLM客户端实例（带缓存）
+def _resolve_provider_config(config: Dict[str, Any], provider_name: Optional[str] = None):
+    """解析Provider配置，返回 (base_url, api_key, default_model)
+
+    Args:
+        config: 全局配置字典
+        provider_name: Provider名称（如 'mimo', 'deepseek'），None时使用默认
+
+    Returns:
+        (base_url, api_key, default_model) 元组
+    """
+    llm_config = config.get("llm", {})
+    providers = llm_config.get("providers", {})
+
+    if provider_name and provider_name in providers:
+        provider = providers[provider_name]
+        base_url = provider.get("base_url", "")
+        api_key_env = provider.get("api_key_env", "")
+        api_key = os.getenv(api_key_env, "")
+        return base_url, api_key
+
+    # 回退到默认配置（兼容旧逻辑）
+    base_url = llm_config.get("base_url", os.getenv("MIMO_BASE_URL", ""))
+    api_key = os.getenv("MIMO_API_KEY", "")
+    return base_url, api_key
+
+
+def get_llm_client(config: Dict[str, Any],
+                   provider: Optional[str] = None,
+                   model: Optional[str] = None) -> LLMClient:
+    """获取LLM客户端实例（带缓存，线程安全，支持多Provider）
 
     Args:
         config: 配置字典
+        provider: Provider名称（如 'mimo', 'deepseek'），None时使用默认
+        model: 默认模型名，None时使用配置中的值
 
     Returns:
         LLMClient实例
     """
-    llm_config = config.get("llm", {})
-    base_url = llm_config.get("base_url", os.getenv("MIMO_BASE_URL", ""))
-    cache_key = base_url
+    base_url, api_key = _resolve_provider_config(config, provider)
+    # 缓存键 = provider + base_url，确保不同provider不会复用同一个客户端
+    cache_key = f"{provider or 'default'}|{base_url}"
 
-    if cache_key not in _client_cache:
-        _client_cache[cache_key] = LLMClient(config)
-    return _client_cache[cache_key]
+    with _cache_lock:
+        if cache_key not in _client_cache:
+            _client_cache[cache_key] = LLMClient(
+                config,
+                provider_base_url=base_url,
+                provider_api_key=api_key,
+                default_model=model,
+            )
+        return _client_cache[cache_key]

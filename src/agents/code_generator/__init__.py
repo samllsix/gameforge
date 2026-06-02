@@ -108,7 +108,7 @@ class CodeGeneratorAgent(BaseAgent):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(AgentType.CODE_GENERATOR, config)
-        self.llm = get_llm_client(config)
+        self.llm = get_llm_client(config, provider=self.provider, model=self.model)
         self.supported_engines = self.agent_config.get("supported_engines", ["unity", "unreal"])
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
@@ -430,6 +430,7 @@ namespace ...
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                model=self.model,
                 temperature=self.llm_config.get("temperature", 0.3),
                 max_tokens=self.llm_config.get("max_tokens", 8192),
             )
@@ -942,21 +943,19 @@ namespace GameForge.Core
 
         private void ProcessCollision(Collision2D collision)
         {
-            var scoreManager = FindObjectOfType<ScoreManager>();
-            if (scoreManager == null) return;
+            if (ScoreManager.Instance == null) return;
 
             if (collision.gameObject.CompareTag("Enemy"))
-                scoreManager.OnPlayerHit();
+                ScoreManager.Instance.OnPlayerHit();
             else if (collision.gameObject.CompareTag("Pickup"))
-                scoreManager.OnPickupCollected(collision.gameObject);
+                ScoreManager.Instance.OnPickupCollected(collision.gameObject);
         }
 
         private void ProcessTrigger(Collider2D other)
         {
             if (other.CompareTag("Pickup"))
             {
-                var scoreManager = FindObjectOfType<ScoreManager>();
-                scoreManager?.OnPickupCollected(other.gameObject);
+                ScoreManager.Instance?.OnPickupCollected(other.gameObject);
             }
         }
         #endregion
@@ -1173,8 +1172,7 @@ namespace GameForge.Enemy
                 if (player != null && !player.IsHit)
                 {
                     player.TakeHit();
-                    var gm = FindObjectOfType<GameForge.Core.GameManager>();
-                    if (gm != null) { gm.LoseLife(); if (gm.IsGameOver) gm.RestartGame(); }
+                    if (GameForge.Core.GameManager.Instance != null) { GameForge.Core.GameManager.Instance.LoseLife(); if (GameForge.Core.GameManager.Instance.IsGameOver) GameForge.Core.GameManager.Instance.RestartGame(); }
                 }
             }
         }
@@ -1227,8 +1225,7 @@ namespace GameForge.Collectibles
         {
             if (other.CompareTag("Player"))
             {
-                var gm = FindObjectOfType<GameForge.Core.GameManager>();
-                if (gm != null) gm.AddScore(_scoreValue);
+                if (GameForge.Core.GameManager.Instance != null) GameForge.Core.GameManager.Instance.AddScore(_scoreValue);
                 Destroy(gameObject);
             }
         }

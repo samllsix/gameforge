@@ -1,21 +1,20 @@
-"""GameForge - 测试生成Agent模块
+"""GameForge test generation agent."""
 
-负责为代码生成测试用例。
-"""
-
+import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
+
 from src.agents.base import BaseAgent
-from src.core.state.game_state import GameDevState, AgentType
+from src.core.state.game_state import AgentType, GameDevState
 from src.utils.llm_client import get_llm_client
 
 
 class TestGeneratorAgent(BaseAgent):
-    """测试生成Agent"""
+    """Generate Unity EditMode tests without polluting runtime assemblies."""
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(AgentType.TEST_GENERATOR, config)
-        self.llm = get_llm_client(config)
+        self.llm = get_llm_client(config, provider=self.provider, model=self.model)
         self.coverage_target = self.agent_config.get("coverage_target", 80)
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
@@ -33,56 +32,50 @@ class TestGeneratorAgent(BaseAgent):
         if not code_generated:
             return {}
 
-        # 收集需要生成测试的源文件
         source_files = {}
         for file_path, content in code_generated.items():
-            if file_path.endswith(".cs") and not file_path.endswith("Tests.cs"):
-                test_path = file_path.replace(".cs", "Tests.cs")
-                if test_path not in code_generated:
-                    source_files[file_path] = content
+            if not self._is_runtime_source(file_path):
+                continue
+            test_path = self._test_path_for_source(file_path)
+            if test_path not in code_generated:
+                source_files[file_path] = content
 
         if not source_files:
             return {}
 
-        # 批量生成所有测试（单次LLM调用）
         return await self._generate_all_tests_batch(source_files)
 
-    async def _generate_all_tests_batch(self, source_files: Dict[str, str]) -> Dict[str, str]:
-        """批量生成所有测试代码（单次LLM调用）
-
-        Args:
-            source_files: {文件路径: 源代码} 字典
-
-        Returns:
-            {测试文件路径: 测试代码} 字典
-        """
-        # 构建源文件列表
+    async def _generate_all_tests_batch(
+        self, source_files: Dict[str, str]
+    ) -> Dict[str, str]:
         files_section = ""
         for file_path, content in source_files.items():
             class_name = file_path.split("/")[-1].replace(".cs", "")
-            files_section += f"\n### 文件: {file_path}\n类名: {class_name}\n```csharp\n{content}\n```\n"
+            files_section += (
+                f"\n### File: {file_path}\n"
+                f"Class: {class_name}\n"
+                f"Test path: {self._test_path_for_source(file_path)}\n"
+                f"```csharp\n{content}\n```\n"
+            )
 
         system_prompt = self.get_prompt_template("test_generator_system")
-        user_prompt = f"""请为以下所有Unity C#源文件批量生成单元测试。
-
+        user_prompt = f"""Generate Unity C# EditMode tests for these source files.
 {files_section}
 
-要求：
-1. 使用NUnit框架（[TestFixture], [Test], [SetUp], [TearDown]）
-2. 使用UnityEngine.TestTools（[UnityTest]）
-3. 为每个源文件生成独立的测试文件
-4. 每个测试文件路径为源文件路径将 .cs 替换为 Tests.cs
-5. 包含初始化测试、方法测试、边界测试
-6. 测试必须完整可编译
+Requirements:
+1. Use NUnit and UnityEngine.TestTools.
+2. Put every test under Assets/Tests/EditMode/, never under Assets/Scripts/.
+3. Include using System.Collections; when IEnumerator is used.
+4. If a source class has a namespace, add a using for that namespace.
+5. Tests must compile in Unity EditMode.
 
-输出格式（每个测试文件一个代码块）：
+Output one fenced csharp block per test file:
 ```csharp
-// 文件: Assets/Scripts/xxx/xxxTests.cs
+// File: Assets/Tests/EditMode/Player/PlayerControllerTests.cs
 using NUnit.Framework;
 ...
 ```
-
-请直接输出所有测试代码。"""
+"""
 
         try:
             response = await self.llm.chat(
@@ -90,14 +83,14 @@ using NUnit.Framework;
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                model=self.model,
                 temperature=self.llm_config.get("temperature", 0.4),
                 max_tokens=self.llm_config.get("max_tokens", 8192),
             )
 
-            # 解析所有代码块
             test_code = {}
             code_blocks = re.findall(
-                r'```(?:csharp|cs)?\s*\n(.*?)\n```',
+                r"```(?:csharp|cs)?\s*\n(.*?)\n```",
                 response,
                 re.DOTALL,
             )
@@ -107,79 +100,86 @@ using NUnit.Framework;
                 if not block:
                     continue
 
-                # 提取文件路径
-                file_path_match = re.search(r'//\s*文件:\s*(\S+)', block)
+                test_path = ""
+                file_path_match = re.search(
+                    r"//\s*(?:File|文件):\s*(\S+)", block
+                )
                 if file_path_match:
-                    test_path = file_path_match.group(1)
-                    block = re.sub(r'//\s*文件:\s*\S+\s*\n', '', block, count=1).strip()
+                    test_path = self._normalize_test_path(
+                        file_path_match.group(1), source_files
+                    )
+                    block = re.sub(
+                        r"//\s*(?:File|文件):\s*\S+\s*\n",
+                        "",
+                        block,
+                        count=1,
+                    ).strip()
                 else:
-                    # 尝试从类名推断
-                    class_match = re.search(r'class\s+(\w+Tests)', block)
+                    class_match = re.search(r"class\s+(\w+Tests)", block)
                     if class_match:
                         test_name = class_match.group(1).replace("Tests", "")
-                        # 找到对应的源文件路径
                         for src_path in source_files:
                             if test_name in src_path:
-                                test_path = src_path.replace(".cs", "Tests.cs")
+                                test_path = self._test_path_for_source(src_path)
                                 break
-                        else:
-                            continue
-                    else:
-                        continue
 
-                if 'class ' in block and ('[Test]' in block or '[TestFixture]' in block):
-                    test_code[test_path] = block
+                if not test_path:
+                    continue
 
-            # 对于未生成测试的文件，使用模板
-            for file_path in source_files:
-                test_path = file_path.replace(".cs", "Tests.cs")
+                if "class " in block and ("[Test]" in block or "[TestFixture]" in block):
+                    source_path = self._source_path_for_test_path(test_path, source_files)
+                    test_code[test_path] = self._sanitize_test_code(
+                        block, source_files.get(source_path, "")
+                    )
+
+            for file_path, content in source_files.items():
+                test_path = self._test_path_for_source(file_path)
                 if test_path not in test_code:
-                    test_code[test_path] = self._generate_test_template(file_path, source_files[file_path])
+                    test_code[test_path] = self._generate_test_template(
+                        file_path, content
+                    )
+
+            if test_code:
+                test_code.setdefault(
+                    "Assets/Tests/EditMode/GameForge.Tests.asmdef",
+                    self._generate_tests_asmdef(),
+                )
 
             self.log_action("batch_tests_generated", {"file_count": len(test_code)})
             return test_code
 
         except Exception as e:
             self.log_error("batch_test_generator_error", {"error": str(e)})
-            # 回退：为每个文件生成模板测试
-            return {
-                path.replace(".cs", "Tests.cs"): self._generate_test_template(path, content)
+            test_code = {
+                self._test_path_for_source(path): self._generate_test_template(
+                    path, content
+                )
                 for path, content in source_files.items()
             }
+            if test_code:
+                test_code["Assets/Tests/EditMode/GameForge.Tests.asmdef"] = (
+                    self._generate_tests_asmdef()
+                )
+            return test_code
 
-    async def _generate_test_with_llm(self, source_path: str, source_content: str) -> str:
-        """用LLM生成测试代码
-
-        Args:
-            source_path: 源文件路径
-            source_content: 源代码内容
-
-        Returns:
-            测试代码
-        """
+    async def _generate_test_with_llm(
+        self, source_path: str, source_content: str
+    ) -> str:
         class_name = source_path.split("/")[-1].replace(".cs", "")
-        test_file_path = source_path.replace(".cs", "Tests.cs")
+        test_file_path = self._test_path_for_source(source_path)
 
         system_prompt = self.get_prompt_template("test_generator_system")
-        user_prompt = f"""请为以下Unity C#代码生成完整的单元测试。
+        user_prompt = f"""Generate a complete Unity EditMode test.
+Source file: {source_path}
+Class: {class_name}
+Test file path: {test_file_path}
 
-源文件: {source_path}
-类名: {class_name}
-
-源代码:
 ```csharp
 {source_content}
 ```
 
-要求：
-1. 使用NUnit框架（[TestFixture], [Test], [SetUp], [TearDown]）
-2. 使用UnityEngine.TestTools（[UnityTest]）
-3. 测试文件路径: {test_file_path}
-4. 测试类名: {class_name}Tests
-5. 包含初始化测试、方法测试、边界测试
-6. 测试必须完整可编译
-
-请直接输出测试代码，不要包含解释文字。"""
+Return only compilable C# test code. Include using System.Collections if needed.
+"""
 
         try:
             response = await self.llm.chat(
@@ -187,18 +187,19 @@ using NUnit.Framework;
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                model=self.model,
                 temperature=self.llm_config.get("temperature", 0.4),
                 max_tokens=self.llm_config.get("max_tokens", 4096),
             )
 
-            # 提取代码块
-            code_match = re.search(r'```(?:csharp|cs)?\s*\n(.*?)\n```', response, re.DOTALL)
+            code_match = re.search(
+                r"```(?:csharp|cs)?\s*\n(.*?)\n```", response, re.DOTALL
+            )
             if code_match:
-                return code_match.group(1).strip()
+                return self._sanitize_test_code(code_match.group(1).strip(), source_content)
 
-            # 如果没有代码块但看起来像代码
-            if 'class ' in response and '[Test]' in response:
-                return response.strip()
+            if "class " in response and "[Test]" in response:
+                return self._sanitize_test_code(response.strip(), source_content)
 
             self.log_error("test_parse_failed", {"class": class_name})
             return self._generate_test_template(source_path, source_content)
@@ -209,20 +210,19 @@ using NUnit.Framework;
 
     def _generate_test_template(self, source_path: str, source_content: str) -> str:
         class_name = source_path.split("/")[-1].replace(".cs", "")
+        namespace = self._extract_namespace(source_content)
+        namespace_using = f"using {namespace};\n" if namespace else ""
 
-        return f'''using NUnit.Framework;
+        return f"""using NUnit.Framework;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.TestTools;
-
+{namespace_using}
 namespace GameForge.Tests
 {{
-    /// <summary>
-    /// {class_name} 单元测试
-    /// </summary>
     [TestFixture]
     public class {class_name}Tests
     {{
-        #region Setup and Teardown
         private GameObject _testObject;
         private {class_name} _instance;
 
@@ -238,9 +238,7 @@ namespace GameForge.Tests
         {{
             Object.DestroyImmediate(_testObject);
         }}
-        #endregion
 
-        #region Tests
         [Test]
         public void {class_name}_Initialization_HasCorrectDefaults()
         {{
@@ -253,6 +251,76 @@ namespace GameForge.Tests
             yield return null;
             Assert.IsNotNull(_instance);
         }}
-        #endregion
     }}
-}}'''
+}}"""
+
+    def _is_runtime_source(self, file_path: str) -> bool:
+        normalized = file_path.replace("\\", "/")
+        return (
+            normalized.endswith(".cs")
+            and not normalized.endswith("Tests.cs")
+            and not normalized.startswith("Assets/Editor/")
+            and not normalized.startswith("Assets/Tests/")
+        )
+
+    def _test_path_for_source(self, source_path: str) -> str:
+        normalized = source_path.replace("\\", "/")
+        if normalized.startswith("Assets/Scripts/"):
+            rel = normalized[len("Assets/Scripts/") :]
+        elif normalized.startswith("Assets/"):
+            rel = normalized[len("Assets/") :]
+        else:
+            rel = normalized.rsplit("/", 1)[-1]
+        return "Assets/Tests/EditMode/" + rel.replace(".cs", "Tests.cs")
+
+    def _normalize_test_path(
+        self, test_path: str, source_files: Dict[str, str]
+    ) -> str:
+        normalized = test_path.replace("\\", "/")
+        if normalized.startswith("Assets/Tests/EditMode/"):
+            return normalized
+
+        for src_path in source_files:
+            legacy_path = src_path.replace(".cs", "Tests.cs")
+            if normalized == legacy_path or normalized.endswith(
+                legacy_path.rsplit("/", 1)[-1]
+            ):
+                return self._test_path_for_source(src_path)
+
+        if normalized.startswith("Assets/Scripts/"):
+            return "Assets/Tests/EditMode/" + normalized[len("Assets/Scripts/") :]
+        return normalized
+
+    def _source_path_for_test_path(
+        self, test_path: str, source_files: Dict[str, str]
+    ) -> str:
+        test_name = test_path.rsplit("/", 1)[-1].replace("Tests.cs", ".cs")
+        for src_path in source_files:
+            if src_path.rsplit("/", 1)[-1] == test_name:
+                return src_path
+        return ""
+
+    def _sanitize_test_code(self, code: str, source_content: str) -> str:
+        if "IEnumerator" in code and "using System.Collections;" not in code:
+            code = "using System.Collections;\n" + code
+
+        namespace = self._extract_namespace(source_content)
+        if namespace and f"using {namespace};" not in code:
+            code = f"using {namespace};\n" + code
+        return code
+
+    def _extract_namespace(self, source_content: str) -> str:
+        match = re.search(r"\bnamespace\s+([\w.]+)", source_content)
+        return match.group(1) if match else ""
+
+    def _generate_tests_asmdef(self) -> str:
+        return json.dumps(
+            {
+                "name": "GameForge.Tests",
+                "rootNamespace": "GameForge.Tests",
+                "references": ["UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+                "includePlatforms": ["Editor"],
+                "optionalUnityReferences": ["TestAssemblies"],
+            },
+            indent=2,
+        )

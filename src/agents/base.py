@@ -39,8 +39,11 @@ class BaseAgent(ABC):
         llm_models = config.get("llm", {}).get("models", {})
         self.llm_config = llm_models.get(
             self._get_llm_key(),
-            {"provider": "openai", "model": "mimo-v2.5-pro", "temperature": 0.7, "max_tokens": 4096}
+            {"provider": "mimo", "model": "mimo-v2.5-pro", "temperature": 0.7, "max_tokens": 4096}
         )
+        # 暴露 provider 和 model，供子类在调用 LLM 时使用
+        self.provider = self.llm_config.get("provider")
+        self.model = self.llm_config.get("model")
 
     def _get_llm_key(self) -> str:
         """获取LLM配置键名

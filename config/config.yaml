@@ -5,8 +5,9 @@ app:
   name: GameForge
   version: 0.1.0
   description: 游戏研发全流程AI Agent协作平台
-  environment: development
-  debug: true
+  # 环境和调试模式 — 生产部署时通过环境变量 GAMEFORGE_ENV=production 覆盖
+  environment: ${GAMEFORGE_ENV:development}
+  debug: ${GAMEFORGE_DEBUG:true}
 
 # Server configuration
 server:
@@ -17,7 +18,7 @@ server:
     - "http://localhost:3000"
     - "http://localhost:5173"
 
-# LLM Configuration - 使用Mimo大模型
+# LLM Configuration - 多Provider架构
 llm:
   default_model: mimo-v2.5-pro
   base_url: https://token-plan-cn.xiaomimimo.com/v1
@@ -28,37 +29,61 @@ llm:
   # 熔断器配置
   circuit_breaker_threshold: 5
   circuit_breaker_recovery: 60.0
+  # Provider注册表 — 每个provider对应一组 base_url + api_key 环境变量
+  providers:
+    mimo:
+      base_url: https://token-plan-cn.xiaomimimo.com/v1
+      api_key_env: MIMO_API_KEY
+    deepseek:
+      base_url: https://api.deepseek.com/v1
+      api_key_env: DEEPSEEK_API_KEY
+    zhipu:
+      base_url: https://open.bigmodel.cn/api/paas/v4
+      api_key_env: ZHIPU_API_KEY
+    kimi:
+      base_url: https://api.moonshot.cn/v1
+      api_key_env: KIMI_API_KEY
   models:
     planner:
-      provider: openai
+      provider: mimo
       model: mimo-v2.5-pro
       temperature: 0.7
       max_tokens: 4096
     code_generator:
-      provider: openai
-      model: mimo-v2.5-pro
+      provider: deepseek
+      model: deepseek-v4-pro
       temperature: 0.3
       max_tokens: 8192
     code_reviewer:
-      provider: openai
-      model: mimo-v2.5-pro
+      provider: kimi
+      model: kimi-k2.6
       temperature: 0.2
       max_tokens: 4096
     test_generator:
-      provider: openai
-      model: mimo-v2.5-pro
+      provider: deepseek
+      model: deepseek-v4-pro
       temperature: 0.4
       max_tokens: 4096
     debugger:
-      provider: openai
-      model: mimo-v2.5-pro
+      provider: zhipu
+      model: glm-4.5-air
       temperature: 0.2
       max_tokens: 4096
     refactor:
-      provider: openai
-      model: mimo-v2.5-pro
+      provider: deepseek
+      model: deepseek-v4-pro
       temperature: 0.3
       max_tokens: 8192
+    game_designer:
+      provider: mimo
+      model: mimo-v2.5-pro
+      temperature: 0.7
+      max_tokens: 4096
+    scene_generator:
+      provider: mimo
+      model: mimo-v2.5-pro
+      temperature: 0.5
+      max_tokens: 4096
 
 # Agent Configuration
 agents:
@@ -147,8 +172,8 @@ evaluation:
 
 # Unity Integration
 unity:
-  editor_path: D:/Unity/2022.3.62f3c1/Editor/Unity.exe
-  project_path: D:/Unity/GameForge
+  editor_path: ${UNITY_EDITOR_PATH:}
+  project_path: ${UNITY_PROJECT_PATH:}
   timeout: 300
   auto_refresh: true
   http_port: 8765
