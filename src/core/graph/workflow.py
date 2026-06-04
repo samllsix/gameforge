@@ -8,7 +8,10 @@ import time as _time
 
 import asyncio
 import json
+import structlog
 from pathlib import Path
+
+logger = structlog.get_logger()
 from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, END
 
@@ -174,8 +177,8 @@ class GameDevWorkflow:
                         is_safe, issues = sandbox.validate_code(content)
                         if not is_safe:
                             warnings.append(f"安全问题 {path}: {'; '.join(issues[:2])}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("sandbox_check_failed", error=str(e))
 
             return {
                 "code_generated": new_code,
@@ -496,7 +499,7 @@ class GameDevWorkflow:
                 if m:
                     generated_classes.add(m.group(1))
 
-        from src.utils.consistency_validator import _is_unity_builtin
+        from src.core.tools import is_unity_builtin as _is_unity_builtin
         removed_scripts = []
 
         def _clean_components(components):
@@ -654,8 +657,8 @@ class GameDevWorkflow:
             if validation.has_errors:
                 for err in validation.errors[:5]:
                     state.setdefault("warnings", []).append(f"验证错误: {err.get('message', '')}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("code_validation_failed", error=str(e))
 
         self._add_project_artifacts(state)
 
@@ -679,8 +682,8 @@ class GameDevWorkflow:
                     "unity_compatibility", compat_score,
                     details={"errors": len(compat.errors), "warnings": len(compat.warnings)}
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("unity_compat_score_failed", error=str(e))
 
             # 保存评测报告
             report_path = eval_report.save()
@@ -704,8 +707,8 @@ class GameDevWorkflow:
                     state.setdefault("warnings", []).append(
                         f"沙箱安全检查发现 {len(sandbox_issues)} 个问题: {'; '.join(sandbox_issues[:5])}"
                     )
-        except Exception:
-            pass  # 沙箱不可用时跳过
+        except Exception as e:
+            logger.warning("sandbox_validation_skipped", error=str(e))
 
         # 保存项目记忆 — 记录本次生成的错误和经验
         try:
@@ -722,8 +725,8 @@ class GameDevWorkflow:
                 )
             project_name = state.get("project_context", {}).get("project_name", "default")
             self.memory.project_memory.save(project_name)
-        except Exception:
-            pass  # 记忆保存失败不影响主流程
+        except Exception as e:
+            logger.warning("memory_save_failed", error=str(e))
 
     # ========== 运行入口 ==========
 
@@ -731,7 +734,8 @@ class GameDevWorkflow:
         """运行工作流（批处理模式）
 
         使用 .ainvoke() 驱动图执行，LangGraph 负责状态合并和路由。
-        外层循环处理多任务迭代，每次 ainvoke 处理一个任务的完整流水线。
+        图内部通过 orchestrator 的条件边实现多任务循环调度，
+        无需外层循环——ainvoke 会一直运行到图到达 END 节点。
         """
         from src.utils.metrics import (
             record_workflow_run, record_task_completed, record_file_generated,
@@ -754,22 +758,21 @@ class GameDevWorkflow:
             self._run_scene_generation(state, _noop_callback)
         )
 
-        # 图驱动执行：每次 ainvoke 处理一轮（orchestrator → task → review → test → orchestrator）
+        # 递归限制：防止图内部无限循环（每个节点调用算 1 次递归）
         max_iterations = self.config.get("agents", {}).get("orchestrator", {}).get("max_iterations", 10)
+        recursion_limit = max(max_iterations * 12, 100)  # 每轮约 8-10 个节点调用
         _success = True
 
         try:
-            for _ in range(max_iterations):
-                result = await self.graph.ainvoke(state)
-                state = result
+            # 单次 ainvoke —— 图内部 orchestrator 条件边负责多任务循环调度
+            # game_designer → planner → orchestrator → [code_gen/review/refactor/test] → orchestrator → ... → END
+            result = await self.graph.ainvoke(state, config={"recursion_limit": recursion_limit})
+            state = result
 
-                # 记录任务完成指标
-                for task in state.get("task_plan", []):
-                    if task.get("status") == TaskStatus.COMPLETED.value:
-                        record_task_completed(task.get("type", "unknown"))
-
-                if state.get("is_complete") or state.get("current_phase") == "workflow_complete":
-                    break
+            # 记录任务完成指标
+            for task in state.get("task_plan", []):
+                if task.get("status") == TaskStatus.COMPLETED.value:
+                    record_task_completed(task.get("type", "unknown"))
 
             # 记录文件生成指标
             for file_path in state.get("code_generated", {}).keys():
@@ -816,73 +819,46 @@ class GameDevWorkflow:
         )
 
         max_iterations = self.config.get("agents", {}).get("orchestrator", {}).get("max_iterations", 10)
+        recursion_limit = max(max_iterations * 12, 100)
 
         try:
-            for iteration in range(max_iterations):
-                # 发送迭代开始事件
-                await event_callback("phase_start", {
-                    "phase": "iterating",
-                    "message": f"任务迭代 {iteration + 1}/{max_iterations}...",
-                })
+            # 发送迭代开始事件
+            await event_callback("phase_start", {
+                "phase": "iterating",
+                "message": "正在执行工作流...",
+            })
 
-                # 使用 astream_events 获取图执行的实时事件
-                async for event in self.graph.astream_events(state, version="v2"):
-                    kind = event.get("event", "")
-                    node_name = event.get("name", "")
+            # 单次 ainvoke —— 图内部 orchestrator 条件边负责多任务循环调度
+            # 使用 astream_events 获取图执行的实时事件
+            async for event in self.graph.astream_events(state, version="v2", config={"recursion_limit": recursion_limit}):
+                kind = event.get("event", "")
+                node_name = event.get("name", "")
 
-                    if kind == "on_chain_start" and node_name not in ("__start__", "__end__", "LangGraph"):
-                        await event_callback("phase_start", {
-                            "phase": node_name,
-                            "message": f"正在执行: {node_name}...",
-                        })
-                    elif kind == "on_chain_end" and node_name not in ("__start__", "__end__", "LangGraph"):
-                        output = event.get("data", {}).get("output", {})
-                        if output:
-                            # 发送代码文件事件
-                            new_code = output.get("code_generated", {})
-                            if new_code:
-                                for file_path, content in new_code.items():
-                                    await event_callback("code_file", {
-                                        "file_path": file_path,
-                                        "content": content,
-                                    })
-
-                            # 发送审查结果事件
-                            review = output.get("review_result")
-                            if review:
-                                await event_callback("review_result", review)
-
-                # 读取图执行后的最终状态
-                # astream_events 不直接返回最终状态，需要重新 ainvoke 获取
-                state = await self.graph.ainvoke(state)
-
-                if state.get("is_complete") or state.get("current_phase") == "workflow_complete":
-                    break
-
-            # Unity编译闭环
-            unity_config = self.config.get("unity", {})
-            if unity_config.get("auto_build_scene") or unity_config.get("auto_compile"):
-                try:
-                    await self._unity_compile_loop(state, event_callback, max_rounds=3)
-                except Exception as e:
-                    state.setdefault("warnings", []).append(f"Unity编译闭环异常: {e}")
-                    await event_callback("warning", {"message": f"编译闭环跳过: {e}"})
-
-            # 代码静态校验
-            try:
-                from src.utils.code_validator import validate_unity_code
-                validation = validate_unity_code(state.get("code_generated", {}))
-                if validation.has_issues:
-                    for err in validation.errors[:5]:
-                        state.setdefault("warnings", []).append(f"校验错误: {err['file']}:{err['line']} — {err['message']}")
-                    for warn in validation.warnings[:5]:
-                        state.setdefault("warnings", []).append(f"校验警告: {warn['file']}:{warn['line']} — {warn['message']}")
-                    await event_callback("warning", {
-                        "message": f"代码校验发现 {validation.to_dict()['error_count']} 个错误, {validation.to_dict()['warning_count']} 个警告",
-                        "validation": validation.to_dict(),
+                if kind == "on_chain_start" and node_name not in ("__start__", "__end__", "LangGraph"):
+                    await event_callback("phase_start", {
+                        "phase": node_name,
+                        "message": f"正在执行: {node_name}...",
                     })
-            except Exception as e:
-                state.setdefault("warnings", []).append(f"代码校验异常: {e}")
+                elif kind == "on_chain_end" and node_name not in ("__start__", "__end__", "LangGraph"):
+                    output = event.get("data", {}).get("output", {})
+                    if output:
+                        # 发送代码文件事件
+                        new_code = output.get("code_generated", {})
+                        if new_code:
+                            for file_path, content in new_code.items():
+                                await event_callback("code_file", {
+                                    "file_path": file_path,
+                                    "content": content,
+                                })
+
+                        # 发送审查结果事件
+                        review = output.get("review_result")
+                        if review:
+                            await event_callback("review_result", review)
+
+            # 读取图执行后的最终状态
+            # astream_events 不直接返回最终状态，需要重新 ainvoke 获取
+            state = await self.graph.ainvoke(state, config={"recursion_limit": recursion_limit})
 
         except Exception as e:
             _success = False

@@ -1,7 +1,7 @@
 """集成测试 - 测试各组件之间的交互"""
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 from src.core.graph.workflow import GameDevWorkflow, create_workflow
 from src.agents.code_generator import CodeGeneratorAgent
 from src.agents.orchestrator import OrchestratorAgent
@@ -107,32 +107,46 @@ class TestAgentInteraction:
     @pytest.mark.asyncio
     async def test_workflow_run(self, mock_agents_config):
         """测试完整workflow.run()"""
-        wf = GameDevWorkflow(mock_agents_config)
+        from unittest.mock import AsyncMock, MagicMock
 
-        wf.planner.plan = AsyncMock(return_value=[
-            {
-                "id": "task-1", "name": "Player",
-                "description": "Create player controller",
-                "type": "code", "status": TaskStatus.PENDING.value,
-                "priority": 1, "dependencies": [],
-                "assigned_agent": "code_generator",
-            },
-        ])
-        wf.code_generator.generate = AsyncMock(return_value=[{
-            "file_path": "Assets/Scripts/Player.cs",
-            "content": "public class Player : MonoBehaviour {}",
-            "language": "csharp", "engine": "unity",
-        }])
-        wf.code_reviewer.review = AsyncMock(return_value={"passed": True})
-        wf.test_generator.generate = AsyncMock(return_value={})
+        # 创建通用 mock LLM —— 返回合理的默认值
+        mock_llm = MagicMock()
+        mock_llm.chat = AsyncMock(return_value='{"game_title": "Test", "genre": "platformer", "engine": "unity", "camera_mode": "2D", "core_loop": "move", "player_actions": ["move"], "win_conditions": [], "fail_conditions": [], "main_systems": [], "entities": [], "scenes": [], "code_modules": [], "assets_needed": {}, "input_map": [], "tags_layers": {"tags": [], "layers": []}, "physics_settings": {}}')
+        mock_llm.chat_json = AsyncMock(return_value={"score": 85, "passed": True, "issues": [], "suggestions": []})
 
-        result = await wf.run({
-            "project_context": {"engine": "unity", "project_name": "Test"},
-            "requirements": "2D game",
-        })
+        # Patch get_llm_client 让所有 agent 初始化时拿到 mock
+        # 同时 patch 源模块，覆盖函数级 import 的场景（如 scene_generator._generate_via_llm_ir）
+        with patch("src.agents.game_designer.get_llm_client", return_value=mock_llm), \
+             patch("src.agents.debugger.get_llm_client", return_value=mock_llm), \
+             patch("src.agents.refactor.get_llm_client", return_value=mock_llm), \
+             patch("src.utils.llm_client.get_llm_client", return_value=mock_llm):
 
-        assert "task_plan" in result
-        assert result["is_complete"] is True
+            wf = GameDevWorkflow(mock_agents_config)
+
+            wf.planner.plan = AsyncMock(return_value=[
+                {
+                    "id": "task-1", "name": "Player",
+                    "description": "Create player controller",
+                    "type": "code", "status": TaskStatus.PENDING.value,
+                    "priority": 1, "dependencies": [],
+                    "assigned_agent": "code_generator",
+                },
+            ])
+            wf.code_generator.generate = AsyncMock(return_value=[{
+                "file_path": "Assets/Scripts/Player.cs",
+                "content": "public class Player : MonoBehaviour {}",
+                "language": "csharp", "engine": "unity",
+            }])
+            wf.code_reviewer.review = AsyncMock(return_value={"passed": True})
+            wf.test_generator.generate = AsyncMock(return_value={})
+
+            result = await wf.run({
+                "project_context": {"engine": "unity", "project_name": "Test"},
+                "requirements": "2D game",
+            })
+
+            assert "task_plan" in result
+            assert result["is_complete"] is True
 
 
 class TestModuleImports:

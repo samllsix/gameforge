@@ -6,6 +6,131 @@ from src.core.graph.workflow import create_workflow
 from src.core.state.game_state import GameDevState
 
 
+class FakeLLMClient:
+    """模拟LLM客户端 — 根据消息内容返回不同格式的响应"""
+
+    # 预置的 GDM 响应
+    _GDM_RESPONSE = """{
+            "game_title": "Offline Test Game",
+            "genre": "platformer",
+            "engine": "unity",
+            "camera_mode": "2D side-scroller",
+            "core_loop": "move, collect, score",
+            "player_actions": ["move", "jump"],
+            "win_conditions": ["reach goal"],
+            "fail_conditions": ["fall"],
+            "main_systems": [{"name": "movement", "description": "player movement", "priority": "high"}],
+            "entities": [{"name": "Player", "role": "player", "components": ["Rigidbody2D"]}],
+            "scenes": [{"name": "MainScene", "description": "test scene"}],
+            "code_modules": [{"module_name": "PlayerController", "responsibility": "movement", "output_files": ["Assets/Scripts/Player/PlayerController.cs"]}],
+            "assets_needed": {},
+            "input_map": [],
+            "tags_layers": {"tags": ["Player"], "layers": []},
+            "physics_settings": {}
+        }"""
+
+    # 预置的 C# 代码响应
+    _CODE_RESPONSE = """```csharp
+// file: Assets/Scripts/Core/GameManager.cs
+using UnityEngine;
+
+namespace TestGame.Core
+{
+    public class GameManager : MonoBehaviour
+    {
+        public static GameManager Instance { get; private set; }
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this) { Destroy(gameObject); return; }
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+    }
+}
+```"""
+
+    async def chat(self, *args, **kwargs):
+        """根据 system prompt 内容判断返回格式"""
+        messages = kwargs.get("messages", args[0] if args else [])
+        system_text = ""
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_text = msg.get("content", "")
+                break
+
+        # 代码生成相关的 prompt → 返回 C# 代码
+        if any(kw in system_text for kw in ["代码生成", "C#", "Unity", "code generator", "PlayerController", "GameManager"]):
+            return self._CODE_RESPONSE
+
+        # 设计相关 → 返回 GDM JSON
+        if any(kw in system_text for kw in ["Game Design", "游戏设计", "设计模型", "GDM"]):
+            return self._GDM_RESPONSE
+
+        # 任务规划相关 → 返回任务列表
+        if any(kw in system_text for kw in ["规划", "planner", "任务拆解", "task"]):
+            return """[
+            {"id": "task_001", "name": "PlayerController", "type": "code", "description": "创建玩家控制器", "priority": 1, "dependencies": [], "status": "pending"},
+            {"id": "task_002", "name": "GameManager", "type": "code", "description": "创建游戏管理器", "priority": 2, "dependencies": ["task_001"], "status": "pending"},
+            {"id": "task_003", "name": "Tests", "type": "test", "description": "创建测试用例", "priority": 3, "dependencies": ["task_001", "task_002"], "status": "pending"}
+        ]"""
+
+        # 测试生成 → 返回测试代码
+        if any(kw in system_text for kw in ["测试", "test", "单元测试"]):
+            return """```csharp
+// file: Assets/Tests/PlayerControllerTests.cs
+using UnityEngine.TestTools;
+using NUnit.Framework;
+
+public class PlayerControllerTests
+{
+    [Test]
+    public void PlayerController_Exists()
+    {
+        Assert.IsNotNull(Object.FindObjectOfType<PlayerController>());
+    }
+}
+```"""
+
+        # 调试 → 返回修复
+        if any(kw in system_text for kw in ["调试", "debug", "修复", "fix", "error"]):
+            return self._CODE_RESPONSE
+
+        # 默认返回 GDM
+        return self._GDM_RESPONSE
+
+    async def chat_json(self, *args, **kwargs):
+        return {
+            "score": 85,
+            "passed": True,
+            "issues": [],
+            "suggestions": [],
+            "fixes": [],
+            "files": [],
+            "needs_refactoring": False,
+            "refactored_code": "",
+        }
+
+
+@pytest.fixture(autouse=True)
+def offline_llm(monkeypatch):
+    fake = FakeLLMClient()
+    modules = [
+        "src.agents.game_designer",
+        "src.agents.planner",
+        "src.agents.code_generator",
+        "src.agents.code_reviewer",
+        "src.agents.test_generator",
+        "src.agents.debugger",
+        "src.agents.refactor",
+        "src.agents.scene_generator",
+    ]
+    for module_name in modules:
+        module = __import__(module_name, fromlist=["get_llm_client"])
+        if hasattr(module, "get_llm_client"):
+            monkeypatch.setattr(module, "get_llm_client", lambda *args, **kwargs: fake)
+
+
 class TestFullPipeline:
     """完整流程端到端测试"""
 
