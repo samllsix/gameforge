@@ -3,11 +3,14 @@
 使用SQLAlchemy 2.0 DeclarativeBase定义ORM模型。
 """
 
-from datetime import datetime
-from typing import Optional
+from datetime import UTC, datetime
 
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean
+from sqlalchemy import JSON, Column, DateTime, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class Base(DeclarativeBase):
@@ -16,6 +19,7 @@ class Base(DeclarativeBase):
 
 class TaskRecord(Base):
     """任务记录"""
+
     __tablename__ = "tasks"
 
     id = Column(String(20), primary_key=True)
@@ -25,7 +29,7 @@ class TaskRecord(Base):
     result = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
     priority = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
@@ -46,6 +50,7 @@ class TaskRecord(Base):
 
 class GenerationHistory(Base):
     """代码生成历史"""
+
     __tablename__ = "generation_history"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -55,7 +60,7 @@ class GenerationHistory(Base):
     files_generated = Column(JSON, default=dict)
     task_count = Column(Integer, default=0)
     fix_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     # Phase 4.6: 完整历史数据
     task_plan = Column(JSON, nullable=True)
@@ -91,6 +96,7 @@ class GenerationHistory(Base):
 
 class AuditLog(Base):
     """审计日志"""
+
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -100,4 +106,4 @@ class AuditLog(Base):
     method = Column(String(10))
     details = Column(JSON, default=dict)
     severity = Column(String(20), default="INFO")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)

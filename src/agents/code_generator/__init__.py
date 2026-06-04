@@ -444,8 +444,8 @@ namespace ...
                 rag_context = "\n\n## 相似代码参考（来自历史生成）\n"
                 for ref in similar:
                     rag_context += f"\n### {ref['task_name']} (相似度: {ref['score']:.2f})\n```\n{ref['code_preview']}\n```\n"
-        except Exception:
-            pass  # 向量检索失败不影响生成
+        except Exception as e:
+            self.log_error("vector_search_failed", {"error": str(e)})
 
         if rag_context:
             user_prompt = user_prompt + rag_context
@@ -480,8 +480,8 @@ namespace ...
                         engine=engine,
                         task_type="code",
                     )
-            except Exception:
-                pass  # 存储失败不影响生成
+            except Exception as e:
+                self.log_error("vector_store_failed", {"error": str(e)})
 
             return artifacts
 

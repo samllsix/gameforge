@@ -1,4 +1,4 @@
-"""GameForge - 扩展API路由模块
+﻿"""GameForge - 扩展API路由模块
 
 只包含main.py中没有的独立路由：编译、导入、评测。
 避免与主路由重复定义。
@@ -16,6 +16,8 @@ from src.api.schemas import (
     EvalRequest,
     EvalResponse,
 )
+from src.cli import load_config
+from src.engine.unity import UnityEditor
 
 router = APIRouter()
 
@@ -24,9 +26,6 @@ router = APIRouter()
 async def compile_project(request: CompileRequest):
     """编译Unity项目（异步化阻塞操作）"""
     try:
-        from src.engine.unity import UnityEditor
-        from src.cli import load_config
-
         config = load_config()
         unity_config = config.get("unity", {})
         if request.project_path:
@@ -57,9 +56,6 @@ async def compile_project(request: CompileRequest):
 async def import_files(request: ImportRequest):
     """导入文件到Unity项目（异步化阻塞操作）"""
     try:
-        from src.engine.unity import UnityEditor
-        from src.cli import load_config
-
         config = load_config()
         unity_config = config.get("unity", {})
         if request.project_path:

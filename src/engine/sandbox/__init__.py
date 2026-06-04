@@ -7,7 +7,7 @@ import os
 import subprocess
 import tempfile
 import shutil
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -102,7 +102,7 @@ class SandboxExecutor:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def validate_code(self, code: str) -> tuple[bool, List[str]]:
+    def validate_code(self, code: str) -> Tuple[bool, List[str]]:
         """验证代码安全性
 
         Args:

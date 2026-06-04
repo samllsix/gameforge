@@ -57,9 +57,21 @@ class UnityEditor:
         Args:
             config: 配置字典，需包含unity_editor_path和unity_project_path
         """
-        self.editor_path = config.get("unity_editor_path", self._find_unity_editor())
-        self.project_path = config.get("unity_project_path", "")
-        self.timeout = config.get("unity_timeout", 300)
+        self.editor_path = (
+            config.get("unity_editor_path")
+            or config.get("editor_path")
+            or self._find_unity_editor()
+        )
+        self.project_path = (
+            config.get("unity_project_path")
+            or config.get("project_path")
+            or ""
+        )
+        self.timeout = (
+            config.get("unity_timeout")
+            or config.get("timeout")
+            or 300
+        )
 
     def _find_unity_editor(self) -> str:
         """自动查找Unity Editor安装路径

@@ -11,6 +11,7 @@ from src.utils.llm_client import get_llm_client
 
 class TestGeneratorAgent(BaseAgent):
     """Generate Unity EditMode tests without polluting runtime assemblies."""
+    __test__ = False
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(AgentType.TEST_GENERATOR, config)

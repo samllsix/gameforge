@@ -207,3 +207,118 @@ def sanitize_filename(filename: str) -> str:
     sanitized = re.sub(illegal_chars, "_", filename)
     sanitized = sanitized.strip(". ")
     return sanitized or "unnamed"
+
+
+# Unity内置组件类型集合（模块级常量，避免重复创建）
+UNITY_BUILTINS: frozenset = frozenset({
+    # Physics
+    "Rigidbody", "Rigidbody2D", "BoxCollider", "BoxCollider2D",
+    "SphereCollider", "CircleCollider2D", "CapsuleCollider",
+    "CapsuleCollider2D", "MeshCollider", "PolygonCollider2D",
+    "TerrainCollider", "WheelCollider",
+    # Rendering
+    "MeshRenderer", "SpriteRenderer", "SkinnedMeshRenderer",
+    "LineRenderer", "TrailRenderer", "Projector", "ReflectionProbe",
+    "CanvasRenderer",
+    # UI
+    "Canvas", "CanvasScaler", "GraphicRaycaster", "RectTransform",
+    "EventSystem", "StandaloneInputModule", "InputModule",
+    "Text", "TextMeshProUGUI", "TextMeshPro",
+    "Image", "RawImage", "Button", "Slider", "Scrollbar",
+    "Toggle", "Dropdown", "InputField", "ScrollRect",
+    "GridLayoutGroup", "HorizontalLayoutGroup", "VerticalLayoutGroup",
+    "ContentSizeFitter", "AspectRatioFitter", "LayoutElement",
+    "Mask", "RectMask2D",
+    # Animation / Audio
+    "Animator", "Animation", "AudioSource", "AudioListener",
+    # Camera / Lighting
+    "Camera", "Light", "FlareLayer",
+    # Navigation
+    "CharacterController", "NavMeshAgent", "NavMeshObstacle",
+    # Particles
+    "ParticleSystem",
+    # Joints
+    "ConstantForce", "FixedJoint", "HingeJoint", "SpringJoint",
+    "CharacterJoint", "ConfigurableJoint",
+    "ConstantForce2D", "FixedJoint2D", "HingeJoint2D", "SpringJoint2D",
+    "DistanceJoint2D", "SliderJoint2D", "WheelJoint2D",
+    # Effectors
+    "AreaEffector2D", "BuoyancyEffector2D", "PointEffector2D",
+    "PlatformEffector2D", "SurfaceEffector2D",
+    # Terrain
+    "Terrain",
+    # Misc
+    "Transform", "LODGroup", "OcclusionPortal", "OcclusionArea",
+})
+
+
+def is_unity_builtin(type_name: str) -> bool:
+    """检查是否是Unity内置组件类型
+
+    Args:
+        type_name: 类型名称
+
+    Returns:
+        是否是Unity内置类型
+    """
+    return type_name in UNITY_BUILTINS
+
+
+# 预编译的正则表达式（模块级常量）
+_PUBLIC_CLASS_PATTERN = re.compile(
+    r'public\s+(?:partial\s+)?(?:class|struct|interface|enum)\s+(\w+)'
+)
+
+
+def extract_public_class_name(content: str) -> Optional[str]:
+    """从C#代码中提取第一个public类名
+
+    Args:
+        content: C#代码内容
+
+    Returns:
+        类名，未找到返回None
+    """
+    match = _PUBLIC_CLASS_PATTERN.search(content)
+    return match.group(1) if match else None
+
+
+def extract_all_public_classes(content: str) -> List[str]:
+    """从C#代码中提取所有public类名
+
+    Args:
+        content: C#代码内容
+
+    Returns:
+        类名列表
+    """
+    return _PUBLIC_CLASS_PATTERN.findall(content)
+
+
+def check_bracket_balance(content: str) -> Tuple[bool, List[str]]:
+    """检查C#代码的括号平衡
+
+    Args:
+        content: C#代码内容
+
+    Returns:
+        (是否平衡, 错误列表)
+    """
+    errors = []
+
+    open_braces = content.count("{")
+    close_braces = content.count("}")
+    if open_braces != close_braces:
+        errors.append(f"大括号不匹配: {{ = {open_braces}, }} = {close_braces}")
+
+    open_parens = content.count("(")
+    close_parens = content.count(")")
+    if open_parens != close_parens:
+        errors.append(f"小括号不匹配: ( = {open_parens}, ) = {close_parens}")
+
+    open_brackets = content.count("[")
+    close_brackets = content.count("]")
+    if open_brackets != close_brackets:
+        errors.append(f"方括号不匹配: [ = {open_brackets}, ] = {close_brackets}")
+
+    return len(errors) == 0, errors

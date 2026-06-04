@@ -71,12 +71,12 @@ def validate_code_scene_consistency(
                 })
 
     # 2. 代码中的 public class 是否和文件名一致
+    from src.core.tools import extract_public_class_name
     for fpath, content in code_files.items():
         if not fpath.endswith(".cs"):
             continue
-        class_match = re.search(r'public\s+(?:partial\s+)?class\s+(\w+)', content)
-        if class_match:
-            class_name = class_match.group(1)
+        class_name = extract_public_class_name(content)
+        if class_name:
             file_name = fpath.rsplit("/", 1)[-1].replace(".cs", "")
             if class_name != file_name:
                 result.warnings.append({
@@ -216,60 +216,22 @@ def _extract_classes_from_code(code_files: Dict[str, str]) -> Dict[str, str]:
 def _extract_scripts_from_scene(scene_desc: Dict[str, Any]) -> Set[str]:
     """从场景描述中提取所有自定义脚本组件名"""
     scripts = set()
-    for obj in scene_desc.get("game_objects", []):
+
+    def visit(obj: Dict[str, Any]) -> None:
         for comp in obj.get("components", []):
             comp_type = comp.get("type", "")
             if not _is_unity_builtin(comp_type):
                 scripts.add(comp_type)
-        # 检查子对象
         for child in obj.get("children", []):
-            for comp in child.get("components", []):
-                comp_type = comp.get("type", "")
-                if not _is_unity_builtin(comp_type):
-                    scripts.add(comp_type)
+            visit(child)
+
+    for obj in scene_desc.get("game_objects", []):
+        visit(obj)
+
     return scripts
 
 
 def _is_unity_builtin(type_name: str) -> bool:
-    """检查是否是Unity内置组件类型"""
-    builtins = {
-        # Physics
-        "Rigidbody", "Rigidbody2D", "BoxCollider", "BoxCollider2D",
-        "SphereCollider", "CircleCollider2D", "CapsuleCollider",
-        "CapsuleCollider2D", "MeshCollider", "PolygonCollider2D",
-        "TerrainCollider", "WheelCollider",
-        # Rendering
-        "MeshRenderer", "SpriteRenderer", "SkinnedMeshRenderer",
-        "LineRenderer", "TrailRenderer", "Projector", "ReflectionProbe",
-        "CanvasRenderer",
-        # UI
-        "Canvas", "CanvasScaler", "GraphicRaycaster", "RectTransform",
-        "EventSystem", "StandaloneInputModule", "InputModule",
-        "Text", "TextMeshProUGUI", "TextMeshPro",
-        "Image", "RawImage", "Button", "Slider", "Scrollbar",
-        "Toggle", "Dropdown", "InputField", "ScrollRect",
-        "GridLayoutGroup", "HorizontalLayoutGroup", "VerticalLayoutGroup",
-        "ContentSizeFitter", "AspectRatioFitter", "LayoutElement",
-        "Mask", "RectMask2D",
-        # Animation / Audio
-        "Animator", "Animation", "AudioSource", "AudioListener",
-        # Camera / Lighting
-        "Camera", "Light", "FlareLayer",
-        # Navigation
-        "CharacterController", "NavMeshAgent", "NavMeshObstacle",
-        # Particles
-        "ParticleSystem",
-        # Joints
-        "ConstantForce", "FixedJoint", "HingeJoint", "SpringJoint",
-        "CharacterJoint", "ConfigurableJoint",
-        "ConstantForce2D", "FixedJoint2D", "HingeJoint2D", "SpringJoint2D",
-        "DistanceJoint2D", "SliderJoint2D", "WheelJoint2D",
-        # Effectors
-        "AreaEffector2D", "BuoyancyEffector2D", "PointEffector2D",
-        "PlatformEffector2D", "SurfaceEffector2D",
-        # Terrain
-        "Terrain",
-        # Misc
-        "LODGroup", "OcclusionPortal", "OcclusionArea",
-    }
-    return type_name in builtins
+    """检查是否是Unity内置组件类型（向后兼容，委托给core.tools）"""
+    from src.core.tools import is_unity_builtin
+    return is_unity_builtin(type_name)

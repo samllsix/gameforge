@@ -6,7 +6,7 @@
 import re
 from typing import Any, Dict, List
 from src.agents.base import BaseAgent
-from src.core.state.game_state import GameDevState, AgentType, TaskType
+from src.core.state.game_state import GameDevState, AgentType
 from src.utils.llm_client import get_llm_client
 
 

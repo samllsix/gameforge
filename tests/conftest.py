@@ -7,6 +7,11 @@ import tempfile
 import sys
 import os
 
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGSMITH_TRACING"] = "false"
+os.environ.pop("LANGCHAIN_API_KEY", None)
+os.environ.pop("LANGSMITH_API_KEY", None)
+
 # 确保项目根目录在 sys.path 中
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))

@@ -353,28 +353,9 @@ class LLMClient:
         return self._extract_json(response_text)
 
     def _extract_json(self, text: str) -> Dict[str, Any]:
-        """从文本中提取JSON"""
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        json_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        first_brace = text.find("{")
-        last_brace = text.rfind("}")
-        if first_brace != -1 and last_brace != -1:
-            try:
-                return json.loads(text[first_brace : last_brace + 1])
-            except json.JSONDecodeError:
-                pass
-
-        return {"raw_response": text, "parse_error": True}
+        """从文本中提取JSON（委托给统一提取器）"""
+        from src.utils.json_extractor import extract_json_strict
+        return extract_json_strict(text)
 
 
 # 全局客户端缓存（兼容旧的get_llm_client调用）

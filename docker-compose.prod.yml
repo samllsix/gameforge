@@ -15,7 +15,7 @@ services:
     environment:
       - GAMEFORGE_ENV=production
       - GAMEFORGE_DEBUG=false
-      - GAMEFORGE_PORT=8000
+      - GAMEFORGE_PORT=${GAMEFORGE_PORT:-8000}
       - GAMEFORGE_API_KEYS=${GAMEFORGE_API_KEYS:?请在 .env 中设置 GAMEFORGE_API_KEYS}
       - GAMEFORGE_CORS_ORIGINS=${GAMEFORGE_CORS_ORIGINS:-}
       - DATABASE_URL=${DATABASE_URL:-postgresql://gameforge:gameforge@postgres:5432/gameforge}

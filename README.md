@@ -112,7 +112,7 @@ GameForge 是一个基于 **Multi-Agent架构** 的游戏研发AI协作平台，
 
 ### 环境要求
 
-- Python 3.11+
+- Python 3.11-3.13
 - Unity 2022+ (可选)
 
 ### 安装步骤
@@ -141,10 +141,10 @@ python -m src.cli status
 
 ```bash
 # 创建需求文件
-echo "创建一个2D平台跳跃游戏，包含玩家移动、跳跃和计分系统" > requirements.txt
+echo "创建一个2D平台跳跃游戏，包含玩家移动、跳跃和计分系统" > game_requirements.txt
 
 # 生成代码
-python -m src.cli generate --input requirements.txt --output output
+python -m src.cli generate --input game_requirements.txt --output output
 
 # 查看结果
 tree output/
@@ -175,6 +175,10 @@ python -m src.api.main
 
 # 访问API文档
 # http://localhost:8000/docs
+
+# Docker Compose 默认映射到宿主机 8001
+# 如端口被占用，复制 .env.example 为 .env 后修改 GAMEFORGE_HOST_PORT
+# http://localhost:8001/docs
 ```
 
 ### 代码评测

@@ -1,4 +1,4 @@
-"""GameForge - 场景生成Agent
+﻿"""GameForge - 场景生成Agent
 
 分析游戏需求和任务计划，生成Unity场景描述JSON并发送到Unity Editor构建场景。
 与代码生成并行执行，不阻塞主workflow。
@@ -248,28 +248,9 @@ class SceneGeneratorAgent(BaseAgent):
             return None
 
     def _extract_json(self, text: str) -> Optional[Dict]:
-        """从LLM响应中提取JSON"""
-        # Try direct parse
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # Try extracting from code block
-        patterns = [
-            r"```json\s*\n([\s\S]*?)\n```",
-            r"```\s*\n([\s\S]*?)\n```",
-            r"(\{[\s\S]*\"game_objects\"[\s\S]*\})",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                try:
-                    return json.loads(match.group(1))
-                except json.JSONDecodeError:
-                    continue
-
-        return None
+        """从LLM响应中提取JSON（委托给统一提取器）"""
+        from src.utils.json_extractor import extract_json
+        return extract_json(text)
 
     def _fallback_scene(self, requirements: str, task_plan: List[Dict]) -> Dict:
         """LLM失败时的回退场景"""

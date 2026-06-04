@@ -95,3 +95,53 @@ def test_duplicate_script_name_is_error():
     result = validate_unity_compatibility(code_files, {"game_objects": []})
 
     assert any(e["check"] == "duplicate_script_class" for e in result.errors)
+
+
+def test_unity_2023_lookup_api_is_error_for_2022_compatibility():
+    code_files = {
+        "Assets/Scripts/Core/GameManager.cs": (
+            "using UnityEngine; "
+            "public class GameManager : MonoBehaviour { "
+            "void Start() { FindFirstObjectByType<PlayerController>(); } "
+            "}"
+        )
+    }
+
+    result = validate_unity_compatibility(code_files, {"game_objects": []})
+
+    assert any(e["check"] == "unity_api_version" for e in result.errors)
+
+
+def test_runtime_script_using_unity_editor_is_error():
+    code_files = {
+        "Assets/Scripts/Tools/SceneBootstrapper.cs": (
+            "using UnityEngine; "
+            "using UnityEditor; "
+            "public class SceneBootstrapper : MonoBehaviour { "
+            "void Start() { AssetDatabase.Refresh(); } "
+            "}"
+        )
+    }
+
+    result = validate_unity_compatibility(code_files, {"game_objects": []})
+
+    assert any(e["check"] == "editor_api_in_runtime" for e in result.errors)
+
+
+def test_task_usage_requires_threading_tasks_using():
+    code_files = {
+        "Assets/Scripts/Core/AsyncLoader.cs": (
+            "using UnityEngine; "
+            "public class AsyncLoader : MonoBehaviour { "
+            "public Task LoadAsync() { return null; } "
+            "}"
+        )
+    }
+
+    result = validate_unity_compatibility(code_files, {"game_objects": []})
+
+    assert any(
+        e["check"] == "missing_using"
+        and e.get("namespace") == "System.Threading.Tasks"
+        for e in result.errors
+    )

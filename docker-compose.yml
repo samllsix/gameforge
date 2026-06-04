@@ -17,11 +17,11 @@ services:
       dockerfile: docker/Dockerfile
     container_name: gameforge-app
     ports:
-      - "${GAMEFORGE_HOST_PORT:-8001}:8000"
+      - "${GAMEFORGE_HOST_PORT:-8001}:${GAMEFORGE_PORT:-8000}"
     environment:
       - GAMEFORGE_ENV=development
       - GAMEFORGE_DEBUG=true
-      - GAMEFORGE_PORT=8000
+      - GAMEFORGE_PORT=${GAMEFORGE_PORT:-8000}
       # 默认使用 SQLite，无需外部数据库
       # 如需 PostgreSQL，取消下面的注释：
       # - DATABASE_URL=postgresql://gameforge:gameforge@postgres:5432/gameforge
@@ -37,7 +37,7 @@ services:
       - ./config:/app/config:ro
       - ./static:/app/static:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${GAMEFORGE_PORT:-8000}/health"]
       interval: 15s
       timeout: 5s
       start_period: 10s

@@ -8,6 +8,9 @@
 
 from typing import Any, Dict, List
 from dataclasses import dataclass, field
+import structlog
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -96,10 +99,9 @@ def validate_all(
                 })
 
         # 类名与文件名一致性
-        import re
-        class_match = re.search(r'public\s+(?:partial\s+)?class\s+(\w+)', content)
-        if class_match:
-            class_name = class_match.group(1)
+        from src.core.tools import extract_public_class_name
+        class_name = extract_public_class_name(content)
+        if class_name:
             file_name = path.rsplit("/", 1)[-1].replace(".cs", "")
             if class_name != file_name:
                 result.warnings.append({
@@ -145,8 +147,8 @@ def validate_all(
             if warn.get("message", "") not in {w.get("message", "") for w in result.warnings}:
                 result.warnings.append(warn)
         result.suggestions.extend(compat.suggestions)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("unity_compat_check_failed", error=str(e))
 
     # ========== 第3层：代码与场景一致性（仅检查有场景时） ==========
     if scene_desc:
@@ -165,7 +167,7 @@ def validate_all(
             for warn in consistency.warnings:
                 if warn.get("message", "") not in {w.get("message", "") for w in result.warnings}:
                     result.warnings.append(warn)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("consistency_check_failed", error=str(e))
 
     return result

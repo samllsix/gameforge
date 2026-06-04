@@ -61,17 +61,15 @@ def validate_unity_code(code_files: Dict[str, str]) -> ValidationResult:
 
 def _check_class_filename_match(file_path: str, content: str, result: ValidationResult):
     """检查类名与文件名是否一致"""
+    from src.core.tools import extract_public_class_name
     filename = file_path.rsplit("/", 1)[-1].replace(".cs", "")
 
-    # 找到主类名
-    class_match = re.search(r'public\s+(?:partial\s+)?(?:class|struct|interface|enum)\s+(\w+)', content)
-    if class_match:
-        class_name = class_match.group(1)
-        if class_name != filename:
-            result.add_warning(
-                file_path,
-                f"类名 '{class_name}' 与文件名 '{filename}' 不一致"
-            )
+    class_name = extract_public_class_name(content)
+    if class_name and class_name != filename:
+        result.add_warning(
+            file_path,
+            f"类名 '{class_name}' 与文件名 '{filename}' 不一致"
+        )
 
 
 def _check_namespace_valid(content: str, file_path: str, result: ValidationResult):
@@ -115,7 +113,7 @@ def _check_findobjectoftype_usage(content: str, file_path: str, result: Validati
     if old_count > 0:
         result.add_warning(
             file_path,
-            f"使用了已弃用的 FindObjectOfType（{old_count}次），建议使用 FindFirstObjectByType 或依赖注入"
+            f"使用了 FindObjectOfType（{old_count}次），建议缓存引用、使用序列化字段或依赖注入"
         )
 
     # 新API在Update中的使用

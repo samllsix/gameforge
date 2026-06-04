@@ -12,6 +12,12 @@ from src.agents.base import BaseAgent
 from src.core.state.game_state import GameDevState, AgentType
 from src.utils.llm_client import get_llm_client
 
+# 预编译的正则表达式（模块级常量）
+_TITLE_PATTERNS = [
+    re.compile(r"(?:游戏名|项目名|叫做|叫|名称)[：:]?\s*[「「]?(.+?)[」」]?\s*$", re.MULTILINE),
+    re.compile(r"^(.+?)(?:游戏|项目|是一款)", re.MULTILINE),
+]
+
 
 class GameDesignerAgent(BaseAgent):
     """游戏设计Agent — 生成 Game Design Model"""
@@ -68,24 +74,9 @@ class GameDesignerAgent(BaseAgent):
             return self._fallback_gdm(requirements, engine)
 
     def _extract_json(self, text: str) -> Optional[Dict]:
-        """从LLM响应中提取JSON"""
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-        patterns = [
-            r"```json\s*\n([\s\S]*?)\n```",
-            r"```\s*\n([\s\S]*?)\n```",
-            r"(\{[\s\S]*\"game_title\"[\s\S]*\})",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if match:
-                try:
-                    return json.loads(match.group(1))
-                except json.JSONDecodeError:
-                    continue
-        return None
+        """从LLM响应中提取JSON（委托给统一提取器）"""
+        from src.utils.json_extractor import extract_json
+        return extract_json(text)
 
     def _normalize_gdm(self, gdm: Dict, requirements: str, engine: str) -> Dict:
         """规范化GDM，补全缺失字段"""
@@ -294,12 +285,8 @@ class GameDesignerAgent(BaseAgent):
 
     def _extract_title(self, requirements: str) -> str:
         """从需求中提取游戏标题"""
-        patterns = [
-            r"(?:游戏名|项目名|叫做|叫|名称)[：:]?\s*[「「]?(.+?)[」」]?\s*$",
-            r"^(.+?)(?:游戏|项目|是一款)",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, requirements, re.MULTILINE)
+        for pattern in _TITLE_PATTERNS:
+            match = pattern.search(requirements)
             if match:
                 title = match.group(1).strip()
                 if 2 <= len(title) <= 20:
@@ -307,6 +294,11 @@ class GameDesignerAgent(BaseAgent):
         return "GameForge游戏"
 
     def _system_prompt(self) -> str:
+        """从配置文件加载系统提示"""
+        return self.get_prompt_template("game_designer_system") or self._default_system_prompt()
+
+    def _default_system_prompt(self) -> str:
+        """默认系统提示（文件加载失败时使用）"""
         return """你是游戏设计专家。根据用户需求生成结构化的 Game Design Model (GDM) JSON。
 
 输出JSON Schema：
@@ -320,7 +312,7 @@ class GameDesignerAgent(BaseAgent):
   "fail_conditions": ["失败条件"],
   "main_systems": [
     {
-      "name": "系统名(movement/combat/inventory/dialogue/scoring/level/enemy_ai/economy/UI/save-load/audio)",
+      "name": "系统名",
       "description": "系统描述",
       "priority": "high/medium/low"
     }
@@ -328,20 +320,8 @@ class GameDesignerAgent(BaseAgent):
   "entities": [
     {
       "name": "实体名",
-      "role": "角色(player/enemy/npc/pickup/projectile/interactable/environment/ui/spawner/manager)",
-      "components": ["需要的Unity组件列表"],
-      "description": "实体描述"
-    }
-  ],
-  "scenes": [
-    {
-      "scene_name": "场景名",
-      "purpose": "场景用途",
-      "required_objects": ["场景中需要的对象名"],
-      "spawn_points": [{"name": "生成点名", "position": [x,y,z]}],
-      "camera_setup": {"mode": "视角模式", "follow_target": "跟随目标", "position": [x,y,z]},
-      "lighting_setup": {"type": "灯光类型", "intensity": 1.0, "rotation": [x,y,z]},
-      "UI_canvas": {"mode": "Canvas模式", "elements": ["UI元素列表"]}
+      "role": "角色类型",
+      "components": ["Unity组件列表"]
     }
   ],
   "code_modules": [
@@ -349,37 +329,15 @@ class GameDesignerAgent(BaseAgent):
       "module_name": "模块名(类名)",
       "responsibility": "模块职责描述",
       "output_files": ["输出文件路径"],
-      "dependencies": ["依赖的其他模块名"],
-      "target_game_objects": ["挂载到的GameObject名"],
-      "required_components": ["需要的组件列表"]
+      "dependencies": ["依赖模块"],
+      "target_game_objects": ["GameObject名"],
+      "required_components": ["组件列表"]
     }
-  ],
-  "assets_needed": {
-    "sprites": ["需要的精灵资源"],
-    "materials": ["需要的材质"],
-    "audio": ["需要的音效"],
-    "animations": ["需要的动画"],
-    "UI_assets": ["需要的UI资源"]
-  },
-  "input_map": [
-    {"name": "输入名", "type": "axis/button", "key": "按键", "description": "描述"}
-  ],
-  "tags_layers": {
-    "tags": ["自定义Tag列表"],
-    "layers": [{"name": "层名", "index": 层索引}]
-  },
-  "physics_settings": {
-    "gravity": [x, y, z],
-    "default_material": {"friction": 0.4, "bounciness": 0}
-  }
+  ]
 }
 
 规则：
 - 只输出JSON，无额外文本
 - code_modules 中的类名必须是合法C#标识符
-- 每个 code_module 对应一个 .cs 文件
-- target_game_objects 必须在 entities 或 scenes 的 required_objects 中出现
-- 根据游戏类型选择合理的 camera_mode 和 physics_settings
 - 2D游戏使用 Rigidbody2D/BoxCollider2D，3D游戏使用 Rigidbody/BoxCollider
-- 根据需求复杂度决定 systems 和 entities 数量
 - 不要遗漏用户需求中提到的任何功能"""

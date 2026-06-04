@@ -12,6 +12,9 @@ from dataclasses import dataclass, field, asdict
 @dataclass
 class TestCase:
     """测试用例定义"""
+
+    __test__ = False
+
     id: str
     name: str
     description: str
@@ -26,6 +29,8 @@ class TestCase:
 
 class TestCaseManager:
     """测试用例管理器"""
+
+    __test__ = False
 
     def __init__(self, data_dir: str = "data/eval_datasets"):
         self.data_dir = data_dir

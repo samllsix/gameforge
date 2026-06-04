@@ -143,9 +143,6 @@ redis:
 
 # Monitoring Configuration
 monitoring:
-  langsmith:
-    enabled: true
-    project: gameforge
   prometheus:
     enabled: true
     port: 9090
@@ -195,6 +192,6 @@ templates:
 # Security Configuration
 security:
   api_key_header: X-API-Key
-  rate_limit: 100/minute
-  max_input_length: 10000
+  rate_limit: 60/minute
+  max_input_length: 50000
   sandbox_code_execution: true

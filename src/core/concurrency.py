@@ -1,4 +1,4 @@
-"""GameForge - 并发管理模块
+﻿"""GameForge - 并发管理模块
 
 提供信号量、任务队列、并发控制等基础设施，解决高并发场景下的资源竞争问题。
 """
@@ -111,8 +111,8 @@ class ConcurrencyManager:
                 db.commit()
             finally:
                 db.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("task_persist_failed", error=str(e))
 
     async def submit_task(
         self,

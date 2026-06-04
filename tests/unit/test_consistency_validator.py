@@ -81,9 +81,35 @@ class TestExtractScripts:
         scripts = _extract_scripts_from_scene(scene)
         assert "EnemyAI" in scripts
 
+    def test_extract_from_nested_children(self):
+        scene = {
+            "game_objects": [
+                {
+                    "name": "Root",
+                    "components": [],
+                    "children": [
+                        {
+                            "name": "Mid",
+                            "components": [{"type": "Transform"}],
+                            "children": [
+                                {
+                                    "name": "Leaf",
+                                    "components": [{"type": "BossController"}],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        scripts = _extract_scripts_from_scene(scene)
+        assert "BossController" in scripts
+        assert "Transform" not in scripts
+
 
 class TestIsUnityBuiltin:
     def test_builtin_components(self):
+        assert _is_unity_builtin("Transform")
         assert _is_unity_builtin("Rigidbody2D")
         assert _is_unity_builtin("BoxCollider")
         assert _is_unity_builtin("SpriteRenderer")

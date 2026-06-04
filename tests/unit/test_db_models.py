@@ -1,7 +1,7 @@
 """测试数据库模型和会话"""
 
 import pytest
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.db.models import TaskRecord, GenerationHistory, AuditLog, Base
@@ -66,7 +66,7 @@ class TestTaskRecord:
             db.commit()
 
             task.status = "running"
-            task.started_at = datetime.utcnow()
+            task.started_at = datetime.now(UTC).replace(tzinfo=None)
             db.commit()
 
             result = db.query(TaskRecord).filter(TaskRecord.id == "def67890").first()

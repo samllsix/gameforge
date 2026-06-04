@@ -8,7 +8,10 @@ import os
 import asyncio
 import json
 import yaml
+import structlog
 from contextlib import asynccontextmanager
+
+logger = structlog.get_logger()
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -306,8 +309,8 @@ async def generate_code(request: GenerateRequest):
                     db.commit()
                 finally:
                     db.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("history_save_failed", error=str(e))
         return result
 
     payload = {
@@ -476,13 +479,13 @@ async def list_agents():
     """列出所有可用的Agent"""
     return {
         "agents": [
-            {"name": "orchestrator", "description": "编排Agent - 任务调度和流程控制"},
-            {"name": "planner", "description": "规划Agent - 解析需求并生成任务计划"},
-            {"name": "code_generator", "description": "代码生成Agent - 生成游戏代码"},
-            {"name": "code_reviewer", "description": "代码审查Agent - 审查代码质量"},
-            {"name": "test_generator", "description": "测试生成Agent - 生成测试用例"},
-            {"name": "debugger", "description": "调试Agent - 分析错误并生成修复方案"},
-            {"name": "refactor", "description": "重构Agent - 分析代码质量并优化重构"},
+            {"name": "orchestrator", "description": "编排Agent - 任务调度和流程控制", "status": "available"},
+            {"name": "planner", "description": "规划Agent - 解析需求并生成任务计划", "status": "available"},
+            {"name": "code_generator", "description": "代码生成Agent - 生成游戏代码", "status": "available"},
+            {"name": "code_reviewer", "description": "代码审查Agent - 审查代码质量", "status": "available"},
+            {"name": "test_generator", "description": "测试生成Agent - 生成测试用例", "status": "available"},
+            {"name": "debugger", "description": "调试Agent - 分析错误并生成修复方案", "status": "available"},
+            {"name": "refactor", "description": "重构Agent - 分析代码质量并优化重构", "status": "available"},
         ]
     }
 

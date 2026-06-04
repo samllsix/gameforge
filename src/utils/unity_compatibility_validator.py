@@ -6,9 +6,9 @@ enter Safe Mode before the generated files are imported into a Unity project.
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
-from src.utils.consistency_validator import _is_unity_builtin
+from src.core.tools import is_unity_builtin as _is_unity_builtin
 
 
 @dataclass
@@ -44,8 +44,8 @@ class UnityCompatibilityResult:
 
 def validate_unity_compatibility(
     code_files: Dict[str, str],
-    scene_desc: Dict[str, Any] | None = None,
-    gdm: Dict[str, Any] | None = None,
+    scene_desc: Optional[Dict[str, Any]] = None,
+    gdm: Optional[Dict[str, Any]] = None,
 ) -> UnityCompatibilityResult:
     result = UnityCompatibilityResult()
     scene_desc = scene_desc or {}
@@ -134,6 +134,37 @@ def _check_compile_risks(
                 "TextMeshPro types require using TMPro.",
                 file=path,
                 namespace="TMPro",
+            )
+
+        if _uses_task_type(content) and "using System.Threading.Tasks" not in content:
+            result.add_error(
+                "missing_using",
+                "Task/Task<T> requires using System.Threading.Tasks.",
+                file=path,
+                namespace="System.Threading.Tasks",
+            )
+
+        if _uses_editor_api(content) and not _is_editor_script(path):
+            result.add_error(
+                "editor_api_in_runtime",
+                "UnityEditor APIs must stay under Assets/Editor to avoid runtime assembly compile failures.",
+                file=path,
+            )
+
+        unity_2023_apis = [
+            "FindFirstObjectByType",
+            "FindAnyObjectByType",
+            "FindObjectsByType",
+            "FindObjectsSortMode",
+        ]
+        used_newer_apis = [api for api in unity_2023_apis if api in content]
+        if used_newer_apis:
+            result.add_error(
+                "unity_api_version",
+                "Generated code must compile on Unity 2022.3; avoid Unity 2023+ object lookup APIs.",
+                file=path,
+                apis=used_newer_apis,
+                suggestion="Use FindObjectOfType/FindObjectsOfType or serialized references for Unity 2022.3 compatibility.",
             )
 
         namespace = _extract_namespace(content)
@@ -252,6 +283,28 @@ def _extract_namespace(content: str) -> str:
 
 def _inherits_mono_behaviour(content: str) -> bool:
     return bool(re.search(r":\s*MonoBehaviour\b", content))
+
+
+def _is_editor_script(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return "/Editor/" in normalized or normalized.startswith("Assets/Editor/")
+
+
+def _uses_task_type(content: str) -> bool:
+    return bool(re.search(r"\bTask(?:\s*<|\s+\w+\s*\(|\s+\w+\s*=)", content))
+
+
+def _uses_editor_api(content: str) -> bool:
+    editor_patterns = [
+        r"\busing\s+UnityEditor\s*;",
+        r"\busing\s+UnityEditor\.",
+        r"\bUnityEditor\.",
+        r"\bAssetDatabase\.",
+        r"\bEditorUtility\.",
+        r"\bEditorGUILayout\.",
+        r"\bEditorWindow\b",
+    ]
+    return any(re.search(pattern, content) for pattern in editor_patterns)
 
 
 def _extract_scene_scripts(scene_desc: Dict[str, Any]) -> Set[str]:

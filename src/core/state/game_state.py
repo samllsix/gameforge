@@ -82,6 +82,8 @@ class CodeArtifact(BaseModel):
 
 
 class TestResult(BaseModel):
+    __test__ = False
+
     """测试结果数据模型"""
     test_name: str = Field(..., description="测试名称")
     passed: bool = Field(..., description="是否通过")
@@ -91,6 +93,8 @@ class TestResult(BaseModel):
 
 
 class TestReport(BaseModel):
+    __test__ = False
+
     """测试报告数据模型"""
     total_tests: int = Field(..., description="总测试数")
     passed_tests: int = Field(..., description="通过测试数")
