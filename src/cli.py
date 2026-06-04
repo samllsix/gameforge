@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import os
 import click
 import yaml
 from pathlib import Path
@@ -296,7 +297,7 @@ def unity(ctx, project, action, files):
 
 @cli.command()
 @click.option("--host", default="0.0.0.0", help="监听地址")
-@click.option("--port", "-p", default=8000, type=int, help="监听端口")
+@click.option("--port", "-p", default=lambda: int(os.getenv("GAMEFORGE_PORT", "8000")), type=int, help="监听端口")
 @click.option("--workers", "-w", default=1, type=int, help="工作进程数")
 @click.pass_context
 def serve(ctx, host, port, workers):

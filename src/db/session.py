@@ -34,9 +34,16 @@ def get_engine(database_url: str = None):
             os.makedirs(db_dir, exist_ok=True)
             url = f"sqlite:///{os.path.join(db_dir, 'gameforge.db')}"
         connect_args = {}
+        engine_kwargs = {"echo": False, "pool_pre_ping": True}
         if url.startswith("sqlite"):
             connect_args["check_same_thread"] = False
-        _engine = create_engine(url, echo=False, pool_pre_ping=True, connect_args=connect_args)
+        else:
+            # PostgreSQL 连接池配置
+            engine_kwargs["pool_size"] = 5
+            engine_kwargs["max_overflow"] = 10
+            engine_kwargs["pool_recycle"] = 3600  # 1小时回收连接
+            engine_kwargs["pool_timeout"] = 30
+        _engine = create_engine(url, connect_args=connect_args, **engine_kwargs)
     return _engine
 
 

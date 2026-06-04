@@ -15,11 +15,12 @@ services:
     environment:
       - GAMEFORGE_ENV=production
       - GAMEFORGE_DEBUG=false
+      - GAMEFORGE_PORT=8000
       - GAMEFORGE_API_KEYS=${GAMEFORGE_API_KEYS:?请在 .env 中设置 GAMEFORGE_API_KEYS}
       - GAMEFORGE_CORS_ORIGINS=${GAMEFORGE_CORS_ORIGINS:-}
       - DATABASE_URL=${DATABASE_URL:-postgresql://gameforge:gameforge@postgres:5432/gameforge}
     # 生产环境不挂载源码（使用镜像内代码）
-    volumes:
+    volumes: !override
       - gameforge-data:/app/data
       - gameforge-logs:/app/logs
     deploy:

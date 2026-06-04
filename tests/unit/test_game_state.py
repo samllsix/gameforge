@@ -33,12 +33,13 @@ class TestEnums:
     def test_agent_type_values(self):
         assert AgentType.ORCHESTRATOR.value == "orchestrator"
         assert AgentType.PLANNER.value == "planner"
+        assert AgentType.GAME_DESIGNER.value == "game_designer"
         assert AgentType.CODE_GENERATOR.value == "code_generator"
         assert AgentType.CODE_REVIEWER.value == "code_reviewer"
         assert AgentType.TEST_GENERATOR.value == "test_generator"
         assert AgentType.DEBUGGER.value == "debugger"
         assert AgentType.SCENE_GENERATOR.value == "scene_generator"
-        assert len(AgentType) == 8
+        assert len(AgentType) == 9
 
 
 class TestTaskModel:

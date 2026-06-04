@@ -17,7 +17,7 @@ class GameDesignerAgent(BaseAgent):
     """游戏设计Agent — 生成 Game Design Model"""
 
     def __init__(self, config: Dict[str, Any]):
-        super().__init__(AgentType.PLANNER, config)  # 复用 PLANNER 类型避免改枚举
+        super().__init__(AgentType.GAME_DESIGNER, config)
         self.llm = get_llm_client(config)
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:

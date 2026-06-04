@@ -90,7 +90,10 @@ class TestAuditLogger:
             method="GET",
         )
         log_files = list((tmp_path / "security").glob("audit_*.jsonl"))
-        assert len(log_files) == 1
+        assert len(log_files) >= 1  # 可能跨日期产生多个文件
+        # 验证至少有一个文件包含事件内容
+        content = "".join(f.read_text(encoding="utf-8") for f in log_files)
+        assert "test_event" in content
 
     @pytest.mark.asyncio
     async def test_log_auth_attempt(self, tmp_path):
@@ -98,8 +101,8 @@ class TestAuditLogger:
         await logger.log_auth_attempt("127.0.0.1", True, "abc123hash")
         await logger.log_auth_attempt("192.168.1.1", False, "badkeyhash")
         log_files = list((tmp_path / "security").glob("audit_*.jsonl"))
-        assert len(log_files) == 1
-        content = log_files[0].read_text(encoding="utf-8")
+        assert len(log_files) >= 1  # 可能跨日期产生多个文件
+        content = "".join(f.read_text(encoding="utf-8") for f in log_files)
         assert "auth_attempt" in content
 
     @pytest.mark.asyncio

@@ -34,14 +34,33 @@ async def get_redis():
     if _redis_client is None:
         try:
             import redis.asyncio as redis
+            import yaml
 
-            host = os.getenv("REDIS_HOST", "localhost")
-            port = int(os.getenv("REDIS_PORT", 6379))
+            # 优先从 config.yaml 读取，回退到环境变量
+            host = os.getenv("REDIS_HOST", "")
+            port = os.getenv("REDIS_PORT", "")
+            db = os.getenv("REDIS_DB", "")
             password = os.getenv("REDIS_PASSWORD", "")
+
+            if not host:
+                try:
+                    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "config.yaml")
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config = yaml.safe_load(f)
+                    redis_cfg = config.get("redis", {})
+                    host = redis_cfg.get("host", "localhost")
+                    port = str(redis_cfg.get("port", 6379))
+                    db = str(redis_cfg.get("db", 0))
+                except Exception:
+                    host, port, db = "localhost", "6379", "0"
+
+            host = host or "localhost"
+            port = int(port or 6379)
+            db = int(db or 0)
+
             # 空字符串或占位符视为无密码
             if not password or password.startswith("your_"):
                 password = None
-            db = int(os.getenv("REDIS_DB", 0))
 
             _redis_client = redis.Redis(
                 host=host,

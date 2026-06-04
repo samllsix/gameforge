@@ -56,6 +56,29 @@ API_VERSION = str(config.get("app", {}).get("version", "0.3.0"))
 _sync_generation_semaphore = asyncio.Semaphore(2)
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {value!r}") from exc
+
+
+def _split_env_list(name: str) -> Optional[List[str]]:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+IS_PRODUCTION = os.getenv("GAMEFORGE_ENV", "").lower() == "production"
+SERVER_CONFIG = config.get("server", {})
+DEFAULT_HOST = os.getenv("GAMEFORGE_HOST", str(SERVER_CONFIG.get("host", "0.0.0.0")))
+DEFAULT_PORT = _env_int("GAMEFORGE_PORT", int(SERVER_CONFIG.get("port", 8000)))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup/shutdown lifecycle."""
@@ -92,7 +115,7 @@ app = FastAPI(
 app.add_middleware(SecurityHeadersMiddleware)
 
 # 2. CORS（限制允许的源）
-cors_config = get_secure_cors_config()
+cors_config = get_secure_cors_config(_split_env_list("GAMEFORGE_CORS_ORIGINS"))
 app.add_middleware(CORSMiddleware, **cors_config)
 
 # 3. GZip 压缩（对 CSS/JS/HTML 响应压缩 ~70%）
@@ -121,6 +144,9 @@ if os.getenv("GAMEFORGE_API_KEYS"):
         if ":" in pair:
             key, name = pair.split(":", 1)
             API_KEYS[key.strip()] = name.strip()
+
+if IS_PRODUCTION and not API_KEYS:
+    raise RuntimeError("GAMEFORGE_API_KEYS must be set when GAMEFORGE_ENV=production")
 
 app.add_middleware(
     APIKeyAuthMiddleware,
@@ -564,12 +590,12 @@ async def get_history_by_task_id(task_id: str):
         db.close()
 
 
-def start_server(host: str = "0.0.0.0", port: int = 8001, workers: int = 1):
+def start_server(host: Optional[str] = None, port: Optional[int] = None, workers: int = 1):
     """启动服务器"""
     uvicorn.run(
         "src.api.main:app",
-        host=host,
-        port=port,
+        host=host or DEFAULT_HOST,
+        port=port or DEFAULT_PORT,
         workers=workers,
         log_level="info",
     )

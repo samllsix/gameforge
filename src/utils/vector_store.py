@@ -63,10 +63,26 @@ async def get_qdrant():
         try:
             from qdrant_client import QdrantClient
             from qdrant_client.models import Distance, VectorParams
+            import yaml
 
-            host = os.getenv("QDRANT_HOST", "localhost")
-            port = int(os.getenv("QDRANT_PORT", 6333))
+            # 优先从 config.yaml 读取，回退到环境变量
+            host = os.getenv("QDRANT_HOST", "")
+            port = os.getenv("QDRANT_PORT", "")
             api_key = os.getenv("QDRANT_API_KEY", "")
+
+            if not host:
+                try:
+                    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "config.yaml")
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        config = yaml.safe_load(f)
+                    qdrant_cfg = config.get("vector_db", {})
+                    host = qdrant_cfg.get("host", "localhost")
+                    port = str(qdrant_cfg.get("port", 6333))
+                except Exception:
+                    host, port = "localhost", "6333"
+
+            host = host or "localhost"
+            port = int(port or 6333)
             if api_key and api_key.startswith("your_"):
                 api_key = None
 

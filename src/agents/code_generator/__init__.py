@@ -385,6 +385,12 @@ class CodeGeneratorAgent(BaseAgent):
         if required_components:
             task_meta += f"\n需要的组件: {', '.join(required_components)}"
 
+        # 记忆上下文 — 从 MemoryManager 注入的历史经验
+        memory_context = state.get("_memory_context", "")
+        memory_section = ""
+        if memory_context:
+            memory_section = f"\n\n## 历史经验（来自记忆系统）\n{memory_context}"
+
         user_prompt = f"""请根据以下任务生成完整的、高质量的代码实现。
 
 项目名称: {project_name}
@@ -395,6 +401,7 @@ class CodeGeneratorAgent(BaseAgent):
 {task_meta}
 {gdm_context}
 {existing_context}
+{memory_section}
 
 要求：
 1. 生成完整可编译的代码，不要省略任何部分

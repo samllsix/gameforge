@@ -21,6 +21,8 @@ from src.agents.test_generator import TestGeneratorAgent
 from src.agents.debugger import DebuggerAgent
 from src.agents.scene_generator import SceneGeneratorAgent
 from src.agents.game_designer import GameDesignerAgent
+from src.agents.refactor import RefactorAgent
+from src.core.memory import MemoryManager
 
 
 class GameDevWorkflow:
@@ -42,6 +44,10 @@ class GameDevWorkflow:
         self.test_generator = TestGeneratorAgent(config)
         self.debugger = DebuggerAgent(config)
         self.scene_generator = SceneGeneratorAgent(config)
+        self.refactor_agent = RefactorAgent(config)
+
+        # 记忆系统 — 让 Agent 有上下文记忆
+        self.memory = MemoryManager()
 
         self.graph = self._build_graph()
 
@@ -55,6 +61,7 @@ class GameDevWorkflow:
         workflow.add_node("orchestrator", self._orchestrator_node)
         workflow.add_node("code_generator", self._code_generator_node)
         workflow.add_node("code_reviewer", self._code_reviewer_node)
+        workflow.add_node("refactor", self._refactor_node)
         workflow.add_node("test_generator", self._test_generator_node)
         workflow.add_node("debugger", self._debugger_node)
 
@@ -65,7 +72,8 @@ class GameDevWorkflow:
         workflow.add_edge("game_designer", "planner")
         workflow.add_edge("planner", "orchestrator")
         workflow.add_edge("code_generator", "code_reviewer")
-        workflow.add_edge("code_reviewer", "test_generator")
+        workflow.add_edge("code_reviewer", "refactor")
+        workflow.add_edge("refactor", "test_generator")
         workflow.add_edge("test_generator", "orchestrator")
         workflow.add_edge("debugger", "orchestrator")
 
@@ -125,6 +133,13 @@ class GameDevWorkflow:
             if not current_task:
                 return {"current_phase": "no_task"}
 
+            # 注入记忆上下文 — 让 CodeGenerator 参考历史经验
+            memory_context = self.memory.get_context_for_agent(
+                "code_generator", query=current_task.get("name", "")
+            )
+            if memory_context:
+                state = {**state, "_memory_context": memory_context}
+
             code_artifacts = await self.code_generator.generate(state, current_task)
 
             # 标记任务完成（修改 task_plan 副本）
@@ -136,11 +151,38 @@ class GameDevWorkflow:
 
             # 只返回新代码，reducer 自动合并到 code_generated
             new_code = {art["file_path"]: art["content"] for art in code_artifacts}
+
+            # 统一验证 — 语法 + Unity兼容性 + 沙箱安全，一次完成
+            warnings = []
+            try:
+                from src.utils.unified_validator import validate_all
+                validation = validate_all(new_code)
+                if validation.has_errors:
+                    warnings.append(
+                        f"代码验证发现 {len(validation.errors)} 个错误: "
+                        + "; ".join(e.get("message", "") for e in validation.errors[:3])
+                    )
+            except Exception:
+                pass
+
+            # 沙箱安全检查
+            try:
+                from src.engine.sandbox import SandboxExecutor
+                sandbox = SandboxExecutor(self.config)
+                for path, content in new_code.items():
+                    if path.endswith(".cs"):
+                        is_safe, issues = sandbox.validate_code(content)
+                        if not is_safe:
+                            warnings.append(f"安全问题 {path}: {'; '.join(issues[:2])}")
+            except Exception:
+                pass
+
             return {
                 "code_generated": new_code,
                 "code_artifacts": code_artifacts,
                 "task_plan": updated_plan,
                 "current_phase": "code_generated",
+                "warnings": warnings,
             }
         except Exception as e:
             return {"error_log": [f"Code generator failed: {e}"], "current_phase": "error"}
@@ -152,6 +194,32 @@ class GameDevWorkflow:
             return {"current_phase": "code_reviewed", "review_result": review_result}
         except Exception as e:
             return {"error_log": [f"Code reviewer failed: {e}"], "current_phase": "error"}
+
+    async def _refactor_node(self, state: GameDevState) -> Dict[str, Any]:
+        """重构节点 — 分析代码质量并重构，重构后统一验证"""
+        try:
+            result = await self.refactor_agent.execute(state)
+
+            # 重构后统一验证 — 语法 + Unity兼容性，防止 LLM 重构破坏代码
+            refactored_code = result.get("code_generated", {})
+            if refactored_code:
+                try:
+                    from src.utils.unified_validator import validate_all
+                    validation = validate_all(refactored_code)
+                    if validation.has_errors:
+                        # 重构引入了问题，回退到重构前的代码
+                        original_code = state.get("code_generated", {})
+                        result["code_generated"] = original_code
+                        result.setdefault("warnings", []).append(
+                            f"重构后验证失败（{len(validation.errors)}个错误），已回退: "
+                            + "; ".join(e.get("message", "") for e in validation.errors[:3])
+                        )
+                except Exception:
+                    pass
+
+            return result
+        except Exception as e:
+            return {"error_log": [f"Refactor failed: {e}"], "current_phase": "error"}
 
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """测试生成节点 — 为代码生成测试用例"""
@@ -558,7 +626,7 @@ class GameDevWorkflow:
         }
 
     async def _post_process(self, state: GameDevState, scene_task, event_callback=None):
-        """后处理：等待场景、校验、生成产物"""
+        """后处理：等待场景、校验、生成产物、保存记忆"""
         # 等待场景生成完成
         try:
             await asyncio.wait_for(scene_task, timeout=60)
@@ -573,22 +641,89 @@ class GameDevWorkflow:
 
         self._sanitize_scene_scripts(state)
 
-        # 一致性校验
+        # 统一验证 — 语法 + Unity兼容性 + 一致性，一次完成
         try:
-            from src.utils.consistency_validator import validate_code_scene_consistency
-            scene_desc = state.get("scene_description", {})
-            if scene_desc:
-                consistency = validate_code_scene_consistency(
-                    code_files=state.get("code_generated", {}),
-                    scene_desc=scene_desc,
-                    gdm=state.get("game_design_model"),
-                    file_metadata=state.get("file_metadata"),
-                )
-                state["validation_result"] = consistency.to_dict()
+            from src.utils.unified_validator import validate_all
+            validation = validate_all(
+                code_files=state.get("code_generated", {}),
+                scene_desc=state.get("scene_description"),
+                gdm=state.get("game_design_model"),
+                file_metadata=state.get("file_metadata"),
+            )
+            state["validation_result"] = validation.to_dict()
+            if validation.has_errors:
+                for err in validation.errors[:5]:
+                    state.setdefault("warnings", []).append(f"验证错误: {err.get('message', '')}")
         except Exception:
             pass
 
         self._add_project_artifacts(state)
+
+        # ========== P1: Eval 评测系统 — 自动生成评测报告 ==========
+        try:
+            from src.eval.metrics import run_evaluation
+            project_name = state.get("project_context", {}).get("project_name", "GameForge")
+            eval_report = run_evaluation(
+                project_name=project_name,
+                code_files=state.get("code_generated", {}),
+                tasks=state.get("task_plan", []),
+                fix_history=state.get("fix_history", []),
+            )
+
+            # Unity 兼容性评分
+            try:
+                from src.utils.unity_compatibility_validator import validate_unity_compatibility
+                compat = validate_unity_compatibility(state.get("code_generated", {}))
+                compat_score = 100.0 if not compat.has_errors else max(0, 100 - len(compat.errors) * 10)
+                eval_report.add_metric(
+                    "unity_compatibility", compat_score,
+                    details={"errors": len(compat.errors), "warnings": len(compat.warnings)}
+                )
+            except Exception:
+                pass
+
+            # 保存评测报告
+            report_path = eval_report.save()
+            state["eval_report"] = eval_report.to_dict()
+            state.setdefault("warnings", []).append(f"评测报告已保存: {report_path}")
+        except Exception as e:
+            state.setdefault("warnings", []).append(f"评测系统异常: {e}")
+
+        # ========== P1: Sandbox 沙箱验证 — C# 代码安全性检查 ==========
+        try:
+            from src.engine.sandbox import SandboxExecutor
+            sandbox = SandboxExecutor(self.config)
+            cs_files = {p: c for p, c in state.get("code_generated", {}).items() if p.endswith(".cs")}
+            if cs_files:
+                sandbox_issues = []
+                for path, content in cs_files.items():
+                    is_safe, issues = sandbox.validate_code(content)
+                    if not is_safe:
+                        sandbox_issues.extend([f"{path}: {i}" for i in issues])
+                if sandbox_issues:
+                    state.setdefault("warnings", []).append(
+                        f"沙箱安全检查发现 {len(sandbox_issues)} 个问题: {'; '.join(sandbox_issues[:5])}"
+                    )
+        except Exception:
+            pass  # 沙箱不可用时跳过
+
+        # 保存项目记忆 — 记录本次生成的错误和经验
+        try:
+            for error in state.get("error_log", []):
+                self.memory.project_memory.add_error(
+                    error_type="generation_error",
+                    solution="自动修复或跳过",
+                    context=error[:200],
+                )
+            for warning in state.get("warnings", []):
+                self.memory.project_memory.add_learning(
+                    topic="generation_warning",
+                    content=warning[:200],
+                )
+            project_name = state.get("project_context", {}).get("project_name", "default")
+            self.memory.project_memory.save(project_name)
+        except Exception:
+            pass  # 记忆保存失败不影响主流程
 
     # ========== 运行入口 ==========
 
@@ -606,6 +741,10 @@ class GameDevWorkflow:
         state = self._make_initial_state(input_state)
         _start = _time.time()
         set_active_workflows(1)
+
+        # 加载项目记忆
+        project_name = state.get("project_context", {}).get("project_name", "default")
+        self.memory.project_memory.load(project_name)
 
         # 场景生成与主图并行
         async def _noop_callback(event_type, data):
@@ -667,6 +806,10 @@ class GameDevWorkflow:
         _start = _time.time()
         _success = True
         set_active_workflows(1)
+
+        # 加载项目记忆
+        project_name = state.get("project_context", {}).get("project_name", "default")
+        self.memory.project_memory.load(project_name)
 
         scene_task = asyncio.create_task(
             self._run_scene_generation(state, event_callback)

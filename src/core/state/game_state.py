@@ -47,6 +47,7 @@ class AgentType(str, Enum):
     """Agent类型枚举"""
     ORCHESTRATOR = "orchestrator"
     PLANNER = "planner"
+    GAME_DESIGNER = "game_designer"
     CODE_GENERATOR = "code_generator"
     CODE_REVIEWER = "code_reviewer"
     TEST_GENERATOR = "test_generator"
