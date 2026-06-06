@@ -558,7 +558,7 @@ class GameDevWorkflow:
 
         # GameDesignModel.json
         if "Assets/GameDesignModel.json" not in code_generated:
-            full_gdm = state.get("game_design_model", {})
+            full_gdm = state.get("game_design_model") or {}
             full_gdm["_meta"] = {
                 "project_name": state.get("project_context", {}).get("project_name", "GameForge"),
                 "engine": state.get("project_context", {}).get("engine", "unity"),
@@ -839,9 +839,9 @@ class GameDevWorkflow:
                         "phase": node_name,
                         "message": f"正在执行: {node_name}...",
                     })
-                elif kind == "on_chain_end" and node_name not in ("__start__", "__end__", "LangGraph"):
+                elif kind == "on_chain_end" and node_name not in ("__start__", "__end__", "LangGraph", "_route_next"):
                     output = event.get("data", {}).get("output", {})
-                    if output:
+                    if output and isinstance(output, dict):
                         # 发送代码文件事件
                         new_code = output.get("code_generated", {})
                         if new_code:
