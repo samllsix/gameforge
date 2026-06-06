@@ -94,6 +94,8 @@ class RefactorAgent(BaseAgent):
             重构结果
         """
         system_prompt = self.get_prompt_template("refactor_system")
+        requirements = state.get("project_context", {}).get("requirements", "")
+        gdm = state.get("game_design_model") or {}
         if not system_prompt:
             system_prompt = """你是一个Unity/C#代码重构专家。请分析代码并提供重构建议。
 
@@ -121,6 +123,16 @@ class RefactorAgent(BaseAgent):
 
         user_prompt = f"""请分析以下C#代码并进行重构优化。
 
+原始用户需求（重构必须保持这些玩法语义不变）:
+{requirements}
+
+游戏设计锚点:
+- 类型: {gdm.get('genre', '')}
+- 核心循环: {gdm.get('core_loop', '')}
+- 玩家动作: {', '.join(gdm.get('player_actions', []))}
+- 胜利条件: {', '.join(gdm.get('win_conditions', []))}
+- 失败条件: {', '.join(gdm.get('fail_conditions', []))}
+
 文件路径: {file_path}
 
 ```csharp
@@ -132,6 +144,7 @@ class RefactorAgent(BaseAgent):
 2. 如果需要重构，提供完整的重构后代码
 3. 保持所有公共API不变
 4. 确保代码可以直接编译使用
+5. 不允许删除、弱化或重命名用户明确要求的玩法语义；如重构会影响需求命中率，返回 needs_refactoring: false
 
 请以JSON格式输出。"""
 
@@ -142,7 +155,7 @@ class RefactorAgent(BaseAgent):
                     {"role": "user", "content": user_prompt},
                 ],
                 model=self.model,
-                temperature=self.llm_config.get("temperature", 0.3),
+                temperature=self.llm_config.get("temperature", 0.2),
                 max_tokens=self.llm_config.get("max_tokens", 8192),
             )
 

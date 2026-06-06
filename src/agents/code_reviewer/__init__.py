@@ -48,8 +48,25 @@ class CodeReviewerAgent(BaseAgent):
             return {"score": 100, "passed": True, "issues": [], "suggestions": []}
 
         system_prompt = self.get_prompt_template("reviewer_system")
+        project_context = state.get("project_context", {})
+        requirements = project_context.get("requirements", "")
+        gdm = state.get("game_design_model") or {}
+        requirement_context = f"""
+## 原始用户需求（最高优先级）
+{requirements}
+
+## 游戏设计锚点
+- 类型: {gdm.get('genre', '')}
+- 核心循环: {gdm.get('core_loop', '')}
+- 玩家动作: {', '.join(gdm.get('player_actions', []))}
+- 胜利条件: {', '.join(gdm.get('win_conditions', []))}
+- 失败条件: {', '.join(gdm.get('fail_conditions', []))}
+
+审查时必须判断代码是否覆盖用户明确提出的玩法、输入、敌人、道具、UI、胜负条件和场景元素。遗漏需求属于 logic 问题；如果遗漏会导致玩家无法体验核心玩法，severity 设为 high。
+"""
         user_prompt = f"""请审查以下Unity C#代码，给出评分和改进建议。
 
+{requirement_context}
 {code_context}
 
 请以JSON格式输出审查结果：

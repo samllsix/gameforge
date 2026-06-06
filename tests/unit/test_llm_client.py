@@ -144,6 +144,75 @@ class TestLLMClientRetry:
             assert mock_client.chat.completions.create.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_kimi_k26_temperature_is_normalized(self, client):
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "success"
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.object(client, "_get_async_client", return_value=mock_client):
+            await client.chat(
+                [{"role": "user", "content": "test"}],
+                model="kimi-k2.6",
+                temperature=0.2,
+            )
+
+        assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 1
+
+    @pytest.mark.asyncio
+    async def test_other_kimi_models_keep_requested_temperature(self):
+        config = {
+            "llm": {
+                "default_model": "kimi-latest",
+                "base_url": "http://test.local/v1",
+                "max_retries": 0,
+                "base_retry_delay": 0.01,
+                "max_retry_delay": 0.1,
+            }
+        }
+        client = LLMClient(config, provider_name="kimi")
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "success"
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.object(client, "_get_async_client", return_value=mock_client):
+            await client.chat([{"role": "user", "content": "test"}], temperature=0.2)
+
+        assert mock_client.chat.completions.create.call_args.kwargs["temperature"] == 0.2
+
+    @pytest.mark.asyncio
+    async def test_nonzero_temperature_does_not_use_cache(self):
+        """Only temperature=0 requests are cacheable."""
+        config = {
+            "llm": {
+                "default_model": "test-model",
+                "base_url": "http://test.local/v1",
+                "max_retries": 0,
+                "base_retry_delay": 0.01,
+                "max_retry_delay": 0.1,
+                "cache": {"enabled": True, "ttl": 3600},
+            }
+        }
+        client = LLMClient(config)
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "success"
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.object(client, "_get_async_client", return_value=mock_client), \
+             patch("src.utils.redis_client.cache_get", new_callable=AsyncMock) as cache_get:
+            await client.chat([{"role": "user", "content": "test"}], temperature=0.2)
+
+        cache_get.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_retry_exhausted_raises(self, client):
         mock_client = AsyncMock()
         mock_client.chat.completions.create = AsyncMock(

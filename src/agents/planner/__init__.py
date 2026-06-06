@@ -227,7 +227,7 @@ class PlannerAgent(BaseAgent):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=self.llm_config.get("temperature", 0.7),
+                temperature=self.llm_config.get("temperature", 0.4),
                 max_tokens=self.llm_config.get("max_tokens", 4096),
             )
 

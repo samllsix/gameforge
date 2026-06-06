@@ -332,6 +332,7 @@ class CodeGeneratorAgent(BaseAgent):
         self, task: Dict[str, Any], engine: str, project_name: str, state: GameDevState
     ) -> List[Dict[str, Any]]:
         system_prompt = self.get_prompt_template("code_generator_system")
+        requirements = state.get("project_context", {}).get("requirements", "")
 
         # 收集已生成的代码作为上下文
         existing_code = state.get("code_generated", {})
@@ -395,6 +396,9 @@ class CodeGeneratorAgent(BaseAgent):
 
 项目名称: {project_name}
 游戏引擎: {engine}
+原始用户需求（最高优先级，不得被通用模板覆盖）:
+{requirements}
+
 任务ID: {task.get('id', 'unknown')}
 任务名称: {task.get('name', '')}
 任务描述: {task.get('description', '')}
@@ -419,6 +423,8 @@ class CodeGeneratorAgent(BaseAgent):
 6. 如果游戏设计模型中有输入映射，使用Input.GetAxis/Input.GetButton读取输入
 7. 如果有Tags/Layers引用，使用CompareTag和LayerMask.GetMask
 8. 组件之间的引用使用[SerializeField]或事件系统，不要使用Find系列方法
+9. 用户明确提到的玩法、输入、胜负条件、敌人、道具、UI或场景元素，必须在代码或设计说明中有对应落点；如果当前任务只覆盖其中一部分，接口和命名必须能支撑后续任务衔接。
+10. 历史代码参考只能作为实现风格参考；当它与原始用户需求冲突时，必须以原始用户需求为准。
 
 请直接输出代码，格式如下：
 ```csharp
@@ -457,7 +463,7 @@ namespace ...
                     {"role": "user", "content": user_prompt},
                 ],
                 model=self.model,
-                temperature=self.llm_config.get("temperature", 0.3),
+                temperature=self.llm_config.get("temperature", 0.2),
                 max_tokens=self.llm_config.get("max_tokens", 8192),
             )
 

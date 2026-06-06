@@ -63,6 +63,8 @@ class DebuggerAgent(BaseAgent):
                 parsed_errors.append(parsed)
 
         error_text = "\n".join(error_log)
+        requirements = state.get("project_context", {}).get("requirements", "")
+        gdm = state.get("game_design_model") or {}
         parsed_context = ""
         if parsed_errors:
             parsed_context = "\n\n## 解析后的错误详情\n"
@@ -71,6 +73,16 @@ class DebuggerAgent(BaseAgent):
 
         system_prompt = self.get_prompt_template("debugger_system")
         user_prompt = f"""请分析以下错误并生成修复方案。
+
+## 原始用户需求（修复后必须继续满足）
+{requirements}
+
+## 游戏设计锚点
+- 类型: {gdm.get('genre', '')}
+- 核心循环: {gdm.get('core_loop', '')}
+- 玩家动作: {', '.join(gdm.get('player_actions', []))}
+- 胜利条件: {', '.join(gdm.get('win_conditions', []))}
+- 失败条件: {', '.join(gdm.get('fail_conditions', []))}
 
 ## 错误信息
 ```
@@ -111,7 +123,7 @@ class DebuggerAgent(BaseAgent):
                     {"role": "user", "content": user_prompt},
                 ],
                 model=self.model,
-                temperature=self.llm_config.get("temperature", 0.2),
+                temperature=self.llm_config.get("temperature", 0.1),
                 max_tokens=self.llm_config.get("max_tokens", 4096),
             )
 

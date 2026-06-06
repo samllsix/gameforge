@@ -74,3 +74,9 @@
 - 2D游戏使用 Rigidbody2D/BoxCollider2D，3D游戏使用 Rigidbody/BoxCollider
 - 根据需求复杂度决定 systems 和 entities 数量
 - 不要遗漏用户需求中提到的任何功能
+
+## 需求命中率规则（必须遵守）
+- 先把用户原始需求中的显性名词和动词当作硬约束：玩法、输入方式、敌人、道具、UI、胜负条件、场景、视角、数值目标都必须落到 GDM 的字段中。
+- 不要用示例里的平台跳跃/射击/RPG模板覆盖用户自己的类型；只有当用户需求缺失时才补默认元素。
+- 如果用户同时提出多个系统，main_systems、entities、scenes、code_modules 必须分别覆盖这些系统。
+- code_modules 的 responsibility 应说明它对应了哪一条用户需求，避免生成与需求无关的通用模块。

@@ -116,6 +116,30 @@ class TestOrchestratorNode:
         assert result["fix_attempts"] == 1
 
 
+class TestTestGeneratorNode:
+    @pytest.mark.asyncio
+    async def test_marks_current_test_task_completed(self, sample_config, sample_game_state):
+        wf = GameDevWorkflow(sample_config)
+        wf.test_generator.generate = AsyncMock(return_value={
+            "Assets/Tests/EditMode/PlayerTests.cs": "using NUnit.Framework; public class PlayerTests {}"
+        })
+
+        state = sample_game_state.copy()
+        state["current_task_id"] = "task-003"
+        state["task_plan"] = [
+            {**task, "status": TaskStatus.COMPLETED.value}
+            if task["id"] in {"task-001", "task-002"}
+            else dict(task)
+            for task in sample_game_state["task_plan"]
+        ]
+
+        result = await wf._test_generator_node(state)
+
+        test_task = next(task for task in result["task_plan"] if task["id"] == "task-003")
+        assert test_task["status"] == TaskStatus.COMPLETED.value
+        assert result["current_phase"] == "test_generated"
+
+
 class TestCreateWorkflow:
     def test_create_workflow_returns_instance(self, sample_config):
         wf = create_workflow(sample_config)

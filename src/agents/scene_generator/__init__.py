@@ -266,7 +266,7 @@ class SceneGeneratorAgent(BaseAgent):
             return self._platformer_scene()
 
     def _platformer_scene(self) -> Dict:
-        """2D平台跳跃场景 — 完整版"""
+        """2D平台跳跃场景 — 彩色几何体版（无需美术资源）"""
         return {
             "scene_name": "GameScene",
             "new_scene": True,
@@ -279,9 +279,10 @@ class SceneGeneratorAgent(BaseAgent):
             "lighting": {"type": "directional", "intensity": 1.0, "rotation": [50, -30, 0]},
             "game_objects": [
                 {
-                    "name": "Player", "type": "Sprite", "position": [0, 1, 0],
+                    "name": "Player", "type": "Capsule", "position": [0, 1, 0],
                     "tag": "Player", "layer": 0,
-                    "sprite": "character_purple_idle",
+                    "color": [0.42, 0.55, 1.0, 1.0],
+                    "scale": [0.8, 1.0, 0.8],
                     "components": [
                         {"type": "Rigidbody2D", "properties": {"mass": "1", "gravityScale": "2", "freezeRotation": "true", "interpolation": "Interpolate", "collisionDetectionMode": "Continuous"}},
                         {"type": "BoxCollider2D", "properties": {"size": "[0.8, 0.9]"}},
@@ -289,49 +290,55 @@ class SceneGeneratorAgent(BaseAgent):
                     ],
                 },
                 {
-                    "name": "Ground", "type": "Sprite", "position": [0, -2, 0],
+                    "name": "Ground", "type": "Cube", "position": [0, -2, 0],
                     "layer": 8, "is_static": True,
-                    "sprite": "terrain_grass_block_top",
+                    "color": [0.20, 0.83, 0.60, 1.0],
+                    "scale": [14, 0.5, 1],
                     "components": [
                         {"type": "BoxCollider2D", "properties": {"size": "[14, 1]"}},
                         {"type": "Rigidbody2D", "properties": {"bodyType": "Static"}},
                     ],
                 },
                 {
-                    "name": "Platform1", "type": "Sprite", "position": [-3, 0, 0], "layer": 8, "is_static": True,
-                    "sprite": "terrain_grass_block",
+                    "name": "Platform1", "type": "Cube", "position": [-3, 0, 0], "layer": 8, "is_static": True,
+                    "color": [0.30, 0.69, 0.49, 1.0],
+                    "scale": [3, 0.5, 1],
                     "components": [
                         {"type": "BoxCollider2D", "properties": {"size": "[3, 0.5]"}},
                         {"type": "Rigidbody2D", "properties": {"bodyType": "Static"}},
                     ],
                 },
                 {
-                    "name": "Platform2", "type": "Sprite", "position": [3, 1, 0], "layer": 8, "is_static": True,
-                    "sprite": "terrain_grass_block",
+                    "name": "Platform2", "type": "Cube", "position": [3, 1, 0], "layer": 8, "is_static": True,
+                    "color": [0.30, 0.69, 0.49, 1.0],
+                    "scale": [3, 0.5, 1],
                     "components": [
                         {"type": "BoxCollider2D", "properties": {"size": "[3, 0.5]"}},
                         {"type": "Rigidbody2D", "properties": {"bodyType": "Static"}},
                     ],
                 },
                 {
-                    "name": "Coin1", "type": "Sprite", "position": [-3, 1, 0],
-                    "sprite": "block_coin",
+                    "name": "Coin1", "type": "Sphere", "position": [-3, 1, 0],
+                    "color": [0.98, 0.75, 0.14, 1.0],
+                    "scale": [0.5, 0.5, 0.5],
                     "components": [
                         {"type": "BoxCollider2D", "properties": {"size": "[0.5, 0.5]", "isTrigger": "true"}},
                         {"type": "CoinController", "properties": {}},
                     ],
                 },
                 {
-                    "name": "Coin2", "type": "Sprite", "position": [3, 2, 0],
-                    "sprite": "block_coin",
+                    "name": "Coin2", "type": "Sphere", "position": [3, 2, 0],
+                    "color": [0.98, 0.75, 0.14, 1.0],
+                    "scale": [0.5, 0.5, 0.5],
                     "components": [
                         {"type": "BoxCollider2D", "properties": {"size": "[0.5, 0.5]", "isTrigger": "true"}},
                         {"type": "CoinController", "properties": {}},
                     ],
                 },
                 {
-                    "name": "Enemy1", "type": "Sprite", "position": [2, -1, 0],
-                    "sprite": "bee_a",
+                    "name": "Enemy1", "type": "Cube", "position": [2, -1, 0],
+                    "color": [0.97, 0.44, 0.44, 1.0],
+                    "scale": [0.8, 0.8, 0.8],
                     "components": [
                         {"type": "Rigidbody2D", "properties": {"gravityScale": "3", "freezeRotation": "true"}},
                         {"type": "BoxCollider2D", "properties": {"size": "[0.8, 0.8]"}},
@@ -346,7 +353,7 @@ class SceneGeneratorAgent(BaseAgent):
         }
 
     def _space_shooter_scene(self) -> Dict:
-        """太空射击场景"""
+        """太空射击场景 — 彩色几何体版（无需美术资源）"""
         return {
             "scene_name": "SpaceShooterScene",
             "new_scene": True,
@@ -359,9 +366,10 @@ class SceneGeneratorAgent(BaseAgent):
             "lighting": {"type": "directional", "intensity": 0.8, "rotation": [0, 0, 0]},
             "game_objects": [
                 {
-                    "name": "Player", "type": "Sprite", "position": [0, -4, 0],
+                    "name": "Player", "type": "Capsule", "position": [0, -4, 0],
                     "tag": "Player",
-                    "sprite": "character_purple_front",
+                    "color": [0.42, 0.55, 1.0, 1.0],
+                    "scale": [0.8, 1.0, 0.8],
                     "components": [
                         {"type": "Rigidbody2D", "properties": {"gravityScale": "0"}},
                         {"type": "BoxCollider2D", "properties": {"size": "[1, 1]"}},
@@ -369,16 +377,18 @@ class SceneGeneratorAgent(BaseAgent):
                     ],
                 },
                 {
-                    "name": "Enemy1", "type": "Sprite", "position": [-3, 4, 0],
-                    "sprite": "bee_a",
+                    "name": "Enemy1", "type": "Cube", "position": [-3, 4, 0],
+                    "color": [0.97, 0.44, 0.44, 1.0],
+                    "scale": [0.8, 0.8, 0.8],
                     "components": [
                         {"type": "Rigidbody2D", "properties": {"gravityScale": "0"}},
                         {"type": "BoxCollider2D", "properties": {"size": "[0.8, 0.8]"}},
                     ],
                 },
                 {
-                    "name": "Enemy2", "type": "Sprite", "position": [3, 5, 0],
-                    "sprite": "fly_a",
+                    "name": "Enemy2", "type": "Cube", "position": [3, 5, 0],
+                    "color": [0.97, 0.44, 0.44, 1.0],
+                    "scale": [0.8, 0.8, 0.8],
                     "components": [
                         {"type": "Rigidbody2D", "properties": {"gravityScale": "0"}},
                         {"type": "BoxCollider2D", "properties": {"size": "[0.8, 0.8]"}},

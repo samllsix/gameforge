@@ -123,18 +123,22 @@ def _zone_y(zone: str, is_2d: bool) -> float:
 # ═══════════════════════════════════════════════════════════════
 
 _ROLE_TO_TYPE: Dict[str, str] = {
-    "player": "Sprite",
-    "ground": "Cube",
-    "platform": "Cube",
-    "obstacle": "Cube",
-    "enemy": "Sprite",
-    "npc": "Sprite",
-    "pickup": "Sprite",
+    "player": "Capsule",      # 胶囊体 = 角色，视觉辨识度高
+    "ground": "Cube",         # 方块 = 地面
+    "platform": "Cube",       # 方块 = 平台
+    "obstacle": "Cube",       # 方块 = 障碍
+    "enemy": "Cube",          # 红色方块 = 敌人
+    "npc": "Capsule",         # 紫色胶囊 = NPC
+    "pickup": "Sphere",       # 球体 = 金币/道具，最突出
     "spawner": "Empty",
     "manager": "Empty",
-    "decoration": "Cube",
-    "boundary": "Empty",
+    "decoration": "Cylinder",
+    "boundary": "Cube",       # 边界墙用方块
     "camera": "Camera",
+    "wall": "Cube",
+    "trigger": "Cube",
+    "spawn_point": "Sphere",
+    "light": "Sphere",
 }
 
 _ROLE_TO_SCALE: Dict[str, List[float]] = {
@@ -197,10 +201,10 @@ def _build_scene_object(
     obj_type = _ROLE_TO_TYPE.get(entity.role, "Empty")
     scale = list(_ROLE_TO_SCALE.get(entity.role, [1, 1, 1]))
 
-    # 地面在 2D 模式下用 Sprite
+    # 地面在 2D 模式下用薄 Cube（Sprite 无贴图不可见）
     if entity.role == "ground" and "2d" in camera_mode:
-        obj_type = "Sprite"
-        scale = [20, 1, 1]
+        obj_type = "Cube"
+        scale = [20, 0.5, 1]
 
     # 组件
     components: List[ComponentSpec] = []

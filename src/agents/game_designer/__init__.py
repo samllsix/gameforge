@@ -50,6 +50,8 @@ class GameDesignerAgent(BaseAgent):
 用户需求:
 {requirements}
 
+请先逐项覆盖用户明确提出的玩法、输入、敌人、道具、UI、胜负条件、场景和视角；只有用户没有说明时，才补充合理默认项。
+
 请严格按照系统提示中的JSON Schema输出，不要输出额外文本。"""
 
         try:
@@ -58,11 +60,28 @@ class GameDesignerAgent(BaseAgent):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.3,
-                max_tokens=8192,
+                model=self.model,
+                temperature=self.llm_config.get("temperature", 0.4),
+                max_tokens=self.llm_config.get("max_tokens", 4096),
             )
 
             gdm = self._extract_json(response)
+            if gdm and "game_title" in gdm:
+                return self._normalize_gdm(gdm, requirements, engine)
+
+            retry_response = await self.llm.chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a Game Design Model JSON generator. Return only valid JSON with game_title, genre, engine, camera_mode, core_loop, player_actions, win_conditions, fail_conditions, main_systems, entities, scenes, code_modules, assets_needed, input_map, tags_layers, and physics_settings.",
+                    },
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=0.1,
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+            gdm = self._extract_json(retry_response)
             if gdm and "game_title" in gdm:
                 return self._normalize_gdm(gdm, requirements, engine)
 

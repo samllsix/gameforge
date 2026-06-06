@@ -51,42 +51,42 @@ llm:
     planner:
       provider: mimo
       model: mimo-v2.5-pro
-      temperature: 0.7
+      temperature: 0.4
       max_tokens: 4096
     code_generator:
       provider: deepseek
       model: deepseek-v4-pro
-      temperature: 0.3
+      temperature: 0.2
       max_tokens: 8192
     code_reviewer:
       provider: kimi
       model: kimi-k2.6
-      temperature: 0.2
+      temperature: 1
       max_tokens: 4096
     test_generator:
       provider: deepseek
       model: deepseek-v4-pro
-      temperature: 0.4
+      temperature: 0.2
       max_tokens: 4096
     debugger:
       provider: zhipu
       model: glm-4.5-air
-      temperature: 0.2
+      temperature: 0.1
       max_tokens: 4096
     refactor:
       provider: deepseek
       model: deepseek-v4-pro
-      temperature: 0.3
+      temperature: 0.2
       max_tokens: 8192
     game_designer:
       provider: mimo
       model: mimo-v2.5-pro
-      temperature: 0.7
+      temperature: 0.4
       max_tokens: 4096
     scene_generator:
       provider: mimo
       model: mimo-v2.5-pro
-      temperature: 0.5
+      temperature: 0.3
       max_tokens: 4096
 
 # Agent Configuration
@@ -178,7 +178,7 @@ unity:
   timeout: 300
   auto_refresh: true
   http_port: 8765
-  auto_build_scene: false
+  auto_build_scene: true
 
 # Project Templates
 templates:

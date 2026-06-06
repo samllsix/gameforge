@@ -227,9 +227,19 @@ class GameDevWorkflow:
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """测试生成节点 — 为代码生成测试用例"""
         try:
+            current_task_id = state.get("current_task_id")
+            task_plan = state.get("task_plan", [])
             test_code = await self.test_generator.generate(state)
+
+            updated_plan = [dict(t) for t in task_plan]
+            for task in updated_plan:
+                if task.get("id") == current_task_id:
+                    task["status"] = TaskStatus.COMPLETED.value
+                    break
+
             return {
                 "code_generated": test_code,
+                "task_plan": updated_plan,
                 "current_phase": "test_generated",
             }
         except Exception as e:
@@ -481,6 +491,82 @@ class GameDevWorkflow:
             "status": "partial",
             "message": f"经过{max_rounds}轮修复仍有编译错误，可能需要人工介入",
         })
+
+    async def _try_unity_pipeline(self, state: GameDevState, event_callback) -> None:
+        """Unity 一键构建：导入代码 → 编译 → 构建场景"""
+        from src.engine.unity.unity_http_client import UnityHTTPClient
+
+        client = UnityHTTPClient()
+        if not await client.check_health():
+            await event_callback("scene_skipped", {
+                "reason": "unity_http_unavailable",
+                "message": "Unity Editor HTTP Server 未运行，跳过自动构建",
+            })
+            return
+
+        code_files = state.get("code_generated", {})
+        cs_files = {k: v for k, v in code_files.items() if k.endswith(".cs")}
+        if not cs_files:
+            return
+
+        # 第一步：导入所有代码文件
+        await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Unity..."})
+        import_result = await client.import_files(cs_files)
+        if import_result.get("status") == "error":
+            await event_callback("compile_result", {
+                "status": "error",
+                "message": f"导入失败: {import_result.get('error', '')}",
+            })
+            return
+
+        # 第二步：编译
+        await event_callback("phase_start", {"phase": "compiling", "message": "正在编译..."})
+        compile_result = await client.compile_scripts()
+        errors = compile_result.get("errors", [])
+
+        if errors:
+            await event_callback("compile_result", {
+                "status": "error",
+                "message": f"编译发现 {len(errors)} 个错误",
+                "errors": errors[:10],
+            })
+            # 即使有错误也尝试构建场景（部分脚本可能正常）
+
+        # 第三步：构建场景
+        scene_desc = state.get("scene_description")
+        if not scene_desc:
+            # 尝试从 code_generated 中读取
+            scene_json_str = code_files.get("Assets/Scenes/scene_description.json")
+            if scene_json_str:
+                import json as _json
+                try:
+                    scene_desc = _json.loads(scene_json_str)
+                except Exception:
+                    pass
+
+        if scene_desc:
+            await event_callback("scene_start", {"message": "正在构建 Unity 场景..."})
+            scene_result = await client.send_scene(scene_desc)
+            if scene_result.get("status") == "success":
+                state["scene_status"] = "success"
+                state["scene_path"] = scene_result.get("scene_path", "")
+                await event_callback("scene_complete", {
+                    "scene_name": scene_desc.get("scene_name", "GameScene"),
+                    "scene_path": scene_result.get("scene_path", ""),
+                    "object_count": len(scene_desc.get("game_objects", [])),
+                    "compile_status": "success" if not errors else "with_errors",
+                })
+            else:
+                state["scene_status"] = "error"
+                await event_callback("scene_error", {
+                    "message": scene_result.get("error", "场景构建失败"),
+                })
+
+        if not errors:
+            await event_callback("compile_result", {
+                "status": "success",
+                "message": f"编译成功！共 {len(cs_files)} 个文件",
+            })
 
     # ========== 后处理（共享逻辑） ==========
 
@@ -791,6 +877,11 @@ class GameDevWorkflow:
             set_active_workflows(0)
 
         await self._post_process(state, scene_task)
+
+        # Unity 一键构建 pipeline（导入→编译→场景）
+        if state.get("scene_status") in (None, "pending", "skipped"):
+            await self._try_unity_pipeline(state, lambda *a, **kw: asyncio.sleep(0))
+
         return state
 
     async def run_with_streaming(
@@ -877,6 +968,10 @@ class GameDevWorkflow:
         set_active_workflows(0)
 
         await self._post_process(state, scene_task, event_callback)
+
+        # Unity 一键构建 pipeline（导入→编译→场景）
+        if state.get("scene_status") in (None, "pending", "skipped"):
+            await self._try_unity_pipeline(state, event_callback)
 
         await event_callback("complete", {
             "phase": "complete",

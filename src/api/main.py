@@ -197,6 +197,15 @@ async def serve_frontend():
     )
 
 
+@app.get("/demo")
+async def serve_demo():
+    """Demo 演示页面"""
+    return FileResponse(
+        os.path.join(_static_dir, "demo.html"),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
 # 挂载额外路由模块
 from src.api.routes import router as routes_router
 app.include_router(routes_router, prefix="/api/v1/ext", tags=["extended"])

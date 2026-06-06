@@ -6,7 +6,6 @@
 
 import os
 import json
-import re
 import time
 import random
 import asyncio
@@ -139,6 +138,8 @@ class LLMClientPool:
 class LLMClient:
     """LLM客户端 — 封装异步OpenAI兼容API调用，支持多Provider路由"""
 
+    TEMPERATURE_ONE_MODELS = {"kimi-k2.6"}
+
     def __init__(self, config: Dict[str, Any],
                  provider_base_url: Optional[str] = None,
                  provider_api_key: Optional[str] = None,
@@ -200,6 +201,12 @@ class LLMClient:
             )
         return self._sync_client
 
+    def _normalize_temperature(self, model: str, temperature: float) -> float:
+        """Apply model-specific request constraints without changing whole providers."""
+        if model.lower() in self.TEMPERATURE_ONE_MODELS:
+            return 1
+        return temperature
+
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -219,11 +226,16 @@ class LLMClient:
             模型回复文本
         """
         # 缓存查找（仅 temperature=0 时启用，确保确定性输出）
-        if self.cache_enabled and temperature == 0:
+        _provider = self.provider_name
+        _model = model or self.default_model
+        temperature = self._normalize_temperature(_model, temperature)
+        _cacheable = self.cache_enabled and temperature == 0
+
+        if _cacheable:
             from src.utils.redis_client import cache_get, make_cache_key
             cache_key = make_cache_key(
                 "llm",
-                model=model or self.default_model,
+                model=_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -231,12 +243,11 @@ class LLMClient:
             cached = await cache_get(cache_key)
             if cached is not None:
                 logger.debug(f"缓存命中: {cache_key[:32]}...")
-                # 记录缓存命中指标
                 try:
                     from src.utils.metrics import record_llm_call
                     record_llm_call(
                         provider=self.base_url.split("//")[1].split(".")[0] if "//" in self.base_url else "unknown",
-                        model=model or self.default_model,
+                        model=_model,
                         method="chat",
                         duration=0,
                         success=True,
@@ -249,8 +260,6 @@ class LLMClient:
         if not await self.circuit_breaker.can_execute():
             raise RuntimeError(f"Circuit breaker OPEN for {self.base_url}. Try again later.")
 
-        _provider = self.provider_name
-        _model = model or self.default_model
         _start_time = time.time()
         last_error = None
 
@@ -273,8 +282,7 @@ class LLMClient:
                 except Exception:
                     pass
 
-                # 写入缓存（仅 temperature=0 时）
-                if self.cache_enabled and temperature == 0:
+                if _cacheable:
                     from src.utils.redis_client import cache_set
                     await cache_set(cache_key, result, ttl=self.cache_ttl)
 
@@ -313,12 +321,14 @@ class LLMClient:
         Returns:
             模型回复文本
         """
+        _model = model or self.default_model
+        temperature = self._normalize_temperature(_model, temperature)
         last_error = None
         for attempt in range(self.retry_config.max_retries + 1):
             try:
                 client = self._get_sync_client()
                 response = client.chat.completions.create(
-                    model=model or self.default_model,
+                    model=_model,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,

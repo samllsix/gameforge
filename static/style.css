@@ -1871,3 +1871,136 @@ header h1 {
     box-shadow: 0 4px 16px rgba(108, 140, 255, 0.4);
     transform: translateY(-1px);
 }
+
+/* Final responsive overrides: keep the side panel out of the chat layout. */
+@media (max-width: 1024px) {
+    .panel-toggle {
+        display: flex;
+    }
+
+    .main-layout {
+        z-index: auto;
+    }
+
+    .main-layout .chat-container {
+        width: 100%;
+        max-width: 960px;
+        margin: 0 auto;
+        flex: 1 1 auto;
+    }
+
+    .engineering-panel {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 360px;
+        max-width: 85vw;
+        z-index: 50;
+        transform: translateX(100%);
+        transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
+    }
+
+    .engineering-panel.open {
+        transform: translateX(0);
+    }
+}
+
+@media (max-width: 768px) {
+    .engineering-panel {
+        width: 360px;
+        max-width: 85vw;
+    }
+}
+
+@media (max-width: 480px) {
+    .header-content {
+        gap: 6px;
+    }
+
+    .header-brand {
+        gap: 6px;
+        min-width: 0;
+    }
+
+    header h1 {
+        font-size: 17px;
+    }
+
+    .header-actions {
+        gap: 4px;
+    }
+
+    .header-select {
+        max-width: 70px;
+        padding: 5px 6px;
+    }
+
+    .header-input {
+        width: 70px;
+        padding: 5px 7px;
+    }
+
+    .header-input:focus {
+        width: 105px;
+    }
+
+    .btn-icon {
+        padding: 5px 6px;
+    }
+}
+
+/* ═══ Demo Play Button ═══ */
+
+.demo-play-area {
+    margin: 16px 0;
+    text-align: center;
+}
+
+.demo-play-btn {
+    background: linear-gradient(135deg, #6c8cff 0%, #a78bfa 50%, #f472b6 100%);
+    border: none;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    font-family: inherit;
+    padding: 12px 32px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 16px rgba(108, 140, 255, 0.3);
+    letter-spacing: 0.5px;
+}
+
+.demo-play-btn:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 8px 24px rgba(108, 140, 255, 0.4);
+}
+
+.demo-play-btn:active {
+    transform: translateY(0) scale(0.98);
+}
+
+.demo-play-btn::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #6c8cff, #a78bfa, #f472b6, #6c8cff);
+    background-size: 300% 300%;
+    animation: gradientSpin 3s ease infinite;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.demo-play-btn:hover::before {
+    opacity: 1;
+}
+
+@keyframes gradientSpin {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}

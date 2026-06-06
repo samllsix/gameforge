@@ -824,6 +824,25 @@ function handleStreamEvent(data) {
             const codeTabs = renderCodeTabs(files);
             if (codeTabs) resultCard.appendChild(codeTabs);
 
+            // 🎮 试玩按钮
+            {
+                const sceneJson = files['Assets/Scenes/scene_description.json'];
+                if (sceneJson) {
+                    try {
+                        const sceneData = JSON.parse(sceneJson);
+                        sessionStorage.setItem('gameforge_demo_scene', sceneJson);
+                        sessionStorage.setItem('gameforge_demo_files', JSON.stringify(files));
+                        const demoBtn = el('button', { className: 'demo-play-btn' });
+                        demoBtn.innerHTML = '🎮 立即试玩';
+                        demoBtn.addEventListener('click', () => {
+                            window.open('/demo', '_blank');
+                        });
+                        const demoWrap = el('div', { className: 'demo-play-area' }, demoBtn);
+                        resultCard.appendChild(demoWrap);
+                    } catch (e) {}
+                }
+            }
+
             // Unity 提示
             if (data.scene_status === 'skipped' || data.scene_status === 'pending') {
                 const hint = el('div', { className: 'unity-hint' });

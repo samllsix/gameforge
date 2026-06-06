@@ -285,3 +285,8 @@ dotnet test --filter "ClassName=PlayerControllerTests"
 - 测试不应依赖外部资源
 - 测试应该快速执行
 - 测试应该清晰易懂
+## 需求命中率规则（必须遵守）
+- 测试优先覆盖用户原始需求中的玩法行为，而不是只测试构造函数和默认值。
+- 如果代码里实现了用户要求的输入、敌人、道具、分数、生命、UI、胜负条件，至少为可直接测试的部分生成断言。
+- 测试名称应体现用户需求语义，例如 `CollectCoin_IncreasesScore`、`PlayerHitEnemy_LosesHealth`。
+- 不要为代码中不存在、且用户没有要求的功能编造测试。

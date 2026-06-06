@@ -44,11 +44,14 @@ class TestGeneratorAgent(BaseAgent):
         if not source_files:
             return {}
 
-        return await self._generate_all_tests_batch(source_files)
+        return await self._generate_all_tests_batch(source_files, state)
 
     async def _generate_all_tests_batch(
-        self, source_files: Dict[str, str]
+        self, source_files: Dict[str, str], state: GameDevState
     ) -> Dict[str, str]:
+        project_context = state.get("project_context", {})
+        requirements = project_context.get("requirements", "")
+        gdm = state.get("game_design_model") or {}
         files_section = ""
         for file_path, content in source_files.items():
             class_name = file_path.split("/")[-1].replace(".cs", "")
@@ -61,6 +64,16 @@ class TestGeneratorAgent(BaseAgent):
 
         system_prompt = self.get_prompt_template("test_generator_system")
         user_prompt = f"""Generate Unity C# EditMode tests for these source files.
+Original user requirements, used to prioritize gameplay assertions:
+{requirements}
+
+Game design anchors:
+- Genre: {gdm.get('genre', '')}
+- Core loop: {gdm.get('core_loop', '')}
+- Player actions: {', '.join(gdm.get('player_actions', []))}
+- Win conditions: {', '.join(gdm.get('win_conditions', []))}
+- Fail conditions: {', '.join(gdm.get('fail_conditions', []))}
+
 {files_section}
 
 Requirements:
@@ -69,6 +82,8 @@ Requirements:
 3. Include using System.Collections; when IEnumerator is used.
 4. If a source class has a namespace, add a using for that namespace.
 5. Tests must compile in Unity EditMode.
+6. Prefer tests that prove user-requested gameplay behavior over generic constructor-only tests.
+7. Every explicit user-requested mechanic represented in these source files should have at least one assertion.
 
 Output one fenced csharp block per test file:
 ```csharp
@@ -85,7 +100,7 @@ using NUnit.Framework;
                     {"role": "user", "content": user_prompt},
                 ],
                 model=self.model,
-                temperature=self.llm_config.get("temperature", 0.4),
+                temperature=self.llm_config.get("temperature", 0.2),
                 max_tokens=self.llm_config.get("max_tokens", 8192),
             )
 
@@ -189,7 +204,7 @@ Return only compilable C# test code. Include using System.Collections if needed.
                     {"role": "user", "content": user_prompt},
                 ],
                 model=self.model,
-                temperature=self.llm_config.get("temperature", 0.4),
+                temperature=self.llm_config.get("temperature", 0.2),
                 max_tokens=self.llm_config.get("max_tokens", 4096),
             )
 
