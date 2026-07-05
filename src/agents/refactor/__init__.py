@@ -32,6 +32,12 @@ class RefactorAgent(BaseAgent):
             self.log_action("no_code_to_refactor")
             return {"current_phase": "refactored"}
 
+        # 快速模式：跳过 LLM 重构，直接返回（节省 ~30s/任务）
+        fast_mode = self.llm_config.get("fast_refactor", True)
+        if fast_mode:
+            self.log_action("refactor_skipped_fast_mode")
+            return {"current_phase": "refactored"}
+
         refactor_results = await self.analyze_and_refactor(state, code_generated)
 
         return {

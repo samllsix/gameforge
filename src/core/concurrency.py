@@ -1,4 +1,4 @@
-﻿"""GameForge - 并发管理模块
+"""GameForge - 并发管理模块
 
 提供信号量、任务队列、并发控制等基础设施，解决高并发场景下的资源竞争问题。
 """
@@ -84,33 +84,40 @@ class ConcurrencyManager:
                     cls._instance = cls(**kwargs)
         return cls._instance
 
-    def _persist_task(self, task: QueuedTask):
-        """持久化任务状态到数据库（非阻塞）"""
+    async def _persist_task(self, task: QueuedTask):
+        """持久化任务状态到数据库（非阻塞）
+
+        将同步 DB 操作放到线程池执行，避免阻塞事件循环。
+        """
         try:
             from src.db.session import _engine
             if _engine is None:
                 return
             from src.db.session import get_db
             from src.db.models import TaskRecord
-            db = get_db()
-            try:
-                record = db.query(TaskRecord).filter(TaskRecord.id == task.task_id).first()
-                if not record:
-                    record = TaskRecord(
-                        id=task.task_id,
-                        task_type=task.task_type,
-                        payload=task.payload,
-                        priority=task.priority,
-                    )
-                    db.add(record)
-                record.status = task.status.value
-                record.result = task.result
-                record.error = task.error
-                record.started_at = datetime.fromtimestamp(task.started_at) if task.started_at else None
-                record.completed_at = datetime.fromtimestamp(task.completed_at) if task.completed_at else None
-                db.commit()
-            finally:
-                db.close()
+
+            def _do_persist():
+                db = get_db()
+                try:
+                    record = db.query(TaskRecord).filter(TaskRecord.id == task.task_id).first()
+                    if not record:
+                        record = TaskRecord(
+                            id=task.task_id,
+                            task_type=task.task_type,
+                            payload=task.payload,
+                            priority=task.priority,
+                        )
+                        db.add(record)
+                    record.status = task.status.value
+                    record.result = task.result
+                    record.error = task.error
+                    record.started_at = datetime.fromtimestamp(task.started_at) if task.started_at else None
+                    record.completed_at = datetime.fromtimestamp(task.completed_at) if task.completed_at else None
+                    db.commit()
+                finally:
+                    db.close()
+
+            await asyncio.to_thread(_do_persist)
         except Exception as e:
             logger.warning("task_persist_failed", error=str(e))
 
@@ -141,7 +148,7 @@ class ConcurrencyManager:
         )
         self.active_tasks[task_id] = queued_task
         self.stats["total_submitted"] += 1
-        self._persist_task(queued_task)
+        await self._persist_task(queued_task)
 
         # 放入优先级队列
         await self.task_queue.put((priority, time.time(), task_id, handler))
@@ -163,34 +170,54 @@ class ConcurrencyManager:
             self._processor_task = asyncio.create_task(self._process_queue())
 
     async def _process_queue(self):
-        """队列处理循环 — 每个任务独立调度，真正并发执行"""
+        """队列处理循环 — 持续运行，每个任务独立调度，真正并发执行
+
+        设计要点：
+        - 持续循环而非批量 gather，避免新任务在等待 gather 完成时滞留队列
+        - 每个任务通过 create_task 独立调度，由 workflow_semaphore 控制实际并发度
+        - 使用 sleep 轮询而非阻塞 get，便于在队列空时检查是否应退出
+        """
         try:
-            while not self.task_queue.empty():
-                workers = []
-                while not self.task_queue.empty():
+            while True:
+                if self.task_queue.empty():
+                    # 队列为空，短暂让出控制权后重新检查
+                    # 避免忙等待，同时确保新入队任务能被及时处理
+                    await asyncio.sleep(0.05)
+                    if self.task_queue.empty():
+                        # 二次检查仍为空，退出处理器
+                        # 注意：此处仍存在极小概率竞态 —— 在 sleep 期间入队的任务
+                        # 会通过 _ensure_processor 检查到 _processor_running=True
+                        # 而不启动新 processor，但该任务会在下一轮 while 循环被处理
+                        # 因为我们在退出前会再次检查队列
+                        break
+                    continue
+
+                try:
                     priority, submit_time, task_id, handler = (
-                        await self.task_queue.get()
+                        self.task_queue.get_nowait()
                     )
+                except asyncio.QueueEmpty:
+                    continue
 
-                    task = self.active_tasks.get(task_id)
-                    if not task or task.status == TaskStatus.CANCELLED:
-                        continue
+                task = self.active_tasks.get(task_id)
+                if not task or task.status == TaskStatus.CANCELLED:
+                    continue
 
-                    workers.append(
-                        asyncio.create_task(self._run_task(task, handler))
-                    )
-
-                if workers:
-                    await asyncio.gather(*workers, return_exceptions=True)
+                # 独立调度任务，由 workflow_semaphore 控制实际并发度
+                # 不等待任务完成，立即处理下一个队列项
+                asyncio.create_task(self._run_task(task, handler))
         finally:
             self._processor_running = False
+            # 退出前再次检查队列，防止在 sleep 期间入队的任务被遗漏
+            if not self.task_queue.empty():
+                await self._ensure_processor()
 
     async def _run_task(self, task: QueuedTask, handler: Callable):
         """执行单个任务（受信号量限制并发数）"""
         async with self.workflow_semaphore:
             task.status = TaskStatus.RUNNING
             task.started_at = time.time()
-            self._persist_task(task)
+            await self._persist_task(task)
             logger.info("task_started", task_id=task.task_id)
 
             try:
@@ -210,7 +237,7 @@ class ConcurrencyManager:
                 logger.error("task_failed", task_id=task.task_id, error=str(e))
             finally:
                 task.completed_at = time.time()
-                self._persist_task(task)
+                await self._persist_task(task)
                 task.completion_event.set()
 
     async def get_task_status(self, task_id: str) -> Optional[QueuedTask]:

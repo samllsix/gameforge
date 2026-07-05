@@ -1,7 +1,7 @@
-﻿"""GameForge - 扩展API路由模块
+"""GameForge - 扩展API路由模块
 
 只包含main.py中没有的独立路由：编译、导入、评测。
-避免与主路由重复定义。
+专注于 Godot 引擎。
 """
 
 import asyncio
@@ -17,21 +17,21 @@ from src.api.schemas import (
     EvalResponse,
 )
 from src.cli import load_config
-from src.engine.unity import UnityEditor
+from src.engine.godot import GodotEditor
 
 router = APIRouter()
 
 
 @router.post("/compile", response_model=CompileResponse)
 async def compile_project(request: CompileRequest):
-    """编译Unity项目（异步化阻塞操作）"""
+    """编译 Godot 项目（异步化阻塞操作）"""
     try:
         config = load_config()
-        unity_config = config.get("unity", {})
+        godot_config = config.get("godot", {})
         if request.project_path:
-            unity_config["unity_project_path"] = request.project_path
+            godot_config["project_path"] = request.project_path
 
-        editor = UnityEditor(unity_config)
+        editor = GodotEditor(godot_config)
         is_valid, msg = editor.validate()
         if not is_valid:
             raise HTTPException(status_code=400, detail=msg)
@@ -42,9 +42,8 @@ async def compile_project(request: CompileRequest):
 
         return CompileResponse(
             success=result.success,
-            errors=result.errors,
-            warnings=result.warnings,
-            compile_time=result.compile_time,
+            errors=[e.get("message", str(e)) for e in result.errors],
+            warnings=[w.get("message", str(w)) for w in result.warnings],
         )
     except HTTPException:
         raise
@@ -54,14 +53,14 @@ async def compile_project(request: CompileRequest):
 
 @router.post("/import", response_model=ImportResponse)
 async def import_files(request: ImportRequest):
-    """导入文件到Unity项目（异步化阻塞操作）"""
+    """导入文件到 Godot 项目（异步化阻塞操作）"""
     try:
         config = load_config()
-        unity_config = config.get("unity", {})
+        godot_config = config.get("godot", {})
         if request.project_path:
-            unity_config["unity_project_path"] = request.project_path
+            godot_config["project_path"] = request.project_path
 
-        editor = UnityEditor(unity_config)
+        editor = GodotEditor(godot_config)
         is_valid, msg = editor.validate()
         if not is_valid:
             raise HTTPException(status_code=400, detail=msg)
@@ -73,10 +72,10 @@ async def import_files(request: ImportRequest):
         )
 
         return ImportResponse(
-            success=result.success,
-            imported_files=result.imported_files,
-            failed_files=result.failed_files,
-            message=result.message,
+            success=result.get("status") == "success",
+            imported_files=result.get("imported", []),
+            failed_files=result.get("errors", []),
+            message="导入完成",
         )
     except HTTPException:
         raise

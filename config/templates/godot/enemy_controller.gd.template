@@ -1,0 +1,106 @@
+## {{CLASS_NAME}} — 敌人控制器
+## 由 GameForge AI 自动生成
+extends CharacterBody2D
+
+## 移动速度
+@export var speed: float = 150.0
+## 追踪范围
+@export var detection_range: float = 200.0
+## 攻击范围
+@export var attack_range: float = 50.0
+## 攻击伤害
+@export var damage: int = 1
+## 巡逻范围
+@export var patrol_distance: float = 200.0
+
+## 获取重力值
+var _gravity: float = ProjectSettings.get_setting("physics/2d/default_gravity")
+
+## 当前状态
+enum State { PATROL, CHASE, ATTACK, IDLE }
+var current_state: State = State.PATROL
+## 玩家引用
+var player: Node2D = null
+## 巡逻起始位置
+var _patrol_start: Vector2
+## 巡逻方向
+var _patrol_direction: int = 1
+
+@onready var animated_sprite: AnimatedSprite2D = $AnimatedSprite2D
+@onready var detection_area: Area2D = $DetectionArea
+
+
+func _ready() -> void:
+	_patrol_start = global_position
+	if detection_area:
+		detection_area.body_entered.connect(_on_body_entered)
+		detection_area.body_exited.connect(_on_body_exited)
+
+
+func _physics_process(delta: float) -> void:
+	# 应用重力
+	if not is_on_floor():
+		velocity.y += _gravity * delta
+
+	match current_state:
+		State.PATROL:
+			_patrol(delta)
+		State.CHASE:
+			_chase(delta)
+		State.ATTACK:
+			_attack(delta)
+		State.IDLE:
+			velocity.x = move_toward(velocity.x, 0, speed)
+
+	move_and_slide()
+
+
+## 巡逻行为
+func _patrol(_delta: float) -> void:
+	var distance_from_start = global_position.x - _patrol_start.x
+	if abs(distance_from_start) >= patrol_distance:
+		_patrol_direction *= -1
+
+	velocity.x = speed * _patrol_direction
+	if animated_sprite:
+		animated_sprite.flip_h = _patrol_direction < 0
+
+
+## 追踪行为
+func _chase(_delta: float) -> void:
+	if not player:
+		current_state = State.PATROL
+		return
+
+	var direction = (player.global_position - global_position).normalized()
+	velocity.x = direction.x * speed * 1.5
+	if animated_sprite:
+		animated_sprite.flip_h = direction.x < 0
+
+	# 检查是否在攻击范围内
+	if global_position.distance_to(player.global_position) <= attack_range:
+		current_state = State.ATTACK
+
+
+## 攻击行为
+func _attack(_delta: float) -> void:
+	if not player:
+		current_state = State.PATROL
+		return
+
+	if global_position.distance_to(player.global_position) > attack_range:
+		current_state = State.CHASE
+
+
+## 检测到玩家
+func _on_body_entered(body: Node2D) -> void:
+	if body.is_in_group("player"):
+		player = body
+		current_state = State.CHASE
+
+
+## 玩家离开检测范围
+func _on_body_exited(body: Node2D) -> void:
+	if body == player:
+		player = null
+		current_state = State.PATROL

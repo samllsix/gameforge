@@ -1,9 +1,9 @@
 """GameForge - 统一验证入口
 
-整合三个验证器，提供统一调用接口，避免重复检查。
-检查顺序：语法 → Unity兼容性 → 一致性，每层只检查上一层未覆盖的项。
+整合验证器，提供统一调用接口，避免重复检查。
+检查顺序：GDScript语法 → Godot兼容性 → 一致性，每层只检查上一层未覆盖的项。
 
-注意：所有检查都考虑 Unity 编译环境兼容性。
+专注于 Godot GDScript 代码验证。
 """
 
 from typing import Any, Dict, List
@@ -62,21 +62,12 @@ def validate_all(
         result.warnings.append({"check": "input", "message": "无代码文件"})
         return result
 
-    # ========== 第1层：C# 语法检查 ==========
-    cs_files = {p: c for p, c in code_files.items() if p.endswith(".cs")}
+    # ========== 第1层：GDScript 语法检查 ==========
+    gd_files = {p: c for p, c in code_files.items() if p.endswith(".gd")}
     syntax_errors = set()  # 用于去重
 
-    for path, content in cs_files.items():
+    for path, content in gd_files.items():
         # 括号平衡
-        if content.count("{") != content.count("}"):
-            err_key = f"{path}:bracket"
-            if err_key not in syntax_errors:
-                syntax_errors.add(err_key)
-                result.errors.append({
-                    "check": "syntax",
-                    "message": f"大括号不匹配: {path}",
-                    "file": path,
-                })
         if content.count("(") != content.count(")"):
             err_key = f"{path}:paren"
             if err_key not in syntax_errors:
@@ -86,59 +77,50 @@ def validate_all(
                     "message": f"小括号不匹配: {path}",
                     "file": path,
                 })
-
-        # using 缺失检查（Unity 必需）
-        if "using UnityEngine" not in content and "MonoBehaviour" in content:
-            err_key = f"{path}:using_unity"
+        if content.count("[") != content.count("]"):
+            err_key = f"{path}:bracket"
             if err_key not in syntax_errors:
                 syntax_errors.add(err_key)
                 result.errors.append({
-                    "check": "unity_compatibility",
-                    "message": f"缺少 using UnityEngine: {path}",
+                    "check": "syntax",
+                    "message": f"方括号不匹配: {path}",
                     "file": path,
                 })
 
-        # 类名与文件名一致性
-        from src.core.tools import extract_public_class_name
-        class_name = extract_public_class_name(content)
-        if class_name:
-            file_name = path.rsplit("/", 1)[-1].replace(".cs", "")
-            if class_name != file_name:
-                result.warnings.append({
-                    "check": "naming",
-                    "message": f"类名 {class_name} 与文件名 {file_name} 不一致: {path}",
-                    "file": path,
-                })
+        # 缩进一致性检查
+        has_tab = False
+        has_space = False
+        for line in content.split("\n"):
+            if line.startswith("\t"):
+                has_tab = True
+            elif line.startswith("    "):
+                has_space = True
 
-        # Unity 生命周期方法拼写检查
-        wrong_lifecycles = {
-            "OnAwake": "Awake",
-            "OnStart": "Start",
-            "OnUpdate": "Update",
-            "OnFixedUpdate": "FixedUpdate",
-            "OnLateUpdate": "LateUpdate",
-        }
-        for wrong, correct in wrong_lifecycles.items():
-            if f"void {wrong}()" in content or f"void {wrong} ()" in content:
+        if has_tab and has_space:
+            err_key = f"{path}:indent"
+            if err_key not in syntax_errors:
+                syntax_errors.add(err_key)
                 result.errors.append({
-                    "check": "unity_lifecycle",
-                    "message": f"Unity生命周期方法拼写错误: {wrong} → {correct}: {path}",
+                    "check": "syntax",
+                    "message": f"缩进不一致：混用 Tab 和空格: {path}",
                     "file": path,
                 })
 
-        # FindObjectOfType 滥用警告
-        find_count = content.count("FindObjectOfType")
-        if find_count > 2:
-            result.warnings.append({
-                "check": "performance",
-                "message": f"FindObjectOfType 调用 {find_count} 次，建议缓存引用: {path}",
-                "file": path,
-            })
+        # func 定义检查
+        for i, line in enumerate(content.split("\n")):
+            stripped = line.strip()
+            if stripped.startswith("func ") and ":" not in stripped:
+                result.errors.append({
+                    "check": "syntax",
+                    "message": f"第{i+1}行: func 定义缺少冒号: {path}",
+                    "file": path,
+                    "line": i + 1,
+                })
 
-    # ========== 第2层：Unity 兼容性检查（仅检查第1层未覆盖的） ==========
+    # ========== 第2层：Godot 兼容性检查 ==========
     try:
-        from src.utils.unity_compatibility_validator import validate_unity_compatibility
-        compat = validate_unity_compatibility(code_files, scene_desc, gdm)
+        from src.utils.godot_compatibility_validator import validate_godot_compatibility
+        compat = validate_godot_compatibility(code_files)
         existing_messages = {e.get("message", "") for e in result.errors}
         for err in compat.errors:
             if err.get("message", "") not in existing_messages:
@@ -146,9 +128,8 @@ def validate_all(
         for warn in compat.warnings:
             if warn.get("message", "") not in {w.get("message", "") for w in result.warnings}:
                 result.warnings.append(warn)
-        result.suggestions.extend(compat.suggestions)
     except Exception as e:
-        logger.warning("unity_compat_check_failed", error=str(e))
+        logger.warning("godot_compat_check_failed", error=str(e))
 
     # ========== 第3层：代码与场景一致性（仅检查有场景时） ==========
     if scene_desc:

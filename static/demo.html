@@ -3,314 +3,134 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GameForge Demo — Canvas Preview</title>
+    <title>GameForge Demo</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            background: #0a0e17;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            font-family: 'Inter', -apple-system, sans-serif;
-            color: #e8edf5;
-            overflow: hidden;
-        }
-        #header { text-align: center; margin-bottom: 12px; }
-        #header h1 {
-            font-size: 20px; font-weight: 800;
-            background: linear-gradient(135deg, #6c8cff, #a78bfa, #f472b6);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        }
-        #header p { font-size: 12px; color: #7b8ba8; margin-top: 4px; }
-        canvas {
-            border: 1px solid rgba(56, 72, 110, 0.4);
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-        }
-        #hud { display: flex; gap: 24px; margin-top: 12px; font-size: 14px; font-weight: 600; }
-        .hud-item { display: flex; align-items: center; gap: 6px; }
-        .hud-dot { width: 10px; height: 10px; border-radius: 50%; }
-        #controls { margin-top: 16px; font-size: 11px; color: #7b8ba8; text-align: center; }
-        kbd {
-            background: rgba(108,140,255,0.12); border: 1px solid rgba(108,140,255,0.25);
-            border-radius: 4px; padding: 1px 6px;
-            font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8aabff;
-        }
-        #legend { margin-top: 12px; display: flex; gap: 16px; font-size: 11px; color: #7b8ba8; }
-        .legend-item { display: flex; align-items: center; gap: 4px; }
-        .legend-shape { width: 12px; height: 12px; border-radius: 3px; }
+        body { background: #0a0e17; display: flex; flex-direction: column; align-items: center; height: 100vh; font-family: 'Inter', sans-serif; color: #e8edf5; overflow: hidden; }
+        #bar { display: flex; align-items: center; gap: 16px; padding: 10px 20px; width: 100%; background: rgba(15,22,41,0.95); border-bottom: 1px solid rgba(56,72,110,0.3); }
+        #bar h1 { font-size: 16px; font-weight: 800; background: linear-gradient(135deg,#6c8cff,#a78bfa,#f472b6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        #bar .info { font-size: 12px; color: #7b8ba8; }
+        #bar .stats { margin-left: auto; display: flex; gap: 16px; font-size: 13px; font-weight: 600; }
+        .stat { display: flex; align-items: center; gap: 4px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; }
+        canvas { flex: 1; width: 100%; }
+        #footer { padding: 8px; text-align: center; font-size: 11px; color: #7b8ba8; background: rgba(15,22,41,0.95); width: 100%; }
+        kbd { background: rgba(108,140,255,0.12); border: 1px solid rgba(108,140,255,0.25); border-radius: 3px; padding: 0 4px; font-family: monospace; font-size: 11px; color: #8aabff; }
     </style>
 </head>
 <body>
-    <div id="header">
+    <div id="bar">
         <h1>🎮 GameForge Demo</h1>
-        <p id="subtitle">Canvas Preview — 彩色几何体渲染</p>
+        <span class="info" id="sceneName">Loading...</span>
+        <div class="stats">
+            <span class="stat"><span class="dot" style="background:#6c8cff"></span> Score: <b id="score">0</b></span>
+            <span class="stat"><span class="dot" style="background:#f87171"></span> Lives: <b id="lives">3</b></span>
+            <span class="stat" id="statusText"><span class="dot" style="background:#34d399"></span> Running</span>
+        </div>
     </div>
-    <canvas id="game" width="800" height="500"></canvas>
-    <div id="hud">
-        <div class="hud-item"><div class="hud-dot" style="background:#6c8cff"></div> 分数: <span id="score">0</span></div>
-        <div class="hud-item"><div class="hud-dot" style="background:#f87171"></div> 生命: <span id="lives">3</span></div>
-        <div class="hud-item"><div class="hud-dot" style="background:#34d399"></div> <span id="status">运行中</span></div>
+    <canvas id="c"></canvas>
+    <div id="footer">
+        <kbd>A</kbd><kbd>D</kbd> Move &nbsp;|&nbsp; <kbd>Space</kbd> Jump &nbsp;|&nbsp; <kbd>R</kbd> Reset
     </div>
-    <div id="controls">
-        <kbd>A</kbd> <kbd>D</kbd> 或 <kbd>←</kbd> <kbd>→</kbd> 移动 &nbsp;|&nbsp;
-        <kbd>Space</kbd> 跳跃 &nbsp;|&nbsp;
-        <kbd>R</kbd> 重置
-    </div>
-    <div id="legend"></div>
-
 <script>
-// ═══════════════════════════════════════════════════
-//  GameForge Canvas Engine — 通用 scene_description 渲染
-// ═══════════════════════════════════════════════════
-
-const canvas = document.getElementById('game');
+const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-const W = canvas.width, H = canvas.height;
 
-// ── 加载场景数据 ──
-// 优先从 sessionStorage 读取（前端生成后跳转），否则用默认平台场景
-const DEFAULT_SCENE = {"scene_name":"GameScene","new_scene":true,"camera":{"position":[0,1,-10],"orthographic":true,"orthographic_size":6,"background_color":[0.4,0.7,1.0,1.0]},"lighting":{"type":"directional","intensity":1.0,"rotation":[50,-30,0]},"game_objects":[
-    {"name":"Player","type":"Capsule","position":[0,1,0],"tag":"Player","color":[0.42,0.55,1.0,1],"scale":[0.8,1.0,0.8],"components":[{"type":"Rigidbody2D","properties":{"gravityScale":"2"}},{"type":"BoxCollider2D","properties":{"size":"[0.8,0.9]"}},{"type":"PlayerController","properties":{"moveSpeed":"5","jumpForce":"10"}}]},
-    {"name":"Ground","type":"Cube","position":[0,-2,0],"is_static":true,"color":[0.20,0.83,0.60,1],"scale":[14,0.5,1],"components":[{"type":"BoxCollider2D","properties":{"size":"[14,1]"}}]},
-    {"name":"Platform1","type":"Cube","position":[-3,0,0],"is_static":true,"color":[0.30,0.69,0.49,1],"scale":[3,0.5,1],"components":[{"type":"BoxCollider2D","properties":{"size":"[3,0.5]"}}]},
-    {"name":"Platform2","type":"Cube","position":[3,1,0],"is_static":true,"color":[0.30,0.69,0.49,1],"scale":[3,0.5,1],"components":[{"type":"BoxCollider2D","properties":{"size":"[3,0.5]"}}]},
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight - 80;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const W = () => canvas.width;
+const H = () => canvas.height;
+
+// Load scene
+const DEFAULT = {"scene_name":"GameScene","camera":{"position":[0,1,-10],"orthographic":true,"orthographic_size":6,"background_color":[0.4,0.7,1,1]},"game_objects":[
+    {"name":"Player","type":"Capsule","position":[0,1,0],"tag":"Player","color":[0.42,0.55,1,1],"scale":[0.8,1,0.8],"components":[{"type":"Rigidbody2D","properties":{"gravityScale":"2"}},{"type":"BoxCollider2D","properties":{"size":"[0.8,0.9]"}},{"type":"PlayerController","properties":{"moveSpeed":"5","jumpForce":"10"}}]},
+    {"name":"Ground","type":"Cube","position":[0,-2,0],"is_static":true,"color":[0.2,0.83,0.6,1],"scale":[14,0.5,1],"components":[{"type":"BoxCollider2D","properties":{"size":"[14,1]"}}]},
+    {"name":"Plat1","type":"Cube","position":[-3,0,0],"is_static":true,"color":[0.3,0.69,0.49,1],"scale":[3,0.5,1],"components":[{"type":"BoxCollider2D","properties":{"size":"[3,0.5]"}}]},
+    {"name":"Plat2","type":"Cube","position":[3,1,0],"is_static":true,"color":[0.3,0.69,0.49,1],"scale":[3,0.5,1],"components":[{"type":"BoxCollider2D","properties":{"size":"[3,0.5]"}}]},
     {"name":"Coin1","type":"Sphere","position":[-3,1,0],"color":[0.98,0.75,0.14,1],"scale":[0.5,0.5,0.5],"components":[{"type":"BoxCollider2D","properties":{"size":"[0.5,0.5]","isTrigger":"true"}}]},
     {"name":"Coin2","type":"Sphere","position":[3,2,0],"color":[0.98,0.75,0.14,1],"scale":[0.5,0.5,0.5],"components":[{"type":"BoxCollider2D","properties":{"size":"[0.5,0.5]","isTrigger":"true"}}]},
     {"name":"Enemy1","type":"Cube","position":[2,-1,0],"color":[0.97,0.44,0.44,1],"scale":[0.8,0.8,0.8],"components":[{"type":"Rigidbody2D","properties":{"gravityScale":"3"}},{"type":"BoxCollider2D","properties":{"size":"[0.8,0.8]"}},{"type":"EnemyController","properties":{"moveSpeed":"2","patrolDistance":"3"}}]}
 ]};
 
 let scene;
-try {
-    const stored = sessionStorage.getItem('gameforge_demo_scene');
-    scene = stored ? JSON.parse(stored) : DEFAULT_SCENE;
-} catch(e) { scene = DEFAULT_SCENE; }
+try { const s = sessionStorage.getItem('gameforge_demo_scene'); scene = s ? JSON.parse(s) : DEFAULT; } catch(e) { scene = DEFAULT; }
+document.getElementById('sceneName').textContent = scene.scene_name || 'GameScene';
 
-// 更新标题
-if (scene.scene_name) {
-    document.getElementById('subtitle').textContent = scene.scene_name + ' — Canvas Preview';
-}
-
-// ── 相机 ──
-const cam = scene.camera || { position: [0,0,-10], orthographic_size: 6, background_color: [0.4,0.7,1.0,1] };
+const cam = scene.camera || {position:[0,0,-10],orthographic_size:6,background_color:[0.4,0.7,1,1]};
 const camSize = cam.orthographic_size || 6;
-const unitScale = H / (camSize * 2);
-const camX = cam.position[0] || 0, camY = cam.position[1] || 0;
+const camX = cam.position[0]||0, camY = cam.position[1]||1;
 
-function worldToScreen(wx, wy) {
-    return [W/2 + (wx - camX) * unitScale, H/2 - (wy - camY) * unitScale];
-}
-function rgba(c) { return `rgba(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)},${c[3]||1})`; }
+function unit() { return H() / (camSize * 2); }
+function w2s(wx,wy) { const u=unit(); return [W()/2+(wx-camX)*u, H()/2-(wy-camY)*u]; }
+function rgba(c) { return `rgba(${(c[0]*255)|0},${(c[1]*255)|0},${(c[2]*255)|0},${c[3]||1})`; }
 
-// ── 解析场景对象 ──
-const objects = scene.game_objects || [];
-const playerObj = objects.find(o => o.tag === 'Player') || objects.find(o => o.name === 'Player');
-const enemyObjs = objects.filter(o => o.components?.some(c => c.type === 'EnemyController'));
-const coinObjs = objects.filter(o => o.components?.some(c => c.properties?.isTrigger === 'true') && o.type === 'Sphere');
-const staticObjs = objects.filter(o => o.is_static);
+const objs = scene.game_objects||[];
+const pObj = objs.find(o=>o.tag==='Player')||objs.find(o=>o.name==='Player');
+const eObjs = objs.filter(o=>o.components?.some(c=>c.type==='EnemyController'));
+const cObjs = objs.filter(o=>o.components?.some(c=>c.properties?.isTrigger==='true')&&o.type==='Sphere');
+const sObjs = objs.filter(o=>o.is_static);
 
-// ── 物理 ──
-const GRAVITY = -20, dt = 1/60;
+const GRAVITY=-20, dt=1/60;
+const ps = pObj?.scale||[0.8,1,0.8];
+let P = {x:pObj?.position[0]||0, y:pObj?.position[1]||1, vx:0, vy:0, w:ps[0], h:ps[1], ground:false, score:0, lives:3, dead:false, t:0};
+let enemies = eObjs.map(o=>({x:o.position[0],y:o.position[1],vx:1.5,w:(o.scale||[0.8])[0],h:(o.scale||[0.8,0.8])[1],ox:o.position[0],range:3,color:o.color||[0.97,0.44,0.44,1]}));
+let coins = cObjs.map((o,i)=>({x:o.position[0],y:o.position[1],r:(o.scale||[0.5])[0]/2,got:false,ph:i*Math.PI,color:o.color||[0.98,0.75,0.14,1]}));
+const statics = sObjs.map(o=>{const bc=o.components?.find(c=>c.type==='BoxCollider2D');if(!bc)return null;const sz=(bc.properties.size||'[1,1]').replace(/[\[\]]/g,'',).split(',');return{x:o.position[0],y:o.position[1],w:parseFloat(sz[0]),h:parseFloat(sz[1]),color:o.color};}).filter(Boolean);
 
-// 玩家
-const pScale = playerObj?.scale || [0.8, 1, 0.8];
-const pColor = playerObj?.color || [0.42, 0.55, 1, 1];
-let player = {
-    x: playerObj?.position[0] || 0, y: playerObj?.position[1] || 1,
-    vx: 0, vy: 0, w: pScale[0], h: pScale[1],
-    grounded: false, score: 0, lives: 3, dead: false, respawnTimer: 0
-};
+const keys={};
+document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space')e.preventDefault();});
+document.addEventListener('keyup',e=>keys[e.code]=false);
 
-// 敌人
-let enemies = enemyObjs.map(o => ({
-    x: o.position[0], y: o.position[1], vx: 1.5,
-    w: (o.scale||[0.8])[0], h: (o.scale||[0.8,0.8])[1],
-    originX: o.position[0], range: 3,
-    color: o.color || [0.97,0.44,0.44,1]
-}));
+function hit(ax,ay,aw,ah,bx,by,bw,bh){return ax-aw/2<bx+bw/2&&ax+aw/2>bx-bw/2&&ay-ah/2<by+bh/2&&ay+ah/2>by-bh/2;}
 
-// 金币
-let coins = coinObjs.map((o, i) => ({
-    x: o.position[0], y: o.position[1], r: (o.scale||[0.5])[0]/2,
-    collected: false, bobPhase: i * Math.PI,
-    color: o.color || [0.98,0.75,0.14,1]
-}));
-
-// 静态碰撞体
-const statics = [];
-for (const obj of staticObjs) {
-    const bc = obj.components?.find(c => c.type === 'BoxCollider2D');
-    if (!bc) continue;
-    const sizeStr = (bc.properties.size || '[1,1]').replace(/[\[\]]/g, '').split(',');
-    statics.push({ x: obj.position[0], y: obj.position[1], w: parseFloat(sizeStr[0]), h: parseFloat(sizeStr[1]), color: obj.color });
+function collide(px,py,pw,ph){
+    for(const s of statics){
+        if(!hit(px,py,pw,ph,s.x,s.y,s.w,s.h))continue;
+        const ox=(pw/2+s.w/2)-Math.abs(px-s.x), oy=(ph/2+s.h/2)-Math.abs(py-s.y);
+        if(ox<oy){px+=(px<s.x?-ox:ox);P.vx=0;}else{py+=(py<s.y?-oy:oy);P.vy=0;P.ground=true;}
+    }
+    return[px,py];
 }
 
-// 图例
-const legendEl = document.getElementById('legend');
-const legendItems = [
-    { color: rgba(pColor), label: '玩家' },
-    { color: 'rgba(248,113,113,1)', label: '敌人' },
-    { color: 'rgba(52,211,153,1)', label: '地面' },
-    { color: 'rgba(251,191,36,1)', label: '金币' },
-];
-for (const item of legendItems) {
-    const div = document.createElement('div');
-    div.className = 'legend-item';
-    div.innerHTML = `<div class="legend-shape" style="background:${item.color}"></div>${item.label}`;
-    legendEl.appendChild(div);
+function reset(){P.x=pObj?.position[0]||0;P.y=pObj?.position[1]||1;P.vx=0;P.vy=0;P.score=0;P.lives=3;P.dead=false;enemies.forEach(e=>{e.x=e.ox;e.vx=1.5;});coins.forEach(c=>c.got=false);document.getElementById('score').textContent='0';document.getElementById('lives').textContent='3';document.getElementById('statusText').innerHTML='<span class="dot" style="background:#34d399"></span> Running';}
+
+function update(){
+    if(P.dead){P.t-=dt;if(P.t<=0){P.dead=false;P.x=pObj?.position[0]||0;P.y=pObj?.position[1]||1;P.vx=0;P.vy=0;}return;}
+    P.vx=0;if(keys.ArrowLeft||keys.KeyA)P.vx=-5;if(keys.ArrowRight||keys.KeyD)P.vx=5;
+    if((keys.Space||keys.ArrowUp||keys.KeyW)&&P.ground){P.vy=10;P.ground=false;}
+    P.vy+=GRAVITY*dt*2;P.x+=P.vx*dt;P.y+=P.vy*dt;P.ground=false;
+    [P.x,P.y]=collide(P.x,P.y,P.w,P.h);
+    for(const e of enemies){e.x+=e.vx*dt;if(Math.abs(e.x-e.ox)>e.range)e.vx*=-1;
+        if(hit(P.x,P.y,P.w,P.h,e.x,e.y,e.w,e.h)){P.lives--;document.getElementById('lives').textContent=P.lives;if(P.lives<=0){P.dead=true;document.getElementById('statusText').innerHTML='<span class="dot" style="background:#f87171"></span> Game Over';}else{P.dead=true;P.t=1;}}}
+    for(const c of coins){if(c.got)continue;c.ph+=dt*3;const dy=Math.sin(c.ph)*0.1;if(Math.hypot(P.x-c.x,P.y-(c.y+dy))<c.r+0.4){c.got=true;P.score+=10;document.getElementById('score').textContent=P.score;}}
+    if(keys.KeyR)reset();
 }
 
-// ── 输入 ──
-const keys = {};
-document.addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'Space') e.preventDefault(); });
-document.addEventListener('keyup', e => { keys[e.code] = false; });
+function draw(){
+    const w=W(),h=H();
+    ctx.fillStyle=rgba(cam.background_color||[0.4,0.7,1,1]);ctx.fillRect(0,0,w,h);
+    ctx.strokeStyle='rgba(255,255,255,0.03)';ctx.lineWidth=1;
+    const u=unit();
+    for(let x=w/2-camX*u%x;x<w;x+=u){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+    for(let y=h/2+camY*u%y;y<h;y+=u){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
 
-function aabb(ax,ay,aw,ah,bx,by,bw,bh) {
-    return ax-aw/2<bx+bw/2 && ax+aw/2>bx-bw/2 && ay-ah/2<by+bh/2 && ay+ah/2>by-bh/2;
+    for(const s of statics){const[sx,sy]=w2s(s.x,s.y);const sw=s.w*u,sh=s.h*u;ctx.fillStyle=rgba(s.color||[0.2,0.83,0.6,1]);ctx.fillRect(sx-sw/2,sy-sh/2,sw,sh);ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=1;ctx.strokeRect(sx-sw/2,sy-sh/2,sw,sh);}
+
+    for(const c of coins){if(c.got)continue;const dy=Math.sin(c.ph)*0.1;const[sx,sy]=w2s(c.x,c.y+dy);const sr=c.r*u;const g=ctx.createRadialGradient(sx,sy,0,sx,sy,sr*2);g.addColorStop(0,'rgba(251,191,36,0.3)');g.addColorStop(1,'rgba(251,191,36,0)');ctx.fillStyle=g;ctx.fillRect(sx-sr*2,sy-sr*2,sr*4,sr*4);ctx.fillStyle=rgba(c.color);ctx.beginPath();ctx.arc(sx,sy,sr,0,Math.PI*2);ctx.fill();ctx.fillStyle='rgba(255,255,255,0.4)';ctx.beginPath();ctx.arc(sx-sr*0.3,sy-sr*0.3,sr*0.3,0,Math.PI*2);ctx.fill();}
+
+    for(const e of enemies){const[sx,sy]=w2s(e.x,e.y);const sw=e.w*u,sh=e.h*u;ctx.fillStyle=rgba(e.color);ctx.fillRect(sx-sw/2,sy-sh/2,sw,sh);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx-sw*0.15,sy-sh*0.1,sw*0.12,0,Math.PI*2);ctx.arc(sx+sw*0.15,sy-sh*0.1,sw*0.12,0,Math.PI*2);ctx.fill();ctx.fillStyle='#000';ctx.beginPath();ctx.arc(sx-sw*0.12,sy-sh*0.08,sw*0.06,0,Math.PI*2);ctx.arc(sx+sw*0.18,sy-sh*0.08,sw*0.06,0,Math.PI*2);ctx.fill();}
+
+    if(!P.dead||Math.sin(Date.now()/50)>0){const[sx,sy]=w2s(P.x,P.y);const sw=P.w*u,sh=P.h*u;ctx.fillStyle='rgba(0,0,0,0.15)';ctx.beginPath();ctx.ellipse(sx,sy+sh/2+3,sw*0.4,4,0,0,Math.PI*2);ctx.fill();ctx.fillStyle=rgba(pObj?.color||[0.42,0.55,1,1]);const r=sw/2;ctx.beginPath();ctx.arc(sx,sy-sh/2+r,r,Math.PI,0);ctx.lineTo(sx+r,sy+sh/2-r);ctx.arc(sx,sy+sh/2-r,r,0,Math.PI);ctx.closePath();ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx-sw*0.15,sy-sh*0.1,sw*0.1,0,Math.PI*2);ctx.arc(sx+sw*0.15,sy-sh*0.1,sw*0.1,0,Math.PI*2);ctx.fill();ctx.fillStyle='#1a1a2e';ctx.beginPath();ctx.arc(sx-sw*0.12,sy-sh*0.08,sw*0.05,0,Math.PI*2);ctx.arc(sx+sw*0.18,sy-sh*0.08,sw*0.05,0,Math.PI*2);ctx.fill();}
+
+    if(Math.abs(P.vx)>0&&P.ground){for(let i=0;i<3;i++){const px=P.x-P.vx*0.02+(Math.random()-0.5)*0.3;const[spx,spy]=w2s(px,P.y-0.4);ctx.fillStyle=`rgba(108,140,255,${0.3*Math.random()})`;ctx.beginPath();ctx.arc(spx,spy,2+Math.random()*3,0,Math.PI*2);ctx.fill();}}
 }
 
-function resolveCollision(px,py,pw,ph) {
-    for (const s of statics) {
-        if (!aabb(px,py,pw,ph,s.x,s.y,s.w,s.h)) continue;
-        const ox = (pw/2+s.w/2) - Math.abs(px-s.x);
-        const oy = (ph/2+s.h/2) - Math.abs(py-s.y);
-        if (ox < oy) { px += (px<s.x ? -ox : ox); player.vx = 0; }
-        else { py += (py<s.y ? -oy : oy); player.vy = 0; player.grounded = true; }
-    }
-    return [px, py];
-}
-
-function resetGame() {
-    player.x = playerObj?.position[0]||0; player.y = playerObj?.position[1]||1;
-    player.vx=0; player.vy=0; player.score=0; player.lives=3; player.dead=false;
-    enemies.forEach(e => { e.x = e.originX; e.vx = 1.5; });
-    coins.forEach(c => { c.collected = false; });
-    document.getElementById('score').textContent = '0';
-    document.getElementById('lives').textContent = '3';
-    document.getElementById('status').textContent = '运行中';
-}
-
-// ── 更新 ──
-function update() {
-    if (player.dead) {
-        player.respawnTimer -= dt;
-        if (player.respawnTimer <= 0) {
-            player.dead = false;
-            player.x = playerObj?.position[0]||0; player.y = playerObj?.position[1]||1;
-            player.vx=0; player.vy=0;
-        }
-        return;
-    }
-
-    const moveSpeed = 5, jumpForce = 10;
-    player.vx = 0;
-    if (keys['ArrowLeft']||keys['KeyA']) player.vx = -moveSpeed;
-    if (keys['ArrowRight']||keys['KeyD']) player.vx = moveSpeed;
-    if ((keys['Space']||keys['ArrowUp']||keys['KeyW']) && player.grounded) { player.vy = jumpForce; player.grounded = false; }
-
-    player.vy += GRAVITY * dt * 2;
-    player.x += player.vx * dt;
-    player.y += player.vy * dt;
-    player.grounded = false;
-    [player.x, player.y] = resolveCollision(player.x, player.y, player.w, player.h);
-
-    // 敌人巡逻
-    for (const e of enemies) {
-        e.x += e.vx * dt;
-        if (Math.abs(e.x - e.originX) > e.range) e.vx *= -1;
-        if (aabb(player.x,player.y,player.w,player.h, e.x,e.y,e.w,e.h)) {
-            player.lives--;
-            document.getElementById('lives').textContent = player.lives;
-            if (player.lives <= 0) { player.dead = true; document.getElementById('status').textContent = '💀 游戏结束 (R 重置)'; }
-            else { player.dead = true; player.respawnTimer = 1; }
-        }
-    }
-
-    // 金币
-    for (const c of coins) {
-        if (c.collected) continue;
-        c.bobPhase += dt * 3;
-        const dy = Math.sin(c.bobPhase)*0.1;
-        const dx = player.x - c.x, ddy = player.y - (c.y+dy);
-        if (Math.sqrt(dx*dx+ddy*ddy) < c.r + 0.4) {
-            c.collected = true; player.score += 10;
-            document.getElementById('score').textContent = player.score;
-        }
-    }
-
-    if (keys['KeyR']) resetGame();
-}
-
-// ── 绘制 ──
-function draw() {
-    ctx.fillStyle = rgba(cam.background_color || [0.4,0.7,1,1]);
-    ctx.fillRect(0, 0, W, H);
-
-    // 网格
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.lineWidth = 1;
-    for (let x=0; x<W; x+=unitScale) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-    for (let y=0; y<H; y+=unitScale) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
-
-    // 静态物体
-    for (const s of statics) {
-        const [sx,sy] = worldToScreen(s.x, s.y);
-        const sw = s.w*unitScale, sh = s.h*unitScale;
-        ctx.fillStyle = rgba(s.color||[0.2,0.83,0.6,1]);
-        ctx.beginPath(); ctx.roundRect(sx-sw/2, sy-sh/2, sw, sh, 4); ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1; ctx.stroke();
-    }
-
-    // 金币
-    for (const c of coins) {
-        if (c.collected) continue;
-        const dy = Math.sin(c.bobPhase)*0.1;
-        const [sx,sy] = worldToScreen(c.x, c.y+dy);
-        const sr = c.r * unitScale;
-        const grad = ctx.createRadialGradient(sx,sy,0,sx,sy,sr*2);
-        grad.addColorStop(0,'rgba(251,191,36,0.3)'); grad.addColorStop(1,'rgba(251,191,36,0)');
-        ctx.fillStyle = grad; ctx.fillRect(sx-sr*2,sy-sr*2,sr*4,sr*4);
-        ctx.fillStyle = rgba(c.color); ctx.beginPath(); ctx.arc(sx,sy,sr,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(sx-sr*0.3,sy-sr*0.3,sr*0.3,0,Math.PI*2); ctx.fill();
-    }
-
-    // 敌人
-    for (const e of enemies) {
-        const [sx,sy] = worldToScreen(e.x, e.y);
-        const sw = e.w*unitScale, sh = e.h*unitScale;
-        ctx.fillStyle = rgba(e.color); ctx.beginPath(); ctx.roundRect(sx-sw/2,sy-sh/2,sw,sh,6); ctx.fill();
-        ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(sx-sw*0.15,sy-sh*0.1,sw*0.12,0,Math.PI*2); ctx.arc(sx+sw*0.15,sy-sh*0.1,sw*0.12,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(sx-sw*0.12,sy-sh*0.08,sw*0.06,0,Math.PI*2); ctx.arc(sx+sw*0.18,sy-sh*0.08,sw*0.06,0,Math.PI*2); ctx.fill();
-        ctx.strokeStyle='#000'; ctx.lineWidth=2;
-        ctx.beginPath(); ctx.moveTo(sx-sw*0.25,sy-sh*0.25); ctx.lineTo(sx-sw*0.05,sy-sh*0.18); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(sx+sw*0.25,sy-sh*0.25); ctx.lineTo(sx+sw*0.05,sy-sh*0.18); ctx.stroke();
-    }
-
-    // 玩家
-    if (!player.dead || Math.sin(Date.now()/50)>0) {
-        const [sx,sy] = worldToScreen(player.x, player.y);
-        const sw = player.w*unitScale, sh = player.h*unitScale;
-        ctx.fillStyle='rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(sx,sy+sh/2+3,sw*0.4,4,0,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle = rgba(pColor);
-        const r = sw/2;
-        ctx.beginPath(); ctx.arc(sx,sy-sh/2+r,r,Math.PI,0); ctx.lineTo(sx+r,sy+sh/2-r); ctx.arc(sx,sy+sh/2-r,r,0,Math.PI); ctx.closePath(); ctx.fill();
-        ctx.fillStyle='rgba(138,171,255,0.5)'; ctx.beginPath(); ctx.arc(sx-r*0.3,sy-sh*0.2,r*0.4,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(sx-sw*0.15,sy-sh*0.1,sw*0.1,0,Math.PI*2); ctx.arc(sx+sw*0.15,sy-sh*0.1,sw*0.1,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle='#1a1a2e'; ctx.beginPath(); ctx.arc(sx-sw*0.12,sy-sh*0.08,sw*0.05,0,Math.PI*2); ctx.arc(sx+sw*0.18,sy-sh*0.08,sw*0.05,0,Math.PI*2); ctx.fill();
-    }
-
-    // 粒子拖尾
-    if (Math.abs(player.vx)>0 && player.grounded) {
-        for (let i=0;i<3;i++) {
-            const px = player.x - player.vx*0.02 + (Math.random()-0.5)*0.3;
-            const [spx,spy] = worldToScreen(px, player.y-0.4);
-            ctx.fillStyle=`rgba(108,140,255,${0.3*Math.random()})`; ctx.beginPath(); ctx.arc(spx,spy,2+Math.random()*3,0,Math.PI*2); ctx.fill();
-        }
-    }
-}
-
-function loop() { update(); draw(); requestAnimationFrame(loop); }
+function loop(){update();draw();requestAnimationFrame(loop);}
 loop();
 </script>
 </body>

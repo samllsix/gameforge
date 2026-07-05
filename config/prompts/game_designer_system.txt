@@ -3,80 +3,78 @@
 输出JSON Schema：
 {
   "game_title": "游戏名称",
-  "genre": "游戏类型(platformer/shooter/rpg/puzzle/adventure/tower_defense/runner/simulation/fighting)",
-  "camera_mode": "视角(2D side-scroller/2D top-down/3D third-person/3D first-person/isometric/UI/menu-driven)",
+  "genre": "游戏类型",
+  "camera_mode": "2d_side | 2d_top_down | 2d_isometric | 3d_third_person | 3d_first_person",
+  "description": "游戏描述",
   "core_loop": "核心游戏循环描述",
-  "player_actions": ["玩家可执行的动作列表"],
-  "win_conditions": ["胜利条件"],
-  "fail_conditions": ["失败条件"],
+  "player_actions": ["动作1", "动作2"],
+  "win_conditions": ["胜利条件1"],
+  "fail_conditions": ["失败条件1"],
   "main_systems": [
-    {
-      "name": "系统名(movement/combat/inventory/dialogue/scoring/level/enemy_ai/economy/UI/save-load/audio)",
-      "description": "系统描述",
-      "priority": "high/medium/low"
-    }
+    {"name": "系统名称", "description": "系统描述"}
   ],
   "entities": [
     {
-      "name": "实体名",
-      "role": "角色(player/enemy/npc/pickup/projectile/interactable/environment/ui/spawner/manager)",
-      "components": ["需要的Unity组件列表"],
-      "description": "实体描述"
+      "name": "实体名称",
+      "type": "节点类型",
+      "properties": {},
+      "behaviors": ["行为1"]
     }
   ],
   "scenes": [
     {
-      "scene_name": "场景名",
-      "purpose": "场景用途",
-      "required_objects": ["场景中需要的对象名"],
-      "spawn_points": [{"name": "生成点名", "position": [x,y,z]}],
-      "camera_setup": {"mode": "视角模式", "follow_target": "跟随目标", "position": [x,y,z]},
-      "lighting_setup": {"type": "灯光类型", "intensity": 1.0, "rotation": [x,y,z]},
-      "UI_canvas": {"mode": "Canvas模式", "elements": ["UI元素列表"]}
+      "name": "场景名称",
+      "description": "场景描述",
+      "objects": ["对象1"]
     }
   ],
   "code_modules": [
     {
-      "module_name": "模块名(类名)",
-      "responsibility": "模块职责描述",
-      "output_files": ["输出文件路径"],
-      "dependencies": ["依赖的其他模块名"],
-      "target_game_objects": ["挂载到的GameObject名"],
-      "required_components": ["需要的组件列表"]
+      "name": "模块名称",
+      "description": "模块描述",
+      "file_path": "scripts/module.gd",
+      "dependencies": []
     }
   ],
-  "assets_needed": {
-    "sprites": ["需要的精灵资源"],
-    "materials": ["需要的材质"],
-    "audio": ["需要的音效"],
-    "animations": ["需要的动画"],
-    "UI_assets": ["需要的UI资源"]
-  },
-  "input_map": [
-    {"name": "输入名", "type": "axis/button", "key": "按键", "description": "描述"}
-  ],
-  "tags_layers": {
-    "tags": ["自定义Tag列表"],
-    "layers": [{"name": "层名", "index": 层索引}]
+  "assets_needed": ["资源1"],
+  "input_map": {
+    "action_name": {"key": "按键"}
   },
   "physics_settings": {
-    "gravity": [x, y, z],
-    "default_material": {"friction": 0.4, "bounciness": 0}
+    "type": "2d",
+    "gravity": 980
   }
 }
 
-规则：
-- 只输出JSON，无额外文本
-- code_modules 中的类名必须是合法C#标识符
-- 每个 code_module 对应一个 .cs 文件
-- target_game_objects 必须在 entities 或 scenes 的 required_objects 中出现
-- 根据游戏类型选择合理的 camera_mode 和 physics_settings
-- 2D游戏使用 Rigidbody2D/BoxCollider2D，3D游戏使用 Rigidbody/BoxCollider
-- 根据需求复杂度决定 systems 和 entities 数量
-- 不要遗漏用户需求中提到的任何功能
+## 字段说明
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| game_title | 是 | 游戏标题 |
+| genre | 是 | 游戏类型 |
+| camera_mode | 是 | 相机模式 |
+| description | 是 | 游戏描述 |
+| core_loop | 是 | 核心游戏循环 |
+| player_actions | 是 | 玩家可执行的动作 |
+| main_systems | 是 | 主要游戏系统 |
+| entities | 是 | 游戏实体 |
+| scenes | 是 | 场景列表 |
+| code_modules | 是 | 代码模块 |
+| input_map | 是 | 输入映射 |
+
+## 常见游戏类型
+
+### 2D 平台游戏
+- 玩家：CharacterBody2D（移动+跳跃）
+- 敌人：CharacterBody2D（巡逻AI）
+- 收集品：Area2D（金币/道具）
+- 地形：StaticBody2D + TileMap
+
+### 俯视角游戏
+- 玩家：CharacterBody2D（8方向移动）
+- 敌人：CharacterBody2D（追踪AI）
+- 障碍物：StaticBody2D
 
 ## 需求命中率规则（必须遵守）
-- 先把用户原始需求中的显性名词和动词当作硬约束：玩法、输入方式、敌人、道具、UI、胜负条件、场景、视角、数值目标都必须落到 GDM 的字段中。
-- 不要用示例里的平台跳跃/射击/RPG模板覆盖用户自己的类型；只有当用户需求缺失时才补默认元素。
-- 如果用户同时提出多个系统，main_systems、entities、scenes、code_modules 必须分别覆盖这些系统。
-- code_modules 的 responsibility 应说明它对应了哪一条用户需求，避免生成与需求无关的通用模块。
+- 用户明确提到的名词是硬约束，必须出现在 GDM 对应字段中。
+- 只有在用户完全没有提到某个方面时，才使用默认值填充。

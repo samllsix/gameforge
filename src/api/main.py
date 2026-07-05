@@ -293,33 +293,7 @@ async def generate_code(request: GenerateRequest):
                 },
             }
         )
-        # 持久化生成历史
-        try:
-            from src.db.session import get_db, _engine
-            from src.db.models import GenerationHistory
-            if _engine is not None:
-                db = get_db()
-                try:
-                    history = GenerationHistory(
-                        task_id=payload.get("task_id", ""),
-                        engine=payload.get("engine", "unity"),
-                        requirements=payload.get("requirements", ""),
-                        files_generated=result.get("code_generated", {}),
-                        task_count=len(result.get("task_plan", [])),
-                        fix_count=len(result.get("fix_history", [])),
-                        task_plan=result.get("task_plan"),
-                        review_result=result.get("review_result"),
-                        compile_result=result.get("compile_result"),
-                        fix_history=result.get("fix_history"),
-                        scene_description=result.get("scene_description"),
-                        status="completed" if not result.get("error_log") else "failed",
-                    )
-                    db.add(history)
-                    db.commit()
-                finally:
-                    db.close()
-        except Exception as e:
-            logger.warning("history_save_failed", error=str(e))
+        await _save_generation_history(payload, result)
         return result
 
     payload = {
@@ -342,12 +316,57 @@ async def generate_code(request: GenerateRequest):
     )
 
 
+async def _save_generation_history(payload: Dict[str, Any], result: Dict[str, Any]):
+    """持久化生成历史到数据库（异步，不阻塞事件循环）
+
+    供 generate_code / generate_code_sync / generate_code_stream 共用。
+    """
+    try:
+        from src.db.session import _engine, run_db_sync
+        from src.db.models import GenerationHistory
+        if _engine is None:
+            return
+
+        def _do_save():
+            from src.db.session import get_db
+            db = get_db()
+            try:
+                history = GenerationHistory(
+                    task_id=payload.get("task_id", ""),
+                    engine=payload.get("engine", "unity"),
+                    requirements=payload.get("requirements", ""),
+                    files_generated=result.get("code_generated", {}),
+                    task_count=len(result.get("task_plan", [])),
+                    fix_count=len(result.get("fix_history", [])),
+                    task_plan=result.get("task_plan"),
+                    review_result=result.get("review_result"),
+                    compile_result=result.get("compile_result"),
+                    fix_history=result.get("fix_history"),
+                    scene_description=result.get("scene_description"),
+                    status="completed" if not result.get("error_log") else "failed",
+                )
+                db.add(history)
+                db.commit()
+            finally:
+                db.close()
+
+        await run_db_sync(_do_save)
+    except Exception as e:
+        logger.warning("history_save_failed", error=str(e))
+
+
 @app.post("/api/v1/generate_sync", response_model=GenerateResponse)
 async def generate_code_sync(request: GenerateRequest):
     """生成游戏代码（同步等待模式）"""
     try:
         async with _sync_generation_semaphore:
             workflow = create_workflow(config)
+            payload = {
+                "task_id": "",  # 同步模式无队列任务ID
+                "engine": request.engine,
+                "project_name": request.project_name,
+                "requirements": request.requirements,
+            }
             result = await workflow.run(
                 {
                     "project_context": {
@@ -357,6 +376,8 @@ async def generate_code_sync(request: GenerateRequest):
                     },
                 }
             )
+        # 持久化生成历史（与异步模式保持一致）
+        await _save_generation_history(payload, result)
         return GenerateResponse(
             success=True,
             code_generated=result.get("code_generated", {}),
@@ -424,7 +445,7 @@ async def plan_tasks(request: TaskPlanRequest):
         state = {
             "project_context": {
                 "requirements": request.requirements,
-                "engine": "unity",
+                "engine": "godot",
             },
             "task_plan": [],
             "code_generated": {},
@@ -529,56 +550,67 @@ async def security_test():
 @app.get("/api/v1/tasks")
 async def list_tasks(limit: int = 50, status: Optional[str] = None):
     """获取任务历史列表"""
-    from src.db.session import get_db
+    from src.db.session import get_db, run_db_sync
     from src.db.models import TaskRecord
 
-    db = get_db()
-    try:
-        query = db.query(TaskRecord).order_by(TaskRecord.created_at.desc())
-        if status:
-            query = query.filter(TaskRecord.status == status)
-        records = query.limit(min(limit, 200)).all()
-        return {
-            "tasks": [r.to_dict() for r in records],
-            "total": len(records),
-        }
-    finally:
-        db.close()
+    def _query():
+        db = get_db()
+        try:
+            query = db.query(TaskRecord).order_by(TaskRecord.created_at.desc())
+            if status:
+                query = query.filter(TaskRecord.status == status)
+            records = query.limit(min(limit, 200)).all()
+            return [r.to_dict() for r in records]
+        finally:
+            db.close()
+
+    records = await run_db_sync(_query)
+    return {
+        "tasks": records,
+        "total": len(records),
+    }
 
 
 @app.get("/api/v1/history")
 async def get_generation_history(limit: int = 20):
     """获取代码生成历史"""
-    from src.db.session import get_db
+    from src.db.session import get_db, run_db_sync
     from src.db.models import GenerationHistory
 
-    db = get_db()
-    try:
-        records = db.query(GenerationHistory).order_by(
-            GenerationHistory.created_at.desc()
-        ).limit(min(limit, 100)).all()
-        return {
-            "history": [r.to_dict() for r in records],
-            "total": len(records),
-        }
-    finally:
-        db.close()
+    def _query():
+        db = get_db()
+        try:
+            records = db.query(GenerationHistory).order_by(
+                GenerationHistory.created_at.desc()
+            ).limit(min(limit, 100)).all()
+            return [r.to_dict() for r in records]
+        finally:
+            db.close()
+
+    records = await run_db_sync(_query)
+    return {
+        "history": records,
+        "total": len(records),
+    }
 
 
 @app.get("/api/v1/history/{history_id}")
 async def get_generation_history_detail(history_id: int):
     """获取单条生成历史详情（按ID）"""
-    from src.db.session import get_db
+    from src.db.session import get_db, run_db_sync
     from src.db.models import GenerationHistory
 
-    db = get_db()
-    try:
-        record = db.query(GenerationHistory).filter(GenerationHistory.id == history_id).first()
-        if not record:
-            raise HTTPException(status_code=404, detail=f"历史记录 {history_id} 不存在")
-        return record.to_detail_dict()
-    finally:
-        db.close()
+    def _query():
+        db = get_db()
+        try:
+            return db.query(GenerationHistory).filter(GenerationHistory.id == history_id).first()
+        finally:
+            db.close()
+
+    record = await run_db_sync(_query)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"历史记录 {history_id} 不存在")
+    return record.to_detail_dict()
 
 
 @app.get("/api/v1/history/by_task/{task_id}")
@@ -587,19 +619,22 @@ async def get_history_by_task_id(task_id: str):
     if not task_id.isalnum() or len(task_id) > 20:
         raise HTTPException(status_code=400, detail="无效的任务ID格式")
 
-    from src.db.session import get_db
+    from src.db.session import get_db, run_db_sync
     from src.db.models import GenerationHistory
 
-    db = get_db()
-    try:
-        record = db.query(GenerationHistory).filter(
-            GenerationHistory.task_id == task_id
-        ).order_by(GenerationHistory.created_at.desc()).first()
-        if not record:
-            raise HTTPException(status_code=404, detail=f"任务 {task_id} 的历史记录不存在")
-        return record.to_detail_dict()
-    finally:
-        db.close()
+    def _query():
+        db = get_db()
+        try:
+            return db.query(GenerationHistory).filter(
+                GenerationHistory.task_id == task_id
+            ).order_by(GenerationHistory.created_at.desc()).first()
+        finally:
+            db.close()
+
+    record = await run_db_sync(_query)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"任务 {task_id} 的历史记录不存在")
+    return record.to_detail_dict()
 
 
 def start_server(host: Optional[str] = None, port: Optional[int] = None, workers: int = 1):

@@ -163,7 +163,7 @@ class InputValidator:
     @classmethod
     def validate_engine(cls, engine: str) -> Dict[str, Any]:
         """验证引擎类型"""
-        allowed = {"unity", "unreal"}
+        allowed = {"godot"}
         if engine.lower() not in allowed:
             return {"valid": False, "error": f"不支持的引擎: {engine}，支持: {', '.join(allowed)}"}
         return {"valid": True, "error": None}
@@ -264,6 +264,11 @@ class AuditLogger:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
 
+    def _write_audit_log(self, log_file: Path, entry: Dict):
+        """同步写入审计日志（在线程池中调用）"""
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
     async def log_event(
         self,
         event_type: str,
@@ -287,8 +292,8 @@ class AuditLogger:
         async with self._lock:
             log_file = self.log_dir / f"audit_{datetime.now().strftime('%Y%m%d')}.jsonl"
             try:
-                with open(log_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                # 将同步文件 I/O 放到线程池执行，避免阻塞事件循环
+                await asyncio.to_thread(self._write_audit_log, log_file, entry)
             except Exception:
                 pass
 

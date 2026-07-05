@@ -1,0 +1,38 @@
+## {{CLASS_NAME}} — 3D 角色控制器
+## 由 GameForge AI 自动生成
+extends CharacterBody3D
+
+## 移动速度
+@export var speed: float = 5.0
+## 跳跃速度
+@export var jump_velocity: float = 4.5
+## 重力倍率
+@export var gravity_scale: float = 1.0
+
+## 获取重力值
+var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
+
+
+func _physics_process(delta: float) -> void:
+	# 应用重力
+	if not is_on_floor():
+		velocity.y -= _gravity * gravity_scale * delta
+
+	# 处理跳跃
+	if Input.is_action_just_pressed("jump") and is_on_floor():
+		velocity.y = jump_velocity
+
+	# 获取输入方向
+	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	var direction := (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+
+	# 应用移动
+	if direction:
+		velocity.x = direction.x * speed
+		velocity.z = direction.z * speed
+	else:
+		velocity.x = move_toward(velocity.x, 0, speed)
+		velocity.z = move_toward(velocity.z, 0, speed)
+
+	# 移动
+	move_and_slide()

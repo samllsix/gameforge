@@ -1,0 +1,57 @@
+## {{CLASS_NAME}} — 2D 角色控制器
+## 由 GameForge AI 自动生成
+extends CharacterBody2D
+
+## 移动速度
+@export var speed: float = 300.0
+## 跳跃速度
+@export var jump_velocity: float = -400.0
+## 重力倍率
+@export var gravity_scale: float = 1.0
+
+## 获取重力值（兼容 Godot 3.x/4.x）
+var _gravity: float = ProjectSettings.get_setting("physics/2d/default_gravity")
+
+## 动画引用
+@onready var animated_sprite: AnimatedSprite2D = $AnimatedSprite2D
+@onready var collision_shape: CollisionShape2D = $CollisionShape2D
+
+
+func _physics_process(delta: float) -> void:
+	# 应用重力
+	if not is_on_floor():
+		velocity.y += _gravity * gravity_scale * delta
+
+	# 处理跳跃
+	if Input.is_action_just_pressed("jump") and is_on_floor():
+		velocity.y = jump_velocity
+
+	# 获取输入方向
+	var direction := Input.get_axis("move_left", "move_right")
+
+	# 应用移动
+	if direction:
+		velocity.x = direction * speed
+		# 翻转精灵
+		if animated_sprite:
+			animated_sprite.flip_h = direction < 0
+	else:
+		velocity.x = move_toward(velocity.x, 0, speed)
+
+	# 移动
+	move_and_slide()
+
+	# 更新动画
+	_update_animation()
+
+
+func _update_animation() -> void:
+	if not animated_sprite:
+		return
+
+	if not is_on_floor():
+		animated_sprite.play("jump")
+	elif velocity.x != 0:
+		animated_sprite.play("run")
+	else:
+		animated_sprite.play("idle")

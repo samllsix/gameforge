@@ -84,24 +84,24 @@ class CodeQualityMetrics:
         errors = []
 
         for path, content in code_files.items():
-            if not path.endswith(".cs"):
+            if not path.endswith(".gd"):
                 continue
 
-            is_valid, file_errors = CodeQualityMetrics._validate_csharp_basics(content)
+            is_valid, file_errors = CodeQualityMetrics._validate_gdscript_basics(content)
             if is_valid:
                 success_count += 1
             else:
                 errors.extend([f"{path}: {e}" for e in file_errors])
 
-        cs_files = {p: c for p, c in code_files.items() if p.endswith(".cs")}
-        if not cs_files:
-            return MetricResult(name="compile_success", value=100, details={"reason": "no_cs_files"})
+        gd_files = {p: c for p, c in code_files.items() if p.endswith(".gd")}
+        if not gd_files:
+            return MetricResult(name="compile_success", value=100, details={"reason": "no_gd_files"})
 
-        rate = (success_count / len(cs_files)) * 100
+        rate = (success_count / len(gd_files)) * 100
         return MetricResult(
             name="compile_success",
             value=rate,
-            details={"success": success_count, "total": len(cs_files), "errors": errors[:10]}
+            details={"success": success_count, "total": len(gd_files), "errors": errors[:10]}
         )
 
     @staticmethod
@@ -122,7 +122,7 @@ class CodeQualityMetrics:
         if total_lines == 0:
             return MetricResult(name="code_quality", value=0)
 
-        comment_lines = sum(1 for l in lines if l.strip().startswith("//") or l.strip().startswith("///"))
+        comment_lines = sum(1 for l in lines if l.strip().startswith("#"))
         comment_ratio = comment_lines / total_lines
         if comment_ratio < 0.05:
             score -= 10
@@ -160,7 +160,7 @@ class CodeQualityMetrics:
 
     @staticmethod
     def naming_convention_score(content: str) -> MetricResult:
-        """检查命名规范
+        """检查 GDScript 命名规范
 
         Args:
             content: 代码内容
@@ -171,23 +171,29 @@ class CodeQualityMetrics:
         score = 100.0
         violations = []
 
-        private_fields = re.findall(r'(?:private|protected)\s+\w+\s+(_?\w+)', content)
-        for field_name in private_fields:
-            if not field_name.startswith("_"):
-                violations.append(f"私有字段 '{field_name}' 应以_开头")
+        # GDScript: 函数名应使用 snake_case
+        func_names = re.findall(r'^func\s+(\w+)', content, re.MULTILINE)
+        for func_name in func_names:
+            # 私有函数以 _ 开头是允许的
+            check_name = func_name.lstrip("_")
+            if check_name and check_name != check_name.lower():
+                violations.append(f"函数 '{func_name}' 应使用 snake_case")
                 score -= 2
 
-        public_methods = re.findall(r'public\s+(?:static\s+)?(?:async\s+)?\w+\s+(\w+)\s*\(', content)
-        for method_name in public_methods:
-            if method_name[0].isupper() is False:
-                violations.append(f"公共方法 '{method_name}' 应使用PascalCase")
-                score -= 2
-
-        local_vars = re.findall(r'(?:var|int|float|string|bool)\s+(\w+)', content)
-        for var_name in local_vars:
-            if var_name[0].isupper() and not var_name.isupper():
-                violations.append(f"局部变量 '{var_name}' 应使用camelCase")
+        # GDScript: 变量名应使用 snake_case
+        var_names = re.findall(r'^(?:@export\s+)?var\s+(\w+)', content, re.MULTILINE)
+        for var_name in var_names:
+            check_name = var_name.lstrip("_")
+            if check_name and check_name != check_name.lower():
+                violations.append(f"变量 '{var_name}' 应使用 snake_case")
                 score -= 1
+
+        # GDScript: 常量应使用 UPPER_SNAKE_CASE
+        const_names = re.findall(r'^const\s+(\w+)', content, re.MULTILINE)
+        for const_name in const_names:
+            if const_name != const_name.upper():
+                violations.append(f"常量 '{const_name}' 应使用 UPPER_SNAKE_CASE")
+                score -= 2
 
         return MetricResult(
             name="naming_convention",
@@ -196,14 +202,25 @@ class CodeQualityMetrics:
         )
 
     @staticmethod
-    def _validate_csharp_basics(content: str):
-        """基础C#语法验证"""
+    def _validate_gdscript_basics(content: str):
+        """基础 GDScript 语法验证"""
         errors = []
 
-        if content.count("{") != content.count("}"):
-            errors.append("大括号不匹配")
         if content.count("(") != content.count(")"):
             errors.append("小括号不匹配")
+        if content.count("[") != content.count("]"):
+            errors.append("方括号不匹配")
+
+        # 检查缩进一致性
+        has_tab = False
+        has_space = False
+        for line in content.split("\n"):
+            if line.startswith("\t"):
+                has_tab = True
+            elif line.startswith("    "):
+                has_space = True
+        if has_tab and has_space:
+            errors.append("缩进不一致：混用 Tab 和空格")
 
         return len(errors) == 0, errors
 

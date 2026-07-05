@@ -11,7 +11,7 @@ from datetime import datetime
 class GenerateRequest(BaseModel):
     """代码生成请求"""
     requirements: str = Field(..., description="游戏需求描述")
-    engine: str = Field(default="unity", description="游戏引擎 (unity/unreal)")
+    engine: str = Field(default="godot", description="游戏引擎 (godot)")
     project_name: str = Field(default="GameForge Project", description="项目名称")
 
     @field_validator("requirements")
@@ -84,7 +84,7 @@ class TaskStatusResponse(BaseModel):
 
 class CompileRequest(BaseModel):
     """编译请求"""
-    project_path: Optional[str] = Field(default=None, description="Unity项目路径")
+    project_path: Optional[str] = Field(default=None, description="Godot项目路径")
 
 
 class CompileResponse(BaseModel):
@@ -98,7 +98,7 @@ class CompileResponse(BaseModel):
 class ImportRequest(BaseModel):
     """文件导入请求"""
     files: Dict[str, str] = Field(..., description="文件字典 {路径: 内容}")
-    project_path: Optional[str] = Field(default=None, description="Unity项目路径")
+    project_path: Optional[str] = Field(default=None, description="Godot项目路径")
 
 
 class ImportResponse(BaseModel):

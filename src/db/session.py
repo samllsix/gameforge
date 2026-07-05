@@ -4,6 +4,11 @@
 支持PostgreSQL（生产）和SQLite（开发模式默认）。
 """
 
+import asyncio
+import functools
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Callable, TypeVar
+
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -75,3 +80,45 @@ def reset_db():
         _engine.dispose()
     _engine = None
     _SessionLocal = None
+
+
+# ---------------------------------------------------------------------------
+# 异步上下文下的同步 DB 操作包装
+# ---------------------------------------------------------------------------
+# 原问题：在 async 函数中直接调用 db.commit() / db.query() 等同步阻塞 I/O
+# 会阻塞整个 asyncio 事件循环，导致高并发下其他协程被饿死。
+# 解决方案：用 asyncio.to_thread 把同步 DB 操作放到默认线程池执行。
+
+T = TypeVar("T")
+
+
+async def run_db_sync(func: Callable[[], T]) -> T:
+    """在线程池中执行同步 DB 操作，避免阻塞事件循环
+
+    用法：
+        async def endpoint():
+            def _do():
+                db = get_db()
+                try:
+                    return db.query(TaskRecord).all()
+                finally:
+                    db.close()
+            records = await run_db_sync(_do)
+    """
+    return await asyncio.to_thread(func)
+
+
+@asynccontextmanager
+async def get_db_async() -> AsyncIterator[Session]:
+    """异步获取 DB 会话，自动在线程池中关闭
+
+    用法：
+        async def endpoint():
+            async with get_db_async() as db:
+                records = await run_db_sync(lambda: db.query(TaskRecord).all())
+    """
+    db = await asyncio.to_thread(get_db)
+    try:
+        yield db
+    finally:
+        await asyncio.to_thread(db.close)

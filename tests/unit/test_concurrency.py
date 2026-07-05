@@ -163,6 +163,51 @@ class TestConcurrencyManager:
         # 优先级1应该先执行
         assert execution_order[0] == 1
 
+    @pytest.mark.asyncio
+    async def test_task_not_lost_when_submitted_during_processing(self, manager):
+        """回归测试：在处理器运行期间提交的新任务不应丢失
+
+        原竞态条件：_process_queue 在 gather 等待期间，新任务入队后，
+        若处理器在 _processor_running=False 前退出，新任务会永久滞留队列。
+        """
+        completed_ids = []
+        # 用事件阻塞第一个任务，让处理器处于"运行中但等待 gather"的状态
+        first_task_started = asyncio.Event()
+        release_first = asyncio.Event()
+
+        async def blocking_handler(payload):
+            first_task_started.set()
+            await release_first.wait()
+            completed_ids.append(payload["id"])
+            return {"id": payload["id"]}
+
+        async def quick_handler(payload):
+            completed_ids.append(payload["id"])
+            return {"id": payload["id"]}
+
+        # 1. 提交第一个阻塞任务，让处理器进入"运行中"状态
+        tid1 = await manager.submit_task(
+            "block", {"id": 1}, blocking_handler
+        )
+        await first_task_started.wait()  # 确保第一个任务已开始
+
+        # 2. 在处理器运行期间提交新任务（此时 _processor_running=True）
+        tid2 = await manager.submit_task(
+            "quick", {"id": 2}, quick_handler
+        )
+
+        # 3. 释放第一个任务，让处理器有机会退出
+        release_first.set()
+
+        # 4. 等待两个任务都完成
+        task1 = await manager.wait_for_task(tid1, timeout=5)
+        task2 = await manager.wait_for_task(tid2, timeout=5)
+
+        # 关键断言：第二个任务不应丢失
+        assert task2 is not None, "在处理器运行期间提交的任务丢失了"
+        assert task2.status == TaskStatus.COMPLETED
+        assert 2 in completed_ids
+
 
 class TestConcurrencyIntegration:
     """并发集成测试"""

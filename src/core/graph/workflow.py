@@ -1,7 +1,7 @@
 """GameForge - Multi-Agent工作流定义模块
 
 基于LangGraph的状态图定义，管理游戏开发全流程。
-使用 .ainvoke() / .astream_events() 驱动执行，LangGraph 负责状态合并（reducer）和路由。
+专注于 Godot 引擎，生成 GDScript 代码和 .tscn 场景文件。
 """
 
 import time as _time
@@ -35,6 +35,7 @@ class GameDevWorkflow:
     - 图驱动执行：.ainvoke() 替代手写循环，LangGraph 管理状态合并和路由
     - Reducer 自动合并：error_log/warnings 追加，code_generated 字典合并
     - 统一运行模式：run() 和 run_with_streaming() 共享同一张图
+    - 专注于 Godot 引擎
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -119,7 +120,7 @@ class GameDevWorkflow:
             return {"error_log": [f"Planner failed: {e}"], "current_phase": "error"}
 
     async def _code_generator_node(self, state: GameDevState) -> Dict[str, Any]:
-        """代码生成节点 — 根据当前任务生成代码
+        """代码生成节点 — 根据当前任务生成 GDScript 代码
 
         只返回新生成的代码，code_generated 的合并由 reducer 自动完成。
         """
@@ -136,7 +137,7 @@ class GameDevWorkflow:
             if not current_task:
                 return {"current_phase": "no_task"}
 
-            # 注入记忆上下文 — 让 CodeGenerator 参考历史经验
+            # 注入记忆上下文
             memory_context = self.memory.get_context_for_agent(
                 "code_generator", query=current_task.get("name", "")
             )
@@ -145,7 +146,7 @@ class GameDevWorkflow:
 
             code_artifacts = await self.code_generator.generate(state, current_task)
 
-            # 标记任务完成（修改 task_plan 副本）
+            # 标记任务完成
             updated_plan = [dict(t) for t in task_plan]
             for task in updated_plan:
                 if task.get("id") == current_task_id:
@@ -155,7 +156,7 @@ class GameDevWorkflow:
             # 只返回新代码，reducer 自动合并到 code_generated
             new_code = {art["file_path"]: art["content"] for art in code_artifacts}
 
-            # 统一验证 — 语法 + Unity兼容性 + 沙箱安全，一次完成
+            # 统一验证 — GDScript 语法检查
             warnings = []
             try:
                 from src.utils.unified_validator import validate_all
@@ -168,18 +169,6 @@ class GameDevWorkflow:
             except Exception:
                 pass
 
-            # 沙箱安全检查
-            try:
-                from src.engine.sandbox import SandboxExecutor
-                sandbox = SandboxExecutor(self.config)
-                for path, content in new_code.items():
-                    if path.endswith(".cs"):
-                        is_safe, issues = sandbox.validate_code(content)
-                        if not is_safe:
-                            warnings.append(f"安全问题 {path}: {'; '.join(issues[:2])}")
-            except Exception as e:
-                logger.warning("sandbox_check_failed", error=str(e))
-
             return {
                 "code_generated": new_code,
                 "code_artifacts": code_artifacts,
@@ -191,7 +180,7 @@ class GameDevWorkflow:
             return {"error_log": [f"Code generator failed: {e}"], "current_phase": "error"}
 
     async def _code_reviewer_node(self, state: GameDevState) -> Dict[str, Any]:
-        """代码审查节点 — 审查生成的代码"""
+        """代码审查节点 — 审查生成的 GDScript 代码"""
         try:
             review_result = await self.code_reviewer.review(state)
             return {"current_phase": "code_reviewed", "review_result": review_result}
@@ -199,18 +188,17 @@ class GameDevWorkflow:
             return {"error_log": [f"Code reviewer failed: {e}"], "current_phase": "error"}
 
     async def _refactor_node(self, state: GameDevState) -> Dict[str, Any]:
-        """重构节点 — 分析代码质量并重构，重构后统一验证"""
+        """重构节点 — 分析代码质量并重构"""
         try:
             result = await self.refactor_agent.execute(state)
 
-            # 重构后统一验证 — 语法 + Unity兼容性，防止 LLM 重构破坏代码
+            # 重构后验证
             refactored_code = result.get("code_generated", {})
             if refactored_code:
                 try:
                     from src.utils.unified_validator import validate_all
                     validation = validate_all(refactored_code)
                     if validation.has_errors:
-                        # 重构引入了问题，回退到重构前的代码
                         original_code = state.get("code_generated", {})
                         result["code_generated"] = original_code
                         result.setdefault("warnings", []).append(
@@ -225,7 +213,7 @@ class GameDevWorkflow:
             return {"error_log": [f"Refactor failed: {e}"], "current_phase": "error"}
 
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
-        """测试生成节点 — 为代码生成测试用例"""
+        """测试生成节点 — 为 GDScript 代码生成 GUT 测试用例"""
         try:
             current_task_id = state.get("current_task_id")
             task_plan = state.get("task_plan", [])
@@ -246,13 +234,7 @@ class GameDevWorkflow:
             return {"error_log": [f"Test generator failed: {e}"], "current_phase": "error"}
 
     async def _orchestrator_node(self, state: GameDevState) -> Dict[str, Any]:
-        """编排节点 — 调度下一个任务
-
-        职责：
-        1. 检查错误状态 → 路由到 debugger
-        2. 选择下一个待执行任务
-        3. 判断工作流是否完成
-        """
+        """编排节点 — 调度下一个任务"""
         try:
             task_plan = state.get("task_plan", [])
             current_phase = state.get("current_phase", "")
@@ -282,7 +264,7 @@ class GameDevWorkflow:
             return {"error_log": [f"Orchestrator failed: {e}"], "current_phase": "error"}
 
     async def _debugger_node(self, state: GameDevState) -> Dict[str, Any]:
-        """调试节点 — 分析错误并生成修复"""
+        """调试节点 — 分析 GDScript 错误并生成修复"""
         try:
             error_log = state.get("error_log", [])
             fix_result = await self.debugger.analyze_and_fix(state, error_log)
@@ -326,7 +308,6 @@ class GameDevWorkflow:
         if task_type == TaskType.TEST.value:
             return "test_generator"
         elif task_type in self._NON_CODE_TASK_TYPES:
-            # 非代码任务直接标记完成，回到 orchestrator
             return END
         else:
             return "code_generator"
@@ -366,7 +347,7 @@ class GameDevWorkflow:
 
     async def _run_scene_generation(self, state: GameDevState, event_callback):
         """并行运行场景生成（与代码生成同时进行）"""
-        await event_callback("scene_start", {"message": "正在生成Unity场景..."})
+        await event_callback("scene_start", {"message": "正在生成 Godot 场景..."})
         try:
             result = await self.scene_generator.execute(state)
             status = result.get("scene_status", "error")
@@ -381,23 +362,18 @@ class GameDevWorkflow:
             scene_desc = result.get("scene_description")
             if scene_desc:
                 scene_json = json.dumps(scene_desc, indent=2, ensure_ascii=False)
-                state["code_generated"]["Assets/Scenes/scene_description.json"] = scene_json
+                state["code_generated"]["scenes/scene_description.json"] = scene_json
 
             if status == "built":
-                compile_status = result.get("compile_status", "unknown")
-                msg = "Unity场景已生成！请在Unity Editor中查看"
-                if compile_status == "error":
-                    msg = f"Unity场景已生成，但有编译错误（{len(result.get('compile_errors', []))}个）"
+                msg = "Godot 场景已生成！请在 Godot Editor 中查看"
                 await event_callback("scene_complete", {
                     "message": msg,
                     "scene_path": result.get("scene_path", ""),
-                    "object_count": result.get("object_count", 0),
-                    "compile_status": compile_status,
-                    "compile_errors": result.get("compile_errors", []),
+                    "object_count": len(scene_desc.get("game_objects", [])) if scene_desc else 0,
                 })
             elif status == "skipped":
                 await event_callback("scene_skipped", {
-                    "message": result.get("message", "场景描述已生成，Unity未构建"),
+                    "message": result.get("message", "场景描述已生成，Godot 未构建"),
                     "reason": result.get("scene_skip_reason", "unknown"),
                 })
             else:
@@ -409,27 +385,27 @@ class GameDevWorkflow:
             state["scene_error"] = str(e)
             await event_callback("scene_error", {"message": str(e)})
 
-    # ========== Unity编译闭环 ==========
+    # ========== Godot 编译闭环 ==========
 
-    async def _unity_compile_loop(self, state: GameDevState, event_callback, max_rounds: int = 3):
-        """Unity编译闭环：导入→编译→读错误→自动修复→重编译"""
-        from src.engine.unity.unity_http_client import UnityHTTPClient
+    async def _godot_compile_loop(self, state: GameDevState, event_callback, max_rounds: int = 3):
+        """Godot 编译闭环：导入 → 编译 → 读错误 → 自动修复 → 重编译"""
+        from src.engine.godot.godot_http_client import GodotHTTPClient
 
-        client = UnityHTTPClient()
+        client = GodotHTTPClient()
         if not await client.check_health():
             await event_callback("compile_result", {
                 "status": "skipped",
-                "message": "Unity Editor未启动，跳过编译闭环",
+                "message": "Godot Editor 未启动，跳过编译闭环",
             })
             return
 
         code_files = state.get("code_generated", {})
-        cs_files = {k: v for k, v in code_files.items() if k.endswith(".cs")}
-        if not cs_files:
+        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
+        if not gd_files:
             return
 
-        await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到Unity..."})
-        import_result = await client.import_files(cs_files)
+        await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
+        import_result = await client.import_files(gd_files)
         if import_result.get("status") == "error":
             await event_callback("compile_result", {
                 "status": "error",
@@ -449,7 +425,7 @@ class GameDevWorkflow:
             if not errors:
                 await event_callback("compile_result", {
                     "status": "success",
-                    "message": f"编译成功！共{len(cs_files)}个文件",
+                    "message": f"编译成功！共{len(gd_files)}个文件",
                     "round": round_num + 1,
                 })
                 return
@@ -472,8 +448,7 @@ class GameDevWorkflow:
                     line = err.get("line", "")
                     file = err.get("file", "")
                     msg = err.get("message", "")
-                    code = err.get("code", "")
-                    error_log.append(f"{file}({line}): error {code}: {msg}")
+                    error_log.append(f"{file}:{line}: error: {msg}")
                 else:
                     error_log.append(str(err))
 
@@ -482,36 +457,36 @@ class GameDevWorkflow:
             state.update(debug_result)
 
             updated_files = state.get("code_generated", {})
-            updated_cs = {k: v for k, v in updated_files.items() if k.endswith(".cs")}
-            if updated_cs != cs_files:
-                cs_files = updated_cs
-                await client.import_files(cs_files)
+            updated_gd = {k: v for k, v in updated_files.items() if k.endswith(".gd")}
+            if updated_gd != gd_files:
+                gd_files = updated_gd
+                await client.import_files(gd_files)
 
         await event_callback("compile_result", {
             "status": "partial",
             "message": f"经过{max_rounds}轮修复仍有编译错误，可能需要人工介入",
         })
 
-    async def _try_unity_pipeline(self, state: GameDevState, event_callback) -> None:
-        """Unity 一键构建：导入代码 → 编译 → 构建场景"""
-        from src.engine.unity.unity_http_client import UnityHTTPClient
+    async def _try_godot_pipeline(self, state: GameDevState, event_callback) -> None:
+        """Godot 一键构建：导入代码 → 编译 → 构建场景"""
+        from src.engine.godot.godot_http_client import GodotHTTPClient
 
-        client = UnityHTTPClient()
+        client = GodotHTTPClient()
         if not await client.check_health():
             await event_callback("scene_skipped", {
-                "reason": "unity_http_unavailable",
-                "message": "Unity Editor HTTP Server 未运行，跳过自动构建",
+                "reason": "godot_http_unavailable",
+                "message": "Godot Editor HTTP Server 未运行，跳过自动构建",
             })
             return
 
         code_files = state.get("code_generated", {})
-        cs_files = {k: v for k, v in code_files.items() if k.endswith(".cs")}
-        if not cs_files:
+        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
+        if not gd_files:
             return
 
         # 第一步：导入所有代码文件
-        await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Unity..."})
-        import_result = await client.import_files(cs_files)
+        await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
+        import_result = await client.import_files(gd_files)
         if import_result.get("status") == "error":
             await event_callback("compile_result", {
                 "status": "error",
@@ -530,22 +505,19 @@ class GameDevWorkflow:
                 "message": f"编译发现 {len(errors)} 个错误",
                 "errors": errors[:10],
             })
-            # 即使有错误也尝试构建场景（部分脚本可能正常）
 
         # 第三步：构建场景
         scene_desc = state.get("scene_description")
         if not scene_desc:
-            # 尝试从 code_generated 中读取
-            scene_json_str = code_files.get("Assets/Scenes/scene_description.json")
+            scene_json_str = code_files.get("scenes/scene_description.json")
             if scene_json_str:
-                import json as _json
                 try:
-                    scene_desc = _json.loads(scene_json_str)
+                    scene_desc = json.loads(scene_json_str)
                 except Exception:
                     pass
 
         if scene_desc:
-            await event_callback("scene_start", {"message": "正在构建 Unity 场景..."})
+            await event_callback("scene_start", {"message": "正在构建 Godot 场景..."})
             scene_result = await client.send_scene(scene_desc)
             if scene_result.get("status") == "success":
                 state["scene_status"] = "success"
@@ -565,14 +537,13 @@ class GameDevWorkflow:
         if not errors:
             await event_callback("compile_result", {
                 "status": "success",
-                "message": f"编译成功！共 {len(cs_files)} 个文件",
+                "message": f"编译成功！共 {len(gd_files)} 个文件",
             })
 
     # ========== 后处理（共享逻辑） ==========
 
     def _sanitize_scene_scripts(self, state: GameDevState) -> None:
         """清理场景描述中引用的不存在脚本"""
-        import re as _re
         scene_desc = state.get("scene_description")
         if not scene_desc:
             return
@@ -580,12 +551,14 @@ class GameDevWorkflow:
         code_generated = state.get("code_generated", {})
         generated_classes = set()
         for fpath, content in code_generated.items():
-            if fpath.endswith(".cs"):
-                m = _re.search(r'public\s+(?:partial\s+)?(?:class|struct|interface)\s+(\w+)', content)
+            if fpath.endswith(".gd"):
+                # 提取 class_name
+                import re
+                m = re.search(r'^class_name\s+(\w+)', content, re.MULTILINE)
                 if m:
                     generated_classes.add(m.group(1))
 
-        from src.core.tools import is_unity_builtin as _is_unity_builtin
+        from src.core.tools import is_godot_builtin
         removed_scripts = []
 
         def _clean_components(components):
@@ -594,7 +567,7 @@ class GameDevWorkflow:
                 comp_type = comp.get("type", "")
                 if not comp_type:
                     cleaned.append(comp)
-                elif _is_unity_builtin(comp_type) or comp_type in generated_classes:
+                elif is_godot_builtin(comp_type) or comp_type in generated_classes:
                     cleaned.append(comp)
                 else:
                     removed_scripts.append(comp_type)
@@ -614,79 +587,49 @@ class GameDevWorkflow:
             )
 
     def _add_project_artifacts(self, state: GameDevState) -> None:
-        """生成完整项目产物（README、元数据、Unity项目模板等）"""
+        """生成 Godot 项目产物"""
         code_generated = state.setdefault("code_generated", {})
 
         self._sanitize_scene_scripts(state)
 
         # README 和项目配置建议
         try:
-            from src.agents.code_generator import CodeGeneratorAgent
-            code_gen = CodeGeneratorAgent(self.config)
-            project_name = state.get("project_context", {}).get("project_name", "GameForge")
-            code_files = state.get("code_generated", {})
-            task_plan = state.get("task_plan", [])
-
-            if "Assets/README_Unity.md" not in code_generated:
-                readme = code_gen.generate_readme(project_name, task_plan, code_files)
-                code_generated["Assets/README_Unity.md"] = readme
-
-            if "Assets/ProjectSettings_Suggestions.md" not in code_generated:
-                settings = code_gen.generate_project_settings(code_files)
-                code_generated["Assets/ProjectSettings_Suggestions.md"] = settings
+            from src.engine.godot.project_generator import GodotProjectGenerator
+            generator = GodotProjectGenerator()
+            project_files = generator.generate_all(state)
+            for path, content in project_files.items():
+                if path not in code_generated:
+                    code_generated[path] = content
         except Exception as e:
-            state.setdefault("warnings", []).append(f"README/设置文档生成失败: {e}")
+            state.setdefault("warnings", []).append(f"Godot 项目模板生成失败: {e}")
 
         # scene_description.json
         scene_desc = state.get("scene_description")
         if scene_desc:
-            code_generated["Assets/Scenes/scene_description.json"] = json.dumps(scene_desc, indent=2, ensure_ascii=False)
+            code_generated["scenes/scene_description.json"] = json.dumps(scene_desc, indent=2, ensure_ascii=False)
 
         # GameDesignModel.json
-        if "Assets/GameDesignModel.json" not in code_generated:
+        if "data/GameDesignModel.json" not in code_generated:
             full_gdm = state.get("game_design_model") or {}
             full_gdm["_meta"] = {
                 "project_name": state.get("project_context", {}).get("project_name", "GameForge"),
-                "engine": state.get("project_context", {}).get("engine", "unity"),
+                "engine": "godot",
                 "task_count": len(state.get("task_plan", [])),
                 "scene_status": state.get("scene_status", "pending"),
                 "generated_at": __import__("datetime").datetime.now().isoformat(),
             }
-            code_generated["Assets/GameDesignModel.json"] = json.dumps(full_gdm, indent=2, ensure_ascii=False)
+            code_generated["data/GameDesignModel.json"] = json.dumps(full_gdm, indent=2, ensure_ascii=False)
 
         # CodeMetadata.json
-        if "Assets/CodeMetadata.json" not in code_generated:
+        if "data/CodeMetadata.json" not in code_generated:
             file_metadata = state.get("file_metadata", {})
             cm = {
                 "files": list(code_generated.keys()),
                 "file_metadata": file_metadata,
                 "total_files": len(code_generated),
-                "cs_files": len([f for f in code_generated if f.endswith(".cs")]),
+                "gd_files": len([f for f in code_generated if f.endswith(".gd")]),
             }
-            code_generated["Assets/CodeMetadata.json"] = json.dumps(cm, indent=2, ensure_ascii=False)
-
-        # ValidationReport.json
-        if "Assets/ValidationReport.json" not in code_generated:
-            validation_result = state.get("validation_result")
-            if validation_result:
-                code_generated["Assets/ValidationReport.json"] = json.dumps(validation_result, indent=2, ensure_ascii=False)
-
-        # Unity Editor HTTP Server 插件
-        if "Assets/Editor/GameForgeHttpServer.cs" not in code_generated:
-            template_path = Path(__file__).parent.parent.parent.parent / "config" / "templates" / "unity" / "GameForgeHttpServer.cs.template"
-            if template_path.exists():
-                plugin_content = template_path.read_text(encoding="utf-8")
-                code_generated["Assets/Editor/GameForgeHttpServer.cs"] = plugin_content
-
-        # Unity 项目模板
-        try:
-            from src.engine.unity.project_generator import UnityProjectGenerator
-            project_files = UnityProjectGenerator().generate_all(state)
-            for path, content in project_files.items():
-                if path not in code_generated:
-                    code_generated[path] = content
-        except Exception as e:
-            state.setdefault("warnings", []).append(f"Unity项目模板生成失败: {e}")
+            code_generated["data/CodeMetadata.json"] = json.dumps(cm, indent=2, ensure_ascii=False)
 
     def _make_initial_state(self, input_state: Dict[str, Any]) -> GameDevState:
         """构建初始状态"""
@@ -730,7 +673,7 @@ class GameDevWorkflow:
 
         self._sanitize_scene_scripts(state)
 
-        # 统一验证 — 语法 + Unity兼容性 + 一致性，一次完成
+        # 统一验证
         try:
             from src.utils.unified_validator import validate_all
             validation = validate_all(
@@ -748,7 +691,7 @@ class GameDevWorkflow:
 
         self._add_project_artifacts(state)
 
-        # ========== P1: Eval 评测系统 — 自动生成评测报告 ==========
+        # 评测系统
         try:
             from src.eval.metrics import run_evaluation
             project_name = state.get("project_context", {}).get("project_name", "GameForge")
@@ -759,44 +702,25 @@ class GameDevWorkflow:
                 fix_history=state.get("fix_history", []),
             )
 
-            # Unity 兼容性评分
+            # Godot 兼容性评分
             try:
-                from src.utils.unity_compatibility_validator import validate_unity_compatibility
-                compat = validate_unity_compatibility(state.get("code_generated", {}))
+                from src.utils.godot_compatibility_validator import validate_godot_compatibility
+                compat = validate_godot_compatibility(state.get("code_generated", {}))
                 compat_score = 100.0 if not compat.has_errors else max(0, 100 - len(compat.errors) * 10)
                 eval_report.add_metric(
-                    "unity_compatibility", compat_score,
+                    "godot_compatibility", compat_score,
                     details={"errors": len(compat.errors), "warnings": len(compat.warnings)}
                 )
             except Exception as e:
-                logger.warning("unity_compat_score_failed", error=str(e))
+                logger.warning("godot_compat_score_failed", error=str(e))
 
-            # 保存评测报告
             report_path = eval_report.save()
             state["eval_report"] = eval_report.to_dict()
             state.setdefault("warnings", []).append(f"评测报告已保存: {report_path}")
         except Exception as e:
             state.setdefault("warnings", []).append(f"评测系统异常: {e}")
 
-        # ========== P1: Sandbox 沙箱验证 — C# 代码安全性检查 ==========
-        try:
-            from src.engine.sandbox import SandboxExecutor
-            sandbox = SandboxExecutor(self.config)
-            cs_files = {p: c for p, c in state.get("code_generated", {}).items() if p.endswith(".cs")}
-            if cs_files:
-                sandbox_issues = []
-                for path, content in cs_files.items():
-                    is_safe, issues = sandbox.validate_code(content)
-                    if not is_safe:
-                        sandbox_issues.extend([f"{path}: {i}" for i in issues])
-                if sandbox_issues:
-                    state.setdefault("warnings", []).append(
-                        f"沙箱安全检查发现 {len(sandbox_issues)} 个问题: {'; '.join(sandbox_issues[:5])}"
-                    )
-        except Exception as e:
-            logger.warning("sandbox_validation_skipped", error=str(e))
-
-        # 保存项目记忆 — 记录本次生成的错误和经验
+        # 保存项目记忆
         try:
             for error in state.get("error_log", []):
                 self.memory.project_memory.add_error(
@@ -817,12 +741,7 @@ class GameDevWorkflow:
     # ========== 运行入口 ==========
 
     async def run(self, input_state: Dict[str, Any]) -> Dict[str, Any]:
-        """运行工作流（批处理模式）
-
-        使用 .ainvoke() 驱动图执行，LangGraph 负责状态合并和路由。
-        图内部通过 orchestrator 的条件边实现多任务循环调度，
-        无需外层循环——ainvoke 会一直运行到图到达 END 节点。
-        """
+        """运行工作流（批处理模式）"""
         from src.utils.metrics import (
             record_workflow_run, record_task_completed, record_file_generated,
             record_fix_attempt, set_active_workflows,
@@ -844,28 +763,22 @@ class GameDevWorkflow:
             self._run_scene_generation(state, _noop_callback)
         )
 
-        # 递归限制：防止图内部无限循环（每个节点调用算 1 次递归）
         max_iterations = self.config.get("agents", {}).get("orchestrator", {}).get("max_iterations", 10)
-        recursion_limit = max(max_iterations * 12, 100)  # 每轮约 8-10 个节点调用
+        recursion_limit = max(max_iterations * 12, 100)
         _success = True
 
         try:
-            # 单次 ainvoke —— 图内部 orchestrator 条件边负责多任务循环调度
-            # game_designer → planner → orchestrator → [code_gen/review/refactor/test] → orchestrator → ... → END
             result = await self.graph.ainvoke(state, config={"recursion_limit": recursion_limit})
             state = result
 
-            # 记录任务完成指标
             for task in state.get("task_plan", []):
                 if task.get("status") == TaskStatus.COMPLETED.value:
                     record_task_completed(task.get("type", "unknown"))
 
-            # 记录文件生成指标
             for file_path in state.get("code_generated", {}).keys():
                 ext = file_path.rsplit(".", 1)[-1] if "." in file_path else "unknown"
                 record_file_generated(ext)
 
-            # 记录修复指标
             for fix in state.get("fix_history", []):
                 record_fix_attempt(fix.get("success", False))
 
@@ -878,19 +791,16 @@ class GameDevWorkflow:
 
         await self._post_process(state, scene_task)
 
-        # Unity 一键构建 pipeline（导入→编译→场景）
+        # Godot 一键构建 pipeline
         if state.get("scene_status") in (None, "pending", "skipped"):
-            await self._try_unity_pipeline(state, lambda *a, **kw: asyncio.sleep(0))
+            await self._try_godot_pipeline(state, lambda *a, **kw: asyncio.sleep(0))
 
         return state
 
     async def run_with_streaming(
         self, input_state: Dict[str, Any], event_callback
     ) -> Dict[str, Any]:
-        """运行工作流（流式模式）
-
-        使用 .astream_events() 驱动图执行，自动推送每个节点的执行事件。
-        """
+        """运行工作流（流式模式）"""
         from src.utils.metrics import (
             record_workflow_run, record_task_completed, record_file_generated,
             record_fix_attempt, set_active_workflows,
@@ -901,7 +811,6 @@ class GameDevWorkflow:
         _success = True
         set_active_workflows(1)
 
-        # 加载项目记忆
         project_name = state.get("project_context", {}).get("project_name", "default")
         self.memory.project_memory.load(project_name)
 
@@ -913,17 +822,21 @@ class GameDevWorkflow:
         recursion_limit = max(max_iterations * 12, 100)
 
         try:
-            # 发送迭代开始事件
             await event_callback("phase_start", {
                 "phase": "iterating",
                 "message": "正在执行工作流...",
             })
 
-            # 单次 ainvoke —— 图内部 orchestrator 条件边负责多任务循环调度
-            # 使用 astream_events 获取图执行的实时事件
+            final_state = None
             async for event in self.graph.astream_events(state, version="v2", config={"recursion_limit": recursion_limit}):
                 kind = event.get("event", "")
                 node_name = event.get("name", "")
+
+                if kind == "on_chain_end" and node_name == "LangGraph":
+                    output = event.get("data", {}).get("output", {})
+                    if output and isinstance(output, dict):
+                        final_state = output
+                    continue
 
                 if kind == "on_chain_start" and node_name not in ("__start__", "__end__", "LangGraph"):
                     await event_callback("phase_start", {
@@ -933,7 +846,6 @@ class GameDevWorkflow:
                 elif kind == "on_chain_end" and node_name not in ("__start__", "__end__", "LangGraph", "_route_next"):
                     output = event.get("data", {}).get("output", {})
                     if output and isinstance(output, dict):
-                        # 发送代码文件事件
                         new_code = output.get("code_generated", {})
                         if new_code:
                             for file_path, content in new_code.items():
@@ -942,20 +854,17 @@ class GameDevWorkflow:
                                     "content": content,
                                 })
 
-                        # 发送审查结果事件
                         review = output.get("review_result")
                         if review:
                             await event_callback("review_result", review)
 
-            # 读取图执行后的最终状态
-            # astream_events 不直接返回最终状态，需要重新 ainvoke 获取
-            state = await self.graph.ainvoke(state, config={"recursion_limit": recursion_limit})
+            if final_state is not None:
+                state = final_state
 
         except Exception as e:
             _success = False
             await event_callback("error", {"message": f"生成过程出错: {str(e)}"})
 
-        # 记录指标
         for task in state.get("task_plan", []):
             if task.get("status") == TaskStatus.COMPLETED.value:
                 record_task_completed(task.get("type", "unknown"))
@@ -969,9 +878,9 @@ class GameDevWorkflow:
 
         await self._post_process(state, scene_task, event_callback)
 
-        # Unity 一键构建 pipeline（导入→编译→场景）
+        # Godot 一键构建 pipeline
         if state.get("scene_status") in (None, "pending", "skipped"):
-            await self._try_unity_pipeline(state, event_callback)
+            await self._try_godot_pipeline(state, event_callback)
 
         await event_callback("complete", {
             "phase": "complete",

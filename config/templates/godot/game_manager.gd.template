@@ -1,0 +1,83 @@
+## {{CLASS_NAME}} — 游戏管理器
+## 由 GameForge AI 自动生成
+## Autoload 单例，全局可访问
+extends Node
+
+## 当前分数
+var score: int = 0
+## 当前生命
+var lives: int = 3
+## 最大生命
+var max_lives: int = 3
+## 当前关卡
+var current_level: int = 1
+## 游戏是否暂停
+var is_paused: bool = false
+
+## 信号：分数变化
+signal score_changed(new_score: int)
+## 信号：生命变化
+signal lives_changed(new_lives: int)
+## 信号：游戏结束
+signal game_over()
+## 信号：关卡变化
+signal level_changed(new_level: int)
+
+
+func _ready() -> void:
+	print("GameManager 已初始化")
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("pause"):
+		toggle_pause()
+
+
+## 增加分数
+func add_score(amount: int) -> void:
+	score += amount
+	score_changed.emit(score)
+
+
+## 减少生命
+func lose_life() -> void:
+	lives -= 1
+	lives_changed.emit(lives)
+	if lives <= 0:
+		_on_game_over()
+
+
+## 恢复生命
+func heal(amount: int = 1) -> void:
+	lives = min(lives + amount, max_lives)
+	lives_changed.emit(lives)
+
+
+## 切换暂停
+func toggle_pause() -> void:
+	is_paused = !is_paused
+	get_tree().paused = is_paused
+
+
+## 重新开始游戏
+func restart_game() -> void:
+	score = 0
+	lives = max_lives
+	current_level = 1
+	score_changed.emit(score)
+	lives_changed.emit(lives)
+	level_changed.emit(current_level)
+	get_tree().paused = false
+	get_tree().change_scene_to_file("res://scenes/main.tscn")
+
+
+## 进入下一关
+func next_level() -> void:
+	current_level += 1
+	level_changed.emit(current_level)
+
+
+## 游戏结束处理
+func _on_game_over() -> void:
+	game_over.emit()
+	print("游戏结束！最终分数: ", score)
