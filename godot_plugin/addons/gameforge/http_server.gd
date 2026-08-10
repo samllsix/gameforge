@@ -329,4 +329,5 @@ func _send_response(conn: StreamPeerTCP, response: Dictionary) -> void:
 	]
 
 	var response_text = "\r\n".join(headers) + body_json
-	conn.put_utf8_string(response_text)
+	# 直接写原始字节：put_utf8_string 会附加 4 字节长度前缀，破坏标准 HTTP 客户端解析
+	conn.put_data(response_text.to_utf8_buffer())

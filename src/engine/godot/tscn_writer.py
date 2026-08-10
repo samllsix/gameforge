@@ -142,7 +142,30 @@ class TSCNWriter:
         # 节点树
         lines.extend(root_node.to_lines(resource_path))
 
-        return "\n".join(lines)
+        content = "\n".join(lines)
+        self._validate_tscn_order(content)
+        return content
+
+    @staticmethod
+    def _validate_tscn_order(content: str) -> None:
+        """存盘前自检：确保所有 [sub_resource] 出现在首个 [node] 之前。
+
+        Godot TSCN 强制顺序为 [gd_scene] -> [ext_resource] -> [sub_resource] -> [node]，
+        若 sub_resource 落在 node 之后，Godot 加载场景时会直接失败。
+        """
+        lines = content.split("\n")
+        first_node_idx = None
+        for i, line in enumerate(lines):
+            if line.startswith("[node"):
+                first_node_idx = i
+                break
+        if first_node_idx is None:
+            return
+        for i, line in enumerate(lines):
+            if line.startswith("[sub_resource") and i > first_node_idx:
+                raise RuntimeError(
+                    "TSCN 顺序错误：sub_resource 出现在首个 [node] 之后（行 %d）" % (i + 1)
+                )
 
     def next_resource_id(self) -> str:
         """生成下一个资源 ID"""
