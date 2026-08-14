@@ -1449,7 +1449,7 @@ header h1 {
     border: 1px solid rgba(248, 113, 113, 0.2);
 }
 
-.unity-hint {
+.godot-hint {
     margin-top: 14px;
     padding: 12px 16px;
     border-radius: var(--radius-sm);
@@ -1461,7 +1461,7 @@ header h1 {
     font-weight: 500;
 }
 
-.unity-hint code {
+.godot-hint code {
     background: rgba(108, 140, 255, 0.12);
     padding: 2px 6px;
     border-radius: 4px;

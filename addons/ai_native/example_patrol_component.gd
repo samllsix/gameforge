@@ -1,7 +1,8 @@
 ## ExamplePatrolComponent — 示例巡逻 AI 组件
 ## 演示如何使用 AIComponent 基类实现巡逻行为
 class_name ExamplePatrolComponent
-extends AIComponent
+extends "res://addons/ai_native/ai_component.gd"
+
 
 ## 巡逻速度
 @export var patrol_speed: float = 100.0

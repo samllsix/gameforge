@@ -2,6 +2,10 @@
 ## 统一管理所有 AIComponent，每帧调度 tick
 extends Node
 
+const AIComponent = preload("res://addons/ai_native/ai_component.gd")
+const Action = preload("res://addons/ai_native/action.gd")
+const Observation = preload("res://addons/ai_native/observation.gd")
+
 ## 信号：组件注册
 signal component_registered(component: AIComponent)
 ## 信号：组件注销

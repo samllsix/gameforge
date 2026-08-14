@@ -4,6 +4,9 @@
 class_name AIComponent
 extends Node
 
+const Observation = preload("res://addons/ai_native/observation.gd")
+const Action = preload("res://addons/ai_native/action.gd")
+
 ## 组件是否激活
 @export var enabled: bool = true
 ## 组件优先级（数值越小越先执行）

@@ -186,6 +186,27 @@ class RefactorAgent(BaseAgent):
             self.log_error("refactor_llm_error", {"error": str(e), "file": file_path})
             return {"content": content, "changes_made": False}
 
+    def summarize_changes(self, result: Dict[str, Any]) -> str:
+        """把重构结果转成一段自然语言「发言」（用于对话 dyad 的助手侧）。
+
+        Args:
+            result: ``analyze_and_refactor()`` 的返回
+
+        Returns:
+            可读的重构说明文本（含终止符提示）
+        """
+        artifacts = result.get("new_artifacts", []) or []
+        if not artifacts:
+            return "【重构】代码已达标，无需改动，等待审查方确认。"
+
+        parts = [f"【重构】已处理 {len(artifacts)} 个文件："]
+        for a in artifacts:
+            changes = a.get("changes", []) or []
+            desc = "; ".join(c.get("description", "") for c in changes) if changes else "结构优化"
+            parts.append(f"  - {a.get('file_path', '')}: {desc}")
+        parts.append("已应用修改，请审查方复核。")
+        return "\n".join(parts)
+
     def analyze_code_quality(self, content: str) -> Dict[str, Any]:
         """静态分析代码质量
 

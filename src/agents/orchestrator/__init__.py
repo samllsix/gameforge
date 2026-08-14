@@ -24,6 +24,22 @@ class OrchestratorAgent(BaseAgent):
             config: 配置信息
         """
         super().__init__(AgentType.ORCHESTRATOR, config)
+        # 加载 spec §8 主编排提示词（13 步流水线 + 进度消息规范）；仅作上下文，不改变调度逻辑。
+        self.orchestrator_prompt = self.get_prompt_template("orchestrator_system")
+        # 内部阶段 → 用户可见的极简进度消息（spec §8：用户只看到进度）
+        self._progress_messages = {
+            "game_design": "正在设计游戏…",
+            "planning": "正在规划资源与任务…",
+            "scene": "正在生成场景…",
+            "code": "正在编写 GDScript…",
+            "review": "正在审查代码…",
+            "test": "正在生成测试用例…",
+            "main_review": "正在进行主审查…",
+            "debug": "发现问题，自动修复中…",
+            "refactor": "正在重构优化…",
+            "verify": "无头验证中…",
+            "complete": "已完成，打开即可游玩",
+        }
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         """执行编排任务
@@ -97,6 +113,10 @@ class OrchestratorAgent(BaseAgent):
             if task.get("id") == task_id:
                 return task.get("status") == TaskStatus.COMPLETED.value
         return False
+
+    def progress_message(self, phase: str) -> str:
+        """将内部阶段映射为用户可见的极简进度消息（spec §8：用户只看到进度，不看到内部 JSON）。"""
+        return self._progress_messages.get(phase, "正在处理…")
 
     def get_workflow_progress(self, state: GameDevState) -> Dict[str, Any]:
         """获取工作流进度

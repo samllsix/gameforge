@@ -41,28 +41,30 @@ def extract_file_metadata(code: str, file_path: str, task: Dict[str, Any] = None
     """
     meta = GeneratedFileMetadata(file_path=file_path)
 
-    # 提取类名
+    # 提取类名（C# 与 GDScript 均兼容）
     class_match = re.search(r'public\s+(?:partial\s+)?(?:class|struct|interface)\s+(\w+)', code)
+    if not class_match:
+        class_match = re.search(r'^class_name\s+(\w+)', code, re.MULTILINE)
     if class_match:
         meta.class_name = class_match.group(1)
 
-    # 提取namespace
+    # 提取namespace（仅 C#）
     ns_match = re.search(r'namespace\s+([\w.]+)', code)
     if ns_match:
         meta.namespace = ns_match.group(1)
 
-    # 从注释提取挂载目标
-    mount_match = re.search(r'//\s*挂载:\s*(\S+)', code)
+    # 从注释提取挂载目标（// 与 # 均兼容）
+    mount_match = re.search(r'(?://|#)\s*挂载:\s*(\S+)', code)
     if mount_match:
         meta.target_game_object = mount_match.group(1)
 
     # 从注释提取组件
-    comp_match = re.search(r'//\s*组件:\s*(.+)', code)
+    comp_match = re.search(r'(?://|#)\s*组件:\s*(.+)', code)
     if comp_match:
         meta.required_components = [c.strip() for c in comp_match.group(1).split(",")]
 
     # 从注释提取依赖
-    deps_match = re.search(r'//\s*依赖:\s*\[([^\]]*)\]', code)
+    deps_match = re.search(r'(?://|#)\s*依赖:\s*\[([^\]]*)\]', code)
     if deps_match and deps_match.group(1).strip():
         meta.dependencies = [d.strip() for d in deps_match.group(1).split(",")]
 
@@ -101,15 +103,15 @@ class CodeGeneratorAgent(BaseAgent):
     """代码生成Agent
 
     负责：
-    - 根据任务描述生成代码
-    - 支持Unity C#和Unreal C++
-    - 遵循项目编码规范
+    - 根据任务描述生成 Godot 4.x GDScript 代码
+    - 严格遵循全局约束：禁止输出 Unity / Unreal / C# / C++ 代码
+    - LLM 失败时回退到经过验证的 GDScript 模板
     """
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(AgentType.CODE_GENERATOR, config)
         self.llm = get_llm_client(config, provider=self.provider, model=self.model)
-        self.supported_engines = self.agent_config.get("supported_engines", ["unity", "unreal"])
+        self.supported_engines = self.agent_config.get("supported_engines", ["godot"])
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         self.log_action("code_generator_execute")
@@ -138,133 +140,12 @@ class CodeGeneratorAgent(BaseAgent):
             "current_phase": "code_generated",
         }
 
-    def generate_readme(self, project_name: str, task_plan: list, code_files: dict) -> str:
-        """生成Unity项目README"""
-        files_section = ""
-        for path in sorted(code_files.keys()):
-            if path.endswith(".cs"):
-                files_section += f"- `{path}`\n"
 
-        tasks_section = ""
-        for task in task_plan:
-            tasks_section += f"- **{task.get('name', '')}**: {task.get('description', '')}\n"
-
-        # 从代码中提取Tag/Layer引用
-        tags = set()
-        layers = set()
-        inputs = set()
-        for content in code_files.values():
-            for m in re.finditer(r'CompareTag\("(\w+)"\)', content):
-                tags.add(m.group(1))
-            for m in re.finditer(r'LayerMask\.GetMask\("(\w+)"\)', content):
-                layers.add(m.group(1))
-            for m in re.finditer(r'Input\.Get(?:Axis|Button)(?:Raw)?\("(\w+)"\)', content):
-                inputs.add(m.group(1))
-
-        settings_section = ""
-        if tags:
-            settings_section += f"- **Tags**: {', '.join(sorted(tags))}\n"
-        if layers:
-            settings_section += f"- **Layers**: {', '.join(sorted(layers))}\n"
-        if inputs:
-            settings_section += f"- **Input Axes**: {', '.join(sorted(inputs))}\n"
-
-        readme = f"""# {project_name} — Unity 项目说明
-
-## 概述
-本项目由 GameForge AI 自动生成，包含完整的可运行游戏代码。
-
-## 任务计划
-{tasks_section}
-
-## 文件列表
-{files_section}
-
-## Unity 配置要求
-{settings_section if settings_section else "无特殊配置要求"}
-
-## 运行方法
-1. 在 Unity Hub 中打开本项目
-2. 确保 Unity 版本 >= 2022.3
-3. 打开 `Assets/Scenes/` 中的场景文件
-4. 点击 Play 按钮运行
-
-## 注意事项
-- 首次打开可能需要等待 Unity 编译完成
-- 如果遇到编译错误，请检查 Tag/Layer 是否已正确配置
-- 所有脚本使用 GameForge 命名空间
-"""
-        return readme
-
-    def generate_project_settings(self, code_files: dict) -> str:
-        """扫描代码生成Unity项目配置建议"""
-        tags = set()
-        layers = set()
-        inputs = set()
-        physics_notes = []
-
-        for path, content in code_files.items():
-            if not path.endswith(".cs"):
-                continue
-            for m in re.finditer(r'CompareTag\("(\w+)"\)', content):
-                tags.add(m.group(1))
-            for m in re.finditer(r'LayerMask\.GetMask\("(\w+)"\)', content):
-                layers.add(m.group(1))
-            for m in re.finditer(r'Input\.Get(?:Axis|Button)(?:Raw)?\("(\w+)"\)', content):
-                inputs.add(m.group(1))
-            if "Physics2D" in content:
-                physics_notes.append(f"- `{path}`: 使用 Physics2D")
-            if "Rigidbody2D" in content:
-                physics_notes.append(f"- `{path}`: 使用 Rigidbody2D")
-
-        doc = f"""# Unity 项目配置建议
-
-以下配置由代码分析自动生成，请在 Unity Editor 中手动设置。
-
-## Tags
-"""
-        if tags:
-            for tag in sorted(tags):
-                doc += f"- `{tag}`\n"
-        else:
-            doc += "- 无自定义Tag要求\n"
-
-        doc += "\n## Layers\n"
-        if layers:
-            for layer in sorted(layers):
-                doc += f"- `{layer}` (建议分配到 Layer 8+)\n"
-        else:
-            doc += "- 无自定义Layer要求\n"
-
-        doc += "\n## Input Axes\n"
-        if inputs:
-            for inp in sorted(inputs):
-                doc += f"- `{inp}`\n"
-        else:
-            doc += "- 使用 Unity 默认 Input Axes\n"
-
-        doc += "\n## Physics\n"
-        if physics_notes:
-            for note in physics_notes:
-                doc += note + "\n"
-        else:
-            doc += "- 无特殊物理设置\n"
-
-        doc += """
-## Camera
-- 推荐使用 Orthographic 模式（2D游戏）
-- 建议 Size: 5-6
-
-## 其他建议
-- 确保 Sprite 的 Pixels Per Unit 设置正确（角色: 128, 地块: 64）
-- 使用 Point filter 避免 Sprite 模糊
-"""
-        return doc
 
     async def generate(self, state: GameDevState, task: Dict[str, Any]) -> List[Dict[str, Any]]:
         self.log_action("generate_code", {"task_id": task.get("id")})
 
-        engine = state.get("project_context", {}).get("engine", "unity")
+        engine = "godot"  # GameForge 已聚焦 Godot 4.x，禁用 Unity/Unreal/C++
         project_name = state.get("project_context", {}).get("project_name", "GameForge")
 
         task_type = task.get("type", TaskType.CODE.value)
@@ -315,7 +196,7 @@ class CodeGeneratorAgent(BaseAgent):
             {
                 "file_path": fpath,
                 "content": content,
-                "language": "csharp" if engine == "unity" else "cpp",
+                "language": "gdscript",
                 "engine": engine,
                 "metadata": {
                     "source_task": task.get("id", ""),
@@ -392,10 +273,11 @@ class CodeGeneratorAgent(BaseAgent):
         if memory_context:
             memory_section = f"\n\n## 历史经验（来自记忆系统）\n{memory_context}"
 
-        user_prompt = f"""请根据以下任务生成完整的、高质量的代码实现。
+        if engine == "godot":
+            user_prompt = f"""请根据以下任务生成完整的、高质量的 Godot 4.x GDScript 代码实现。
 
 项目名称: {project_name}
-游戏引擎: {engine}
+游戏引擎: Godot 4.x (GDScript)
 原始用户需求（最高优先级，不得被通用模板覆盖）:
 {requirements}
 
@@ -408,31 +290,37 @@ class CodeGeneratorAgent(BaseAgent):
 {memory_section}
 
 要求：
-1. 生成完整可编译的代码，不要省略任何部分
-2. 遵循系统提示中的命名规范和代码结构
-3. 使用 namespace {project_name.replace(' ', '.')}.[ModuleName] 格式
-4. 代码必须是可以直接复制到Unity项目中使用的
-5. 代码质量要求（直接生成高质量代码）：
-   - 遵循SOLID原则：单一职责、开闭原则
-   - 使用#region/#endregion组织代码块
-   - 字段使用[SerializeField]私有化，通过属性暴露公共接口
-   - 使用事件系统解耦模块间通信
-   - 空值检查和边界条件处理
-   - 避免FindObjectOfType等性能杀手，改用缓存引用
-   - 使用[Header]和[Tooltip]增强Inspector可读性
-6. 如果游戏设计模型中有输入映射，使用Input.GetAxis/Input.GetButton读取输入
-7. 如果有Tags/Layers引用，使用CompareTag和LayerMask.GetMask
-8. 组件之间的引用使用[SerializeField]或事件系统，不要使用Find系列方法
-9. 用户明确提到的玩法、输入、胜负条件、敌人、道具、UI或场景元素，必须在代码或设计说明中有对应落点；如果当前任务只覆盖其中一部分，接口和命名必须能支撑后续任务衔接。
-10. 历史代码参考只能作为实现风格参考；当它与原始用户需求冲突时，必须以原始用户需求为准。
+1. 生成完整、可直接在 Godot 4.x 中运行的 GDScript 代码，不要省略任何部分。
+2. 严格遵循系统提示中的 GDScript 命名规范与代码结构（snake_case、class_name、extends、signal、@export）。
+3. 每个文件头部用注释标注 Godot 资源路径，格式：
+   # 文件: res://scripts/[Module]/[Name].gd
+4. 必须使用 Godot 节点与 API：玩家用 CharacterBody2D、金币/道具用 Area2D、管理器用 Node（Autoload）；用 signal 解耦、用 @export 暴露参数、用 @onready 缓存节点引用。
+5. 禁止使用 C# / Unity 语法（namespace、using、MonoBehaviour、[SerializeField]、GetComponent、Input.GetAxis、CompareTag 等）。
+6. 输入读取用 Godot Input Map：Input.get_action_strength("move_left") / Input.is_action_just_pressed("jump")；若原始需求给了具体按键，直接映射并在说明中提示需要在 project.godot 配置对应输入动作。
+7. 物理移动用 move_and_slide()；动画用 AnimatedSprite2D 或 AnimationPlayer（通过 @onready 引用 $NodePath）。
+8. 若需求含玩家移动/跳跃、敌人、金币/分数、生命、UI、胜负条件，必须在当前任务代码或预留的信号/@export 中有可追踪落点。
+9. 历史代码参考只能作为风格参考；与原始需求冲突时以原始需求为准。
 
 请直接输出代码，格式如下：
-```csharp
-// 文件: Assets/Scripts/[Module]/[FileName].cs
-namespace ...
-{
-    ...
-}
+```gdscript
+# 文件: res://scripts/[Module]/[Name].gd
+extends CharacterBody2D
+
+# ==================== 信号 ====================
+signal score_changed(new_score: int)
+
+# ==================== 导出变量 ====================
+@export var move_speed: float = 200.0
+
+# ==================== 私有变量 ====================
+var _score: int = 0
+
+# ==================== 生命周期 ====================
+func _ready() -> void:
+    pass
+
+func _physics_process(delta: float) -> void:
+    pass
 ```
 
 如果需要生成多个文件，每个文件用单独的代码块。"""
@@ -510,9 +398,9 @@ namespace ...
         """
         artifacts = []
 
-        # 匹配所有代码块
+        # 匹配所有代码块（仅 Godot GDScript）
         code_blocks = re.findall(
-            r'```(?:csharp|cs|cpp)?\s*\n(.*?)\n```',
+            r'```(?:gdscript|gd)?\s*\n(.*?)\n```',
             response,
             re.DOTALL,
         )
@@ -522,35 +410,39 @@ namespace ...
             if not block:
                 continue
 
-            # 尝试从注释中提取文件路径
-            file_path_match = re.search(r'//\s*文件:\s*(\S+)', block)
+            # 尝试从注释中提取文件路径（GDScript 用 #，兼容 //）
+            file_path_match = re.search(r'(?://|#)\s*文件:\s*(\S+)', block)
             if file_path_match:
                 file_path = file_path_match.group(1)
-                block = re.sub(r'//\s*文件:\s*\S+\s*\n', '', block, count=1).strip()
+                block = re.sub(r'(?://|#)\s*文件:\s*\S+\s*\n', '', block, count=1).strip()
             else:
                 file_path = self._infer_file_path(task, engine, len(artifacts))
+
+            # Godot：强制 .gd 扩展名（若误带其它扩展名则归一化）
+            if engine == "godot" and not file_path.endswith(".gd"):
+                file_path = re.sub(r'\.(cs|cpp|cc|cxx|h|csx)$', '.gd', file_path) or (file_path + ".gd")
 
             # 提取元数据注释
             metadata = self._extract_metadata(block, task)
             # 移除元数据注释
-            block = re.sub(r'//\s*(任务|依赖|挂载|组件):\s*[^\n]*\n?', '', block).strip()
+            block = re.sub(r'(?://|#)\s*(任务|依赖|挂载|组件):\s*[^\n]*\n?', '', block).strip()
 
             artifacts.append({
                 "file_path": file_path,
                 "content": block,
-                "language": "csharp" if engine == "unity" else "cpp",
+                "language": "gdscript",
                 "engine": engine,
                 "metadata": metadata,
             })
 
         # 如果没有匹配到代码块，尝试把整个响应当作代码
         if not artifacts and response.strip() and not response.strip().startswith('{'):
-            if 'class ' in response or 'namespace ' in response or 'using ' in response:
+            if 'class_name ' in response or 'extends ' in response or 'func ' in response or 'namespace ' in response:
                 file_path = self._infer_file_path(task, engine, 0)
                 artifacts.append({
                     "file_path": file_path,
                     "content": response.strip(),
-                    "language": "csharp" if engine == "unity" else "cpp",
+                    "language": "gdscript",
                     "engine": engine,
                     "metadata": self._extract_metadata(response, task),
                 })
@@ -566,23 +458,23 @@ namespace ...
             "required_components": [],
         }
 
-        # 提取 // 任务: xxx
-        task_match = re.search(r'//\s*任务:\s*(\S+)', code_block)
+        # 提取 // 任务: xxx 或 # 任务: xxx
+        task_match = re.search(r'(?://|#)\s*任务:\s*(\S+)', code_block)
         if task_match:
             metadata["source_task"] = task_match.group(1)
 
         # 提取 // 依赖: [A, B, C]
-        deps_match = re.search(r'//\s*依赖:\s*\[([^\]]*)\]', code_block)
+        deps_match = re.search(r'(?://|#)\s*依赖:\s*\[([^\]]*)\]', code_block)
         if deps_match and deps_match.group(1).strip():
             metadata["dependencies"] = [d.strip() for d in deps_match.group(1).split(",")]
 
         # 提取 // 挂载: Player
-        mount_match = re.search(r'//\s*挂载:\s*(\S+)', code_block)
+        mount_match = re.search(r'(?://|#)\s*挂载:\s*(\S+)', code_block)
         if mount_match:
             metadata["target_game_object"] = mount_match.group(1)
 
         # 提取 // 组件: Rigidbody2D, BoxCollider2D
-        comp_match = re.search(r'//\s*组件:\s*(.+)', code_block)
+        comp_match = re.search(r'(?://|#)\s*组件:\s*(.+)', code_block)
         if comp_match:
             metadata["required_components"] = [c.strip() for c in comp_match.group(1).split(",")]
 
@@ -596,889 +488,281 @@ namespace ...
         if output_files:
             return output_files[0]
 
-        if engine == "unity":
+        if engine == "godot":
             if "Player" in task_name or "玩家" in task_name:
-                return "Assets/Scripts/Player/PlayerController.cs"
+                return "res://scripts/player/player_controller.gd"
             elif "GameManager" in task_name or "游戏管理" in task_name:
-                return "Assets/Scripts/Core/GameManager.cs"
+                return "res://scripts/game_manager.gd"
             elif "碰撞" in task_name or "Collision" in task_name:
-                return "Assets/Scripts/Core/CollisionHandler.cs"
+                return "res://scripts/core/collision_handler.gd"
             elif "计分" in task_name or "Score" in task_name:
-                return "Assets/Scripts/Core/ScoreManager.cs"
+                return "res://scripts/core/score_manager.gd"
             elif "Camera" in task_name or "摄像机" in task_name or "相机" in task_name:
-                return "Assets/Scripts/Camera/CameraFollow.cs"
+                return "res://scripts/camera/camera_follow.gd"
             elif "Enemy" in task_name or "敌人" in task_name:
-                return "Assets/Scripts/Enemy/EnemyController.cs"
+                return "res://scripts/enemy/enemy_controller.gd"
             elif "Coin" in task_name or "金币" in task_name or "Pickup" in task_name or "拾取" in task_name or "Collectible" in task_name or "收集" in task_name:
-                return "Assets/Scripts/Collectibles/CoinController.cs"
+                return "res://scripts/collectibles/coin_controller.gd"
             elif "UI" in task_name or "HUD" in task_name or "界面" in task_name:
-                return "Assets/Scripts/UI/UIManager.cs"
+                return "res://scripts/ui/ui_manager.gd"
             elif "测试" in task_name or "Test" in task_name:
-                return f"Assets/Scripts/Tests/Test_{index}.cs"
+                return f"res://scripts/tests/test_{index}.gd"
             else:
-                # 使用任务名作为文件名，避免 Generated_N
                 safe_name = re.sub(r'[^A-Za-z0-9_]', '', task_name.replace(' ', ''))
                 if safe_name:
-                    return f"Assets/Scripts/{safe_name}/{safe_name}.cs"
-                return f"Assets/Scripts/Generated/Generated_{index}.cs"
-        else:
-            return f"Source/GameForge/Generated/Generated_{index}.cpp"
+                    return f"res://scripts/{safe_name}/{safe_name}.gd"
+                return f"res://scripts/generated/generated_{index}.gd"
 
     def _fallback_generate(self, task: Dict[str, Any], engine: str) -> List[Dict[str, Any]]:
         """LLM调用失败时的回退生成"""
         task_name = task.get("name", "")
 
-        if engine == "unity":
+        if engine == "godot":
             if "Player" in task_name or "玩家" in task_name:
-                return self._generate_player_code(engine)
+                return self._generate_player_godot()
             elif "GameManager" in task_name or "游戏管理" in task_name:
-                return self._generate_game_manager_code(engine)
+                return self._generate_game_manager_godot()
             elif "Enemy" in task_name or "敌人" in task_name:
-                return self._generate_enemy_code(engine)
+                return self._generate_enemy_godot()
             elif "Coin" in task_name or "金币" in task_name or "Collectible" in task_name or "收集" in task_name or "Pickup" in task_name or "拾取" in task_name:
-                return self._generate_coin_code(engine)
+                return self._generate_coin_godot()
             elif "Camera" in task_name or "摄像机" in task_name or "相机" in task_name:
-                return self._generate_camera_follow_code(engine)
+                return self._generate_camera_follow_godot()
             elif "UI" in task_name or "HUD" in task_name or "界面" in task_name:
-                return self._generate_ui_manager_code(engine)
+                return self._generate_ui_manager_godot()
             elif "Score" in task_name or "计分" in task_name:
-                return self._generate_score_code(engine)
+                return self._generate_score_godot()
             elif "Collision" in task_name or "碰撞" in task_name:
-                return self._generate_collision_code(engine)
+                return self._generate_collision_godot()
+            safe_name = re.sub(r'[^A-Za-z0-9_]', '', task_name.replace(' ', ''))
+            class_name = safe_name if safe_name else "GeneratedComponent"
+            file_path = self._infer_file_path(task, engine, 0)
+            return self._generate_godot_generic(class_name, file_path)
 
         # 通用 fallback — 使用任务名生成有意义的类名
         safe_name = re.sub(r'[^A-Za-z0-9_]', '', task_name.replace(' ', ''))
         class_name = safe_name if safe_name else "GeneratedComponent"
         file_path = self._infer_file_path(task, engine, 0)
-        return self._generate_generic_code(class_name, engine, file_path)
-
-    def _generate_player_code(self, engine: str) -> List[Dict[str, Any]]:
-        if engine == "unreal":
-            return [{
-                "file_path": "Source/GameForge/Player/PlayerCharacter.cpp",
-                "content": '''#include "PlayerCharacter.h"
-#include "GameFramework/CharacterMovementComponent.h"
-
-APlayerCharacter::APlayerCharacter()
-{
-    PrimaryActorTick.bCanEverTick = true;
-    GetCharacterMovement()->MaxWalkSpeed = 600.0f;
-    GetCharacterMovement()->JumpZVelocity = 1000.0f;
-}
-
-void APlayerCharacter::BeginPlay()
-{
-    Super::BeginPlay();
-}
-
-void APlayerCharacter::Tick(float DeltaTime)
-{
-    Super::Tick(DeltaTime);
-}
-
-void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
-{
-    Super::SetupPlayerInputComponent(PlayerInputComponent);
-    PlayerInputComponent->BindAxis("MoveForward", this, &APlayerCharacter::MoveForward);
-    PlayerInputComponent->BindAxis("MoveRight", this, &APlayerCharacter::MoveRight);
-    PlayerInputComponent->BindAction("Jump", IE_Pressed, this, &ACharacter::Jump);
-}
-
-void APlayerCharacter::MoveForward(float Value)
-{
-    if (Value != 0.0f)
-    {
-        AddMovementInput(GetActorForwardVector(), Value);
-    }
-}
-
-void APlayerCharacter::MoveRight(float Value)
-{
-    if (Value != 0.0f)
-    {
-        AddMovementInput(GetActorRightVector(), Value);
-    }
-}''',
-                "language": "cpp",
-                "engine": "unreal",
-            }]
-        if engine == "unity":
-            return [{
-                "file_path": "Assets/Scripts/Player/PlayerController.cs",
-                "content": '''using UnityEngine;
-
-namespace GameForge.Player
-{
-    /// <summary>
-    /// 玩家控制器 - 移动、跳跃、sprite动画
-    /// </summary>
-    public class PlayerController : MonoBehaviour
-    {
-        #region Fields
-        [Header("Movement")]
-        [SerializeField] private float _moveSpeed = 5f;
-        [SerializeField] private float _jumpForce = 10f;
-        [SerializeField] private float _groundCheckDistance = 0.15f;
-
-        [Header("Sprites")]
-        [SerializeField] private Sprite _idleSprite;
-        [SerializeField] private Sprite _walkASprite;
-        [SerializeField] private Sprite _walkBSprite;
-        [SerializeField] private Sprite _jumpSprite;
-        [SerializeField] private Sprite _hitSprite;
-
-        [Header("Animation")]
-        [SerializeField] private float _walkFrameRate = 0.12f;
-        [SerializeField] private float _hitDuration = 0.3f;
-
-        private Rigidbody2D _rb;
-        private BoxCollider2D _col;
-        private SpriteRenderer _sr;
-        private float _moveInput;
-        private bool _jumpRequested;
-        private float _jumpCooldown;
-        private int _groundMask;
-        private float _animTimer;
-        private int _walkFrame;
-        private bool _facingRight = true;
-        private float _hitTimer;
-        #endregion
-
-        #region Unity Lifecycle
-        private void Awake()
-        {
-            _rb = GetComponent<Rigidbody2D>();
-            _col = GetComponent<BoxCollider2D>();
-            _sr = GetComponent<SpriteRenderer>();
-            if (_rb == null || _col == null)
-            {
-                Debug.LogError("[PlayerController] Required component missing!");
-                enabled = false;
-                return;
-            }
-            if (_sr == null) _sr = GetComponentInChildren<SpriteRenderer>();
-            _groundMask = LayerMask.GetMask("Ground");
-            if (_groundMask == 0) _groundMask = ~LayerMask.GetMask("Player");
-        }
-
-        private void Update()
-        {
-            _moveInput = Input.GetAxisRaw("Horizontal");
-            if (Input.GetButtonDown("Jump")) _jumpRequested = true;
-            if (_hitTimer > 0) _hitTimer -= Time.deltaTime;
-            UpdateAnimation();
-        }
-
-        private void FixedUpdate()
-        {
-            Move();
-            _jumpCooldown -= Time.fixedDeltaTime;
-            if (_jumpRequested && IsGrounded() && _jumpCooldown <= 0f)
-            {
-                Jump();
-                _jumpRequested = false;
-                _jumpCooldown = 0.25f;
-            }
-            if (!IsGrounded()) _jumpRequested = false;
-        }
-        #endregion
-
-        #region Ground Detection
-        public bool IsGrounded()
-        {
-            Vector2 origin = (Vector2)transform.position + _col.offset;
-            Vector2 size = _col.size * 0.85f;
-            var hit = Physics2D.BoxCast(origin, size, 0f, Vector2.down,
-                _groundCheckDistance, _groundMask);
-            return hit.collider != null;
-        }
-        #endregion
-
-        #region Movement
-        public void Move()
-        {
-            _rb.velocity = new Vector2(_moveInput * _moveSpeed, _rb.velocity.y);
-        }
-
-        public void Jump()
-        {
-            _rb.velocity = new Vector2(_rb.velocity.x, _jumpForce);
-        }
-        #endregion
-
-        #region Animation
-        private void UpdateAnimation()
-        {
-            if (_sr == null) return;
-            if (_hitTimer > 0) { if (_hitSprite != null) _sr.sprite = _hitSprite; return; }
-            bool grounded = IsGrounded();
-            if (!grounded) { if (_jumpSprite != null) _sr.sprite = _jumpSprite; }
-            else if (Mathf.Abs(_moveInput) > 0.1f)
-            {
-                _animTimer += Time.deltaTime;
-                if (_animTimer >= _walkFrameRate) { _walkFrame = 1 - _walkFrame; _animTimer = 0f; }
-                _sr.sprite = _walkFrame == 0 ? _walkASprite : _walkBSprite;
-            }
-            else { _animTimer = 0f; _walkFrame = 0; if (_idleSprite != null) _sr.sprite = _idleSprite; }
-            if ((_moveInput > 0.01f && !_facingRight) || (_moveInput < -0.01f && _facingRight)) Flip();
-        }
-
-        private void Flip()
-        {
-            _facingRight = !_facingRight;
-            var scale = transform.localScale; scale.x *= -1f; transform.localScale = scale;
-        }
-        #endregion
-
-        #region Public API
-        public void TakeHit() { _hitTimer = _hitDuration; }
-        public bool IsHit => _hitTimer > 0;
-        public bool FacingRight => _facingRight;
-        #endregion
-    }
-}''',
-                "language": "csharp",
-                "engine": "unity",
-            }]
-        return []
-
-    def _generate_game_manager_code(self, engine: str) -> List[Dict[str, Any]]:
-        if engine == "unity":
-            return [{
-                "file_path": "Assets/Scripts/Core/GameManager.cs",
-                "content": '''using UnityEngine;
-using UnityEngine.SceneManagement;
-
-namespace GameForge.Core
-{
-    /// <summary>
-    /// 游戏管理器 - 管理游戏状态和流程
-    /// </summary>
-    public class GameManager : MonoBehaviour
-    {
-        #region Singleton
-        public static GameManager Instance { get; private set; }
-        #endregion
-
-        #region Fields
-        [SerializeField] private int _maxLives = 3;
-
-        private int _currentLives;
-        private int _score;
-        private bool _isGameOver;
-        #endregion
-
-        #region Properties
-        public int CurrentLives => _currentLives;
-        public int Score => _score;
-        public bool IsGameOver => _isGameOver;
-        #endregion
-
-        #region Unity Lifecycle
-        private void Awake()
-        {
-            if (Instance == null)
-            {
-                Instance = this;
-                DontDestroyOnLoad(gameObject);
-                InitializeGame();
-            }
-            else
-            {
-                Destroy(gameObject);
-            }
-        }
-        #endregion
-
-        #region Public Methods
-        public void InitializeGame()
-        {
-            _currentLives = _maxLives;
-            _score = 0;
-            _isGameOver = false;
-        }
-
-        public void AddScore(int points)
-        {
-            _score += points;
-        }
-
-        public void LoseLife()
-        {
-            _currentLives--;
-            if (_currentLives <= 0)
-            {
-                GameOver();
-            }
-        }
-
-        public void GameOver()
-        {
-            _isGameOver = true;
-            Debug.Log("Game Over!");
-        }
-
-        public void RestartGame()
-        {
-            InitializeGame();
-            SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
-        }
-        #endregion
-    }
-}''',
-                "language": "csharp",
-                "engine": "unity",
-            }]
-        return []
-
-    def _generate_collision_code(self, engine: str) -> List[Dict[str, Any]]:
-        if engine == "unity":
-            return [{
-                "file_path": "Assets/Scripts/Core/CollisionHandler.cs",
-                "content": '''using UnityEngine;
-
-namespace GameForge.Core
-{
-    /// <summary>
-    /// 碰撞处理器 - 统一管理碰撞检测逻辑
-    /// </summary>
-    public class CollisionHandler : MonoBehaviour
-    {
-        #region Events
-        public static event System.Action<Collision2D> OnCollision;
-        public static event System.Action<Collider2D> OnTrigger;
-        #endregion
-
-        #region Fields
-        [SerializeField] private string[] _collisionTags = { "Player", "Enemy", "Pickup" };
-        [SerializeField] private bool _debugCollisions = false;
-        #endregion
-
-        #region Collision Callbacks
-        private void OnCollisionEnter2D(Collision2D collision)
-        {
-            if (!ShouldProcessCollision(collision.gameObject)) return;
-
-            if (_debugCollisions)
-                Debug.Log($"Collision with {collision.gameObject.name}");
-
-            OnCollision?.Invoke(collision);
-            ProcessCollision(collision);
-        }
-
-        private void OnTriggerEnter2D(Collider2D other)
-        {
-            if (!ShouldProcessCollision(other.gameObject)) return;
-
-            if (_debugCollisions)
-                Debug.Log($"Trigger with {other.gameObject.name}");
-
-            OnTrigger?.Invoke(other);
-            ProcessTrigger(other);
-        }
-        #endregion
-
-        #region Processing
-        private bool ShouldProcessCollision(GameObject other)
-        {
-            foreach (var tag in _collisionTags)
-            {
-                if (other.CompareTag(tag)) return true;
-            }
-            return false;
-        }
-
-        private void ProcessCollision(Collision2D collision)
-        {
-            if (ScoreManager.Instance == null) return;
-
-            if (collision.gameObject.CompareTag("Enemy"))
-                ScoreManager.Instance.OnPlayerHit();
-            else if (collision.gameObject.CompareTag("Pickup"))
-                ScoreManager.Instance.OnPickupCollected(collision.gameObject);
-        }
-
-        private void ProcessTrigger(Collider2D other)
-        {
-            if (other.CompareTag("Pickup"))
-            {
-                ScoreManager.Instance?.OnPickupCollected(other.gameObject);
-            }
-        }
-        #endregion
-    }
-}''',
-                "language": "csharp",
-                "engine": engine,
-            }]
-        return []
-
-    def _generate_score_code(self, engine: str) -> List[Dict[str, Any]]:
-        if engine == "unity":
-            return [{
-                "file_path": "Assets/Scripts/Core/ScoreManager.cs",
-                "content": '''using UnityEngine;
-using UnityEngine.Events;
-
-namespace GameForge.Core
-{
-    /// <summary>
-    /// 计分管理器 - 管理游戏分数和连击系统
-    /// </summary>
-    public class ScoreManager : MonoBehaviour
-    {
-        #region Events
-        [System.Serializable]
-        public class ScoreEvent : UnityEvent<int> { }
-
-        public ScoreEvent OnScoreChanged = new ScoreEvent();
-        public UnityEvent OnComboMaxed = new UnityEvent();
-        #endregion
-
-        #region Fields
-        [Header("Score Settings")]
-        [SerializeField] private int _baseScore = 100;
-        [SerializeField] private int _pickupScore = 50;
-        [SerializeField] private int _enemyScore = 200;
-
-        [Header("Combo Settings")]
-        [SerializeField] private float _comboWindow = 2.0f;
-        [SerializeField] private int _maxComboMultiplier = 8;
-        [SerializeField] private int _comboStep = 1;
-
-        private int _currentScore;
-        private int _currentCombo;
-        private float _comboTimer;
-        private int _highScore;
-        #endregion
-
-        #region Properties
-        public int CurrentScore => _currentScore;
-        public int HighScore => _highScore;
-        public int CurrentCombo => _currentCombo;
-        public int ComboMultiplier => Mathf.Min(1 + _currentCombo * _comboStep, _maxComboMultiplier);
-        #endregion
-
-        #region Unity Lifecycle
-        private void Awake()
-        {
-            _highScore = PlayerPrefs.GetInt("HighScore", 0);
-        }
-
-        private void Update()
-        {
-            if (_currentCombo > 0)
-            {
-                _comboTimer -= Time.deltaTime;
-                if (_comboTimer <= 0f)
-                    ResetCombo();
-            }
-        }
-        #endregion
-
-        #region Public Methods
-        public void AddScore(int points)
-        {
-            int multiplied = points * ComboMultiplier;
-            _currentScore += multiplied;
-            OnScoreChanged?.Invoke(_currentScore);
-
-            if (_currentScore > _highScore)
-            {
-                _highScore = _currentScore;
-                PlayerPrefs.SetInt("HighScore", _highScore);
-            }
-        }
-
-        public void OnEnemyDefeated()
-        {
-            AddScore(_enemyScore);
-            IncrementCombo();
-        }
-
-        public void OnPlayerHit()
-        {
-            ResetCombo();
-        }
-
-        public void OnPickupCollected(GameObject pickup)
-        {
-            AddScore(_pickupScore);
-            Destroy(pickup);
-        }
-
-        public void ResetScore()
-        {
-            _currentScore = 0;
-            ResetCombo();
-            OnScoreChanged?.Invoke(_currentScore);
-        }
-        #endregion
-
-        #region Combo System
-        private void IncrementCombo()
-        {
-            _currentCombo++;
-            _comboTimer = _comboWindow;
-
-            if (_currentCombo >= _maxComboMultiplier)
-                OnComboMaxed?.Invoke();
-        }
-
-        private void ResetCombo()
-        {
-            _currentCombo = 0;
-            _comboTimer = 0f;
-        }
-        #endregion
-    }
-}''',
-                "language": "csharp",
-                "engine": engine,
-            }]
-        return []
-
-    def _generate_enemy_code(self, engine: str) -> List[Dict[str, Any]]:
-        if engine == "unity":
-            return [{
-                "file_path": "Assets/Scripts/Enemy/EnemyController.cs",
-                "content": '''using UnityEngine;
-
-namespace GameForge.Enemy
-{
-    /// <summary>
-    /// 敌人控制器 - 巡逻、碰撞检测
-    /// </summary>
-    public class EnemyController : MonoBehaviour
-    {
-        #region Fields
-        [Header("Patrol")]
-        [SerializeField] private float _moveSpeed = 2f;
-        [SerializeField] private float _patrolDistance = 3f;
-
-        [Header("Sprites")]
-        [SerializeField] private Sprite _walkASprite;
-        [SerializeField] private Sprite _walkBSprite;
-
-        private Rigidbody2D _rb;
-        private SpriteRenderer _sr;
-        private float _startX;
-        private int _direction = 1;
-        private float _animTimer;
-        private int _walkFrame;
-        #endregion
-
-        #region Unity Lifecycle
-        private void Awake()
-        {
-            _rb = GetComponent<Rigidbody2D>();
-            _sr = GetComponent<SpriteRenderer>();
-            _startX = transform.position.x;
-            if (_rb == null) { Debug.LogError("[EnemyController] Rigidbody2D missing!"); enabled = false; return; }
-            if (_sr == null) _sr = GetComponentInChildren<SpriteRenderer>();
-        }
-
-        private void FixedUpdate() { Patrol(); }
-        private void Update() { UpdateAnimation(); }
-        #endregion
-
-        #region Patrol
-        private void Patrol()
-        {
-            float distFromStart = transform.position.x - _startX;
-            if (Mathf.Abs(distFromStart) >= _patrolDistance) _direction = -_direction;
-            _rb.velocity = new Vector2(_direction * _moveSpeed, _rb.velocity.y);
-            if (_sr != null) { var s = transform.localScale; s.x = Mathf.Abs(s.x) * (_direction > 0 ? 1f : -1f); transform.localScale = s; }
-        }
-        #endregion
-
-        #region Animation
-        private void UpdateAnimation()
-        {
-            if (_sr == null || _walkASprite == null) return;
-            _animTimer += Time.deltaTime;
-            if (_animTimer >= 0.2f) { _walkFrame = 1 - _walkFrame; _animTimer = 0f; }
-            _sr.sprite = _walkFrame == 0 ? _walkASprite : (_walkBSprite ?? _walkASprite);
-        }
-        #endregion
-
-        #region Collision
-        private void OnCollisionEnter2D(Collision2D collision)
-        {
-            if (!collision.gameObject.CompareTag("Player")) return;
-            var contact = collision.GetContact(0);
-            if (contact.normal.y < -0.5f)
-            {
-                Die();
-                var playerRb = collision.gameObject.GetComponent<Rigidbody2D>();
-                if (playerRb != null) playerRb.velocity = new Vector2(playerRb.velocity.x, 8f);
-            }
-            else
-            {
-                var player = collision.gameObject.GetComponent<GameForge.Player.PlayerController>();
-                if (player != null && !player.IsHit)
-                {
-                    player.TakeHit();
-                    if (GameForge.Core.GameManager.Instance != null) { GameForge.Core.GameManager.Instance.LoseLife(); if (GameForge.Core.GameManager.Instance.IsGameOver) GameForge.Core.GameManager.Instance.RestartGame(); }
-                }
-            }
-        }
-
-        private void Die() { Destroy(gameObject); }
-        #endregion
-    }
-}''',
-                "language": "csharp",
-                "engine": "unity",
-            }]
-        return []
-
-    def _generate_coin_code(self, engine: str) -> List[Dict[str, Any]]:
-        if engine == "unity":
-            return [{
-                "file_path": "Assets/Scripts/Collectibles/CoinController.cs",
-                "content": '''using UnityEngine;
-
-namespace GameForge.Collectibles
-{
-    /// <summary>
-    /// 金币控制器 - 收集、浮动动画
-    /// </summary>
-    public class CoinController : MonoBehaviour
-    {
-        #region Fields
-        [Header("Collection")]
-        [SerializeField] private int _scoreValue = 10;
-
-        [Header("Animation")]
-        [SerializeField] private float _bobSpeed = 2f;
-        [SerializeField] private float _bobHeight = 0.15f;
-
-        private Vector3 _startPosition;
-        #endregion
-
-        #region Unity Lifecycle
-        private void Awake() { _startPosition = transform.position; }
-
-        private void Update()
-        {
-            float newY = _startPosition.y + Mathf.Sin(Time.time * _bobSpeed) * _bobHeight;
-            transform.position = new Vector3(_startPosition.x, newY, _startPosition.z);
-        }
-        #endregion
-
-        #region Collection
-        private void OnTriggerEnter2D(Collider2D other)
-        {
-            if (other.CompareTag("Player"))
-            {
-                if (GameForge.Core.GameManager.Instance != null) GameForge.Core.GameManager.Instance.AddScore(_scoreValue);
-                Destroy(gameObject);
-            }
-        }
-        #endregion
-    }
-}''',
-                "language": "csharp",
-                "engine": "unity",
-            }]
-        return []
-
-    def _generate_generic_code(self, task_name: str, engine: str, file_path: str = None) -> List[Dict[str, Any]]:
-        if engine == "unity":
-            class_name = task_name.replace(" ", "").replace("-", "").replace("_", "")
-            if not class_name or not class_name[0].isalpha():
-                class_name = "Generated" + class_name
-
-            if not file_path:
-                file_path = f"Assets/Scripts/Generated/{class_name}.cs"
-
-            return [{
-                "file_path": file_path,
-                "content": f'''using UnityEngine;
-
-namespace GameForge.Generated
-{{
-    /// <summary>
-    /// {task_name} - 自动生成的组件
-    /// </summary>
-    public class {class_name} : MonoBehaviour
-    {{
-        #region Fields
-        [SerializeField] private bool _enabled = true;
-        [SerializeField] private float _updateInterval = 0.1f;
-        private float _timer;
-        #endregion
-
-        #region Unity Lifecycle
-        private void Awake()
-        {{
-            Initialize();
-        }}
-
-        private void Update()
-        {{
-            if (!_enabled) return;
-
-            _timer += Time.deltaTime;
-            if (_timer >= _updateInterval)
-            {{
-                _timer = 0f;
-                OnTick();
-            }}
-        }}
-        #endregion
-
-        #region Protected Methods
-        protected virtual void Initialize()
-        {{
-            // 初始化逻辑
-        }}
-
-        protected virtual void OnTick()
-        {{
-            // 定时更新逻辑
-        }}
-        #endregion
-
-        #region Public Methods
-        public void SetEnabled(bool enabled)
-        {{
-            _enabled = enabled;
-        }}
-        #endregion
-    }}
-}}''',
-                "language": "csharp",
-                "engine": engine,
-            }]
-        return []
-
-    def _generate_camera_follow_code(self, engine: str) -> List[Dict[str, Any]]:
-        """生成摄像机跟随脚本"""
-        if engine == "unity":
-            return [{
-                "file_path": "Assets/Scripts/Camera/CameraFollow.cs",
-                "content": '''using UnityEngine;
-
-namespace GameForge.Camera
-{
-    /// <summary>
-    /// 2D/3D 摄像机跟随目标
-    /// </summary>
-    public class CameraFollow : MonoBehaviour
-    {
-        #region Fields
-        [Header("跟随设置")]
-        [SerializeField] private Transform _target;
-        [SerializeField] private float _smoothSpeed = 5f;
-        [SerializeField] private Vector3 _offset = new Vector3(0, 1, -10);
-
-        [Header("边界限制")]
-        [SerializeField] private bool _useBounds;
-        [SerializeField] private float _minX, _maxX, _minY, _maxY;
-        #endregion
-
-        #region Unity Lifecycle
-        private void LateUpdate()
-        {
-            if (_target == null) return;
-            FollowTarget();
-        }
-        #endregion
-
-        #region Private Methods
-        private void FollowTarget()
-        {
-            Vector3 desiredPos = _target.position + _offset;
-            Vector3 smoothedPos = Vector3.Lerp(transform.position, desiredPos, _smoothSpeed * Time.deltaTime);
-
-            if (_useBounds)
-            {
-                smoothedPos.x = Mathf.Clamp(smoothedPos.x, _minX, _maxX);
-                smoothedPos.y = Mathf.Clamp(smoothedPos.y, _minY, _maxY);
-            }
-
-            transform.position = smoothedPos;
-        }
-        #endregion
-
-        #region Public Methods
-        public void SetTarget(Transform target)
-        {
-            _target = target;
-        }
-        #endregion
-    }
-}''',
-                "language": "csharp",
-                "engine": engine,
-            }]
-        return []
-
-    def _generate_ui_manager_code(self, engine: str) -> List[Dict[str, Any]]:
-        """生成UI管理器脚本"""
-        if engine == "unity":
-            return [{
-                "file_path": "Assets/Scripts/UI/UIManager.cs",
-                "content": '''using UnityEngine;
-using UnityEngine.UI;
-
-namespace GameForge.UI
-{
-    /// <summary>
-    /// 游戏UI管理器 — 管理HUD和菜单
-    /// </summary>
-    public class UIManager : MonoBehaviour
-    {
-        #region Fields
-        [Header("HUD元素")]
-        [SerializeField] private Text _scoreText;
-        [SerializeField] private Text _livesText;
-        [SerializeField] private Slider _healthBar;
-
-        [Header("面板")]
-        [SerializeField] private GameObject _pausePanel;
-        [SerializeField] private GameObject _gameOverPanel;
-        #endregion
-
-        #region Unity Lifecycle
-        private void Awake()
-        {
-            if (_pausePanel) _pausePanel.SetActive(false);
-            if (_gameOverPanel) _gameOverPanel.SetActive(false);
-        }
-        #endregion
-
-        #region Public Methods
-        public void UpdateScore(int score)
-        {
-            if (_scoreText) _scoreText.text = $"Score: {score}";
-        }
-
-        public void UpdateLives(int lives)
-        {
-            if (_livesText) _livesText.text = $"Lives: {lives}";
-        }
-
-        public void UpdateHealth(float normalized)
-        {
-            if (_healthBar) _healthBar.value = Mathf.Clamp01(normalized);
-        }
-
-        public void ShowPauseMenu(bool show)
-        {
-            if (_pausePanel) _pausePanel.SetActive(show);
-        }
-
-        public void ShowGameOver(bool show)
-        {
-            if (_gameOverPanel) _gameOverPanel.SetActive(show);
-        }
-        #endregion
-    }
-}''',
-                "language": "csharp",
-                "engine": engine,
-            }]
-        return []
+        return self._generate_godot_generic(class_name, file_path)
+
+    # ============ Godot / GDScript 兜底生成器 ============
+
+    def _generate_player_godot(self) -> List[Dict[str, Any]]:
+        return [{
+            "file_path": "res://scripts/player/player_controller.gd",
+            "content": '''## 玩家控制器 — 移动、跳跃
+extends CharacterBody2D
+
+# ==================== 信号 ====================
+signal health_changed(new_health: int)
+signal died()
+
+# ==================== 导出变量 ====================
+@export var move_speed: float = 200.0
+@export var jump_velocity: float = -400.0
+
+# ==================== 私有变量 ====================
+var _health: int = 3
+var _gravity: float = ProjectSettings.get_setting("physics/2d/default_gravity", 980.0)
+
+@onready var _sprite: AnimatedSprite2D = $AnimatedSprite2D
+
+func _physics_process(delta: float) -> void:
+    var direction := Input.get_action_strength("move_right") - Input.get_action_strength("move_left")
+    velocity.x = direction * move_speed
+    velocity.y += _gravity * delta
+    if Input.is_action_just_pressed("jump") and is_on_floor():
+        velocity.y = jump_velocity
+    move_and_slide()
+
+func take_damage(amount: int = 1) -> void:
+    _health -= amount
+    health_changed.emit(_health)
+    if _health <= 0:
+        died.emit()
+''',
+            "language": "gdscript",
+            "engine": "godot",
+        }]
+
+    def _generate_game_manager_godot(self) -> List[Dict[str, Any]]:
+        return [{
+            "file_path": "res://scripts/game_manager.gd",
+            "content": '''## 游戏管理器 — 全局计分与状态（Autoload 单例）
+extends Node
+
+# ==================== 信号 ====================
+signal score_changed(new_score: int)
+signal health_changed(new_health: int)
+signal game_over()
+signal game_won()
+
+# ==================== 私有变量 ====================
+var _score: int = 0
+var _health: int = 3
+var _coins: int = 0
+var _total_coins: int = 5
+
+func add_score(amount: int) -> void:
+    _score += amount
+    score_changed.emit(_score)
+
+func collect_coin() -> void:
+    _coins += 1
+    add_score(1)
+    if _coins >= _total_coins:
+        game_won.emit()
+
+func take_damage(amount: int = 1) -> void:
+    _health -= amount
+    health_changed.emit(_health)
+    if _health <= 0:
+        game_over.emit()
+''',
+            "language": "gdscript",
+            "engine": "godot",
+        }]
+
+    def _generate_enemy_godot(self) -> List[Dict[str, Any]]:
+        return [{
+            "file_path": "res://scripts/enemy/enemy_controller.gd",
+            "content": '''## 敌人控制器 — 左右巡逻
+extends CharacterBody2D
+
+@export var move_speed: float = 60.0
+@export var patrol_distance: float = 120.0
+
+var _start_x: float = 0.0
+var _dir: int = 1
+var _gravity: float = ProjectSettings.get_setting("physics/2d/default_gravity", 980.0)
+
+func _ready() -> void:
+    _start_x = global_position.x
+
+func _physics_process(delta: float) -> void:
+    if abs(global_position.x - _start_x) >= patrol_distance:
+        _dir *= -1
+    velocity.x = _dir * move_speed
+    velocity.y += _gravity * delta
+    move_and_slide()
+
+func _on_body_entered(body: Node) -> void:
+    if body.is_in_group("player"):
+        if body.has_method("take_damage"):
+            body.take_damage(1)
+''',
+            "language": "gdscript",
+            "engine": "godot",
+        }]
+
+    def _generate_coin_godot(self) -> List[Dict[str, Any]]:
+        return [{
+            "file_path": "res://scripts/collectibles/coin_controller.gd",
+            "content": '''## 金币 — 收集 + 浮动动画
+extends Area2D
+
+@export var score_value: int = 1
+
+var _start_y: float = 0.0
+
+func _ready() -> void:
+    _start_y = global_position.y
+    body_entered.connect(_on_body_entered)
+
+func _process(delta: float) -> void:
+    global_position.y = _start_y + sin(Time.get_ticks_msec() / 200.0) * 6.0
+
+func _on_body_entered(body: Node) -> void:
+    if body.is_in_group("player"):
+        if Engine.has_singleton("GameManager") or get_tree().root.has_node("GameManager"):
+            pass
+        queue_free()
+''',
+            "language": "gdscript",
+            "engine": "godot",
+        }]
+
+    def _generate_camera_follow_godot(self) -> List[Dict[str, Any]]:
+        return [{
+            "file_path": "res://scripts/camera/camera_follow.gd",
+            "content": '''## 摄像机跟随
+extends Camera2D
+
+@export var follow_target: NodePath = ^""
+@export var smooth_speed: float = 5.0
+
+func _physics_process(delta: float) -> void:
+    var target := get_node_or_null(follow_target)
+    if target:
+        global_position = global_position.lerp(target.global_position, smooth_speed * delta)
+''',
+            "language": "gdscript",
+            "engine": "godot",
+        }]
+
+    def _generate_ui_manager_godot(self) -> List[Dict[str, Any]]:
+        return [{
+            "file_path": "res://scripts/ui/ui_manager.gd",
+            "content": '''## HUD 管理器
+extends CanvasLayer
+
+@onready var _score_label: Label = $ScoreLabel
+@onready var _health_label: Label = $HealthLabel
+
+func _ready() -> void:
+    var gm := get_tree().root.get_node_or_null("GameManager")
+    if gm:
+        if gm.has_signal("score_changed"):
+            gm.score_changed.connect(_on_score_changed)
+        if gm.has_signal("health_changed"):
+            gm.health_changed.connect(_on_health_changed)
+
+func _on_score_changed(new_score: int) -> void:
+    if _score_label:
+        _score_label.text = "Score: %d" % new_score
+
+func _on_health_changed(new_health: int) -> void:
+    if _health_label:
+        _health_label.text = "HP: %d" % new_health
+''',
+            "language": "gdscript",
+            "engine": "godot",
+        }]
+
+    def _generate_score_godot(self) -> List[Dict[str, Any]]:
+        return self._generate_game_manager_godot()
+
+    def _generate_collision_godot(self) -> List[Dict[str, Any]]:
+        return [{
+            "file_path": "res://scripts/core/collision_handler.gd",
+            "content": '''## 碰撞处理器
+extends Node
+
+signal collision_processed(kind: String)
+
+func register(body: Node) -> void:
+    if body.has_signal("body_entered"):
+        body.body_entered.connect(_on_body_entered)
+
+func _on_body_entered(body: Node) -> void:
+    collision_processed.emit(body.name)
+''',
+            "language": "gdscript",
+            "engine": "godot",
+        }]
+
+    def _generate_godot_generic(self, class_name: str, file_path: str) -> List[Dict[str, Any]]:
+        return [{
+            "file_path": file_path,
+            "content": '''## %s — 由 GameForge 自动生成的 GDScript 组件
+extends Node
+
+func _ready() -> void:
+    pass
+
+func _process(delta: float) -> void:
+    pass
+''' % class_name,
+            "language": "gdscript",
+            "engine": "godot",
+        }]

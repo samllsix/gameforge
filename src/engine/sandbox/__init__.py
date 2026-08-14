@@ -4,12 +4,10 @@
 """
 
 import os
-import subprocess
 import tempfile
 import shutil
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
-from datetime import datetime
 
 
 @dataclass
@@ -38,7 +36,7 @@ class SandboxExecutor:
 
     def __init__(self, config: Dict[str, Any]):
         sandbox_config = config.get("sandbox", {})
-        self.enabled = sandbox_config.get("enabled", True)
+        self.enabled = sandbox_config.get("enabled", False)
         self.timeout = sandbox_config.get("timeout", 300)
         self.memory_limit = sandbox_config.get("memory_limit", "512MB")
         self.allowed_paths = sandbox_config.get("allowed_paths", ["./projects", "./temp"])
@@ -53,54 +51,13 @@ class SandboxExecutor:
         Returns:
             执行结果
         """
-        if not self.enabled:
-            return ExecutionResult(
-                success=False, stdout="", stderr="Sandbox is disabled",
-                exit_code=1, execution_time=0
-            )
-
-        temp_dir = tempfile.mkdtemp(prefix="gameforge_sandbox_")
-        try:
-            code_file = os.path.join(temp_dir, "script.py")
-            with open(code_file, "w", encoding="utf-8") as f:
-                f.write(code)
-
-            cmd = ["python", code_file]
-            if args:
-                cmd.extend(args)
-
-            start_time = datetime.now()
-            process = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                cwd=temp_dir,
-            )
-            end_time = datetime.now()
-
-            execution_time = (end_time - start_time).total_seconds()
-
-            return ExecutionResult(
-                success=process.returncode == 0,
-                stdout=process.stdout,
-                stderr=process.stderr,
-                exit_code=process.returncode,
-                execution_time=execution_time,
-            )
-
-        except subprocess.TimeoutExpired:
-            return ExecutionResult(
-                success=False, stdout="", stderr=f"Execution timed out after {self.timeout}s",
-                exit_code=-1, execution_time=self.timeout
-            )
-        except Exception as e:
-            return ExecutionResult(
-                success=False, stdout="", stderr=str(e),
-                exit_code=-1, execution_time=0
-            )
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        return ExecutionResult(
+            success=False,
+            stdout="",
+            stderr="Host code execution is disabled: configure an isolated sandbox backend.",
+            exit_code=1,
+            execution_time=0,
+        )
 
     def validate_code(self, code: str) -> Tuple[bool, List[str]]:
         """验证代码安全性
@@ -134,9 +91,12 @@ class SandboxExecutor:
             临时目录路径
         """
         temp_dir = tempfile.mkdtemp(prefix="gameforge_project_")
+        root = os.path.realpath(temp_dir)
 
         for rel_path, content in files.items():
-            file_path = os.path.join(temp_dir, rel_path)
+            file_path = os.path.realpath(os.path.join(root, rel_path))
+            if os.path.commonpath([root, file_path]) != root:
+                raise ValueError(f"Path escapes temporary project: {rel_path}")
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)

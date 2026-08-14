@@ -89,8 +89,8 @@ func to_dict() -> Dictionary:
 
 
 ## 从字典创建
-static func from_dict(data: Dictionary) -> Observation:
-	var obs = Observation.new()
+static func from_dict(data: Dictionary):
+	var obs = new()
 	obs.timestamp = data.get("timestamp", 0.0)
 
 	var pos = data.get("position", {})

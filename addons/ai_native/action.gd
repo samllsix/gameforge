@@ -45,8 +45,8 @@ var params: Dictionary = {}
 
 
 ## 静态工厂方法：创建移动行为
-static func move(direction: Vector2, continuous: bool = true) -> Action:
-	var action = Action.new()
+static func move(direction: Vector2, continuous: bool = true):
+	var action = new()
 	action.type = Type.MOVE
 	action.move_direction = direction.normalized()
 	action.continuous = continuous
@@ -54,15 +54,15 @@ static func move(direction: Vector2, continuous: bool = true) -> Action:
 
 
 ## 静态工厂方法：创建跳跃行为
-static func jump() -> Action:
-	var action = Action.new()
+static func jump():
+	var action = new()
 	action.type = Type.JUMP
 	return action
 
 
 ## 静态工厂方法：创建攻击行为
-static func attack(target: Node = null, intensity: float = 1.0) -> Action:
-	var action = Action.new()
+static func attack(target: Node = null, intensity: float = 1.0):
+	var action = new()
 	action.type = Type.ATTACK
 	action.target_node = target
 	action.intensity = intensity
@@ -70,24 +70,24 @@ static func attack(target: Node = null, intensity: float = 1.0) -> Action:
 
 
 ## 静态工厂方法：创建交互行为
-static func interact(target: Node = null) -> Action:
-	var action = Action.new()
+static func interact(target: Node = null):
+	var action = new()
 	action.type = Type.INTERACT
 	action.target_node = target
 	return action
 
 
 ## 静态工厂方法：创建等待行为
-static func wait(duration: float) -> Action:
-	var action = Action.new()
+static func wait(duration: float):
+	var action = new()
 	action.type = Type.WAIT
 	action.duration = duration
 	return action
 
 
 ## 静态工厂方法：创建自定义行为
-static func custom(action_name: String, params: Dictionary = {}) -> Action:
-	var action = Action.new()
+static func custom(action_name: String, params: Dictionary = {}):
+	var action = new()
 	action.type = Type.CUSTOM
 	action.custom_action = action_name
 	action.params = params
@@ -95,8 +95,8 @@ static func custom(action_name: String, params: Dictionary = {}) -> Action:
 
 
 ## 静态工厂方法：创建无操作
-static func none() -> Action:
-	var action = Action.new()
+static func none():
+	var action = new()
 	action.type = Type.NONE
 	return action
 
@@ -116,8 +116,8 @@ func to_dict() -> Dictionary:
 
 
 ## 从字典创建
-static func from_dict(data: Dictionary) -> Action:
-	var action = Action.new()
+static func from_dict(data: Dictionary):
+	var action = new()
 	action.type = data.get("type", Type.NONE)
 
 	var dir = data.get("move_direction", {})

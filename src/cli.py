@@ -74,7 +74,7 @@ def generate(ctx, input_file, output_dir):
     logger.subsection("执行工作流")
     result = asyncio.run(workflow.run({
         "project_context": {
-            "engine": "unity",
+            "engine": "godot",
             "project_name": "GameForge Project",
             "requirements": requirements,
         },
@@ -144,8 +144,8 @@ def workflow(ctx):
     logger.subsection("执行工作流")
     result = asyncio.run(workflow.run({
         "project_context": {
-            "engine": "unity",
-            "project_name": "Platformer Game",
+        "engine": "godot",
+        "project_name": "Platformer Game",
             "requirements": requirements,
         },
     }))
@@ -229,74 +229,9 @@ def refactor(ctx, input_dir, output_dir):
     logger.success(f"日志已保存: {logger.get_log_file()}")
 
 
-@cli.command()
-@click.option("--project", "-p", default=None, help="Unity项目路径")
-@click.option("--action", "-a", type=click.Choice(["compile", "refresh", "import"]), default="compile", help="操作类型")
-@click.option("--files", "-f", default=None, help="要导入的文件目录")
-@click.pass_context
-def unity(ctx, project, action, files):
-    """Unity编辑器操作"""
-    reset_logger()
-    logger = get_logger(prefix="unity")
-
-    config = ctx.obj["config"]
-
-    logger.section("GameForge Unity操作")
-
-    from src.engine.unity import UnityEditor
-
-    unity_config = config.get("unity", {})
-    if project:
-        unity_config["unity_project_path"] = project
-
-    editor = UnityEditor(unity_config)
-
-    is_valid, msg = editor.validate()
-    if not is_valid:
-        logger.failure(f"验证失败: {msg}")
-        return
-
-    logger.result("项目路径", editor.project_path)
-
-    if action == "compile":
-        logger.subsection("编译项目")
-        result = editor.compile_project()
-        if result.success:
-            logger.success(f"编译成功 ({result.compile_time:.1f}秒)")
-        else:
-            logger.failure(f"编译失败: {len(result.errors)}个错误")
-            for err in result.errors[:5]:
-                logger.result("错误", err)
-
-    elif action == "refresh":
-        logger.subsection("刷新资源")
-        if editor.refresh_assets():
-            logger.success("资源刷新成功")
-        else:
-            logger.failure("资源刷新失败")
-
-    elif action == "import" and files:
-        logger.subsection("导入文件")
-        from src.core.tools import list_files, read_file
-        file_list = list_files(files, [".cs"])
-        import_files = {}
-        for f in file_list:
-            content = read_file(f)
-            if content:
-                rel_path = f.replace(files, "").lstrip("/\\")
-                import_files[f"Assets/Scripts/{rel_path}"] = content
-
-        result = editor.import_files(import_files)
-        if result.success:
-            logger.success(f"导入成功: {len(result.imported_files)}个文件")
-        else:
-            logger.failure(f"导入失败: {len(result.failed_files)}个文件")
-
-    logger.section("操作完成")
-
 
 @cli.command()
-@click.option("--host", default="0.0.0.0", help="监听地址")
+@click.option("--host", default="127.0.0.1", help="监听地址")
 @click.option("--port", "-p", default=lambda: int(os.getenv("GAMEFORGE_PORT", "8000")), type=int, help="监听端口")
 @click.option("--workers", "-w", default=1, type=int, help="工作进程数")
 @click.pass_context

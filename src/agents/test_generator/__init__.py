@@ -17,6 +17,48 @@ class TestGeneratorAgent(BaseAgent):
         super().__init__(AgentType.TEST_GENERATOR, config)
         self.llm = get_llm_client(config, provider=self.provider, model=self.model)
         self.coverage_target = self.agent_config.get("coverage_target", 80)
+        # 多智能体改造第五步：是否读取 Godot 真实编译/运行反馈
+        self.engine_feedback_enabled = self.agent_config.get("engine_feedback_enabled", True)
+
+    # ---------- 多智能体改造第五步：读取真实引擎反馈 ----------
+
+    async def read_engine_feedback(self) -> Dict[str, Any]:
+        """读取 Godot 编辑器的真实编译/运行结果，作为测试生成的 grounded 输入。
+
+        GameForge 独有优势：不像 ChatDev 只到「解释器跑测试」，这里 agent 能直接
+        拿到 Godot 引擎（8765 HTTP 桥接）的真实报错，让测试与修复更接地气。
+        Godot 未运行时自动降级，不影响主流程。
+        """
+        if not self.engine_feedback_enabled:
+            return {"engine_available": False, "degraded": True, "reason": "引擎反馈已禁用"}
+
+        try:
+            from src.engine.godot.godot_http_client import GodotHTTPClient
+        except Exception as e:
+            return {"engine_available": False, "degraded": True, "reason": f"无法导入 Godot 客户端: {e}"}
+
+        client = GodotHTTPClient()
+        try:
+            if not await client.check_health():
+                return {
+                    "engine_available": False,
+                    "degraded": True,
+                    "reason": "Godot Editor HTTP Server 未运行（8765），已降级为仅生成测试桩",
+                }
+            errors = await client.get_compile_errors()
+            return {
+                "engine_available": True,
+                "degraded": False,
+                "compile_errors": errors or [],
+                "summary": f"Godot 引擎在线，读取到 {len(errors or [])} 条编译错误作为测试依据",
+            }
+        except Exception as e:
+            return {"engine_available": False, "degraded": True, "reason": f"读取引擎反馈失败: {e}"}
+        finally:
+            try:
+                await client.close()
+            except Exception:
+                pass
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         self.log_action("test_generator_execute")

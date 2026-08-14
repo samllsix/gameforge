@@ -7,6 +7,7 @@ import asyncio
 from typing import Any, Dict
 from src.agents.base import BaseAgent
 from src.core.state.game_state import GameDevState, AgentType
+from src.core.dialogue import TERMINATE
 from src.utils.llm_client import get_llm_client
 
 
@@ -127,3 +128,32 @@ class CodeReviewerAgent(BaseAgent):
         except Exception as e:
             self.log_error("reviewer_llm_error", {"error": str(e)})
             return {"score": 0, "issues": [], "passed": False, "status": "review_unavailable", "note": f"Review error: {e}"}
+
+    def summarize_issues(self, review_result: Dict[str, Any]) -> str:
+        """把结构化审查结果转成一段自然语言「发言」（用于对话 dyad 的指导者侧）。
+
+        Args:
+            review_result: ``review()`` 的返回
+
+        Returns:
+            可读的审查意见文本（含终止符提示）
+        """
+        status = review_result.get("status")
+        if status == "skipped":
+            return "【审查】快速模式已跳过，默认通过，无需重构方处理。"
+        if status == "review_unavailable":
+            return "【审查】无法完成审查（超时/解析失败），交由后续环节兜底。"
+
+        issues = review_result.get("issues") or []
+        score = review_result.get("score", 0)
+        if not issues:
+            return f"【审查】评分 {score}，未发现遗留问题，建议通过。{TERMINATE}"
+
+        lines = [f"【审查】评分 {score}，发现 {len(issues)} 项问题，请重构方处理："]
+        for i in issues:
+            sev = i.get("severity", "")
+            f = i.get("file", "")
+            ln = i.get("line", "")
+            msg = i.get("message", "")
+            lines.append(f"  - [{sev}] {f}:{ln} {msg}")
+        return "\n".join(lines)

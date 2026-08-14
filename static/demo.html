@@ -57,9 +57,25 @@ const DEFAULT = {"scene_name":"GameScene","camera":{"position":[0,1,-10],"orthog
     {"name":"Enemy1","type":"Cube","position":[2,-1,0],"color":[0.97,0.44,0.44,1],"scale":[0.8,0.8,0.8],"components":[{"type":"Rigidbody2D","properties":{"gravityScale":"3"}},{"type":"BoxCollider2D","properties":{"size":"[0.8,0.8]"}},{"type":"EnemyController","properties":{"moveSpeed":"2","patrolDistance":"3"}}]}
 ]};
 
-let scene;
-try { const s = sessionStorage.getItem('gameforge_demo_scene'); scene = s ? JSON.parse(s) : DEFAULT; } catch(e) { scene = DEFAULT; }
-document.getElementById('sceneName').textContent = scene.scene_name || 'GameScene';
+async function loadScene() {
+    try {
+        const s = sessionStorage.getItem('gameforge_demo_scene');
+        if (s) return JSON.parse(s);
+    } catch(e) {}
+    try {
+        const resp = await fetch('/api/v1/history?limit=1');
+        const data = await resp.json();
+        if (data.history && data.history.length > 0) {
+            const sd = data.history[0].scene_description;
+            if (sd && sd.game_objects && sd.game_objects.length > 0) return sd;
+        }
+    } catch(e) {}
+    return DEFAULT;
+}
+
+(async function start() {
+    const scene = await loadScene();
+    document.getElementById('sceneName').textContent = scene.scene_name || 'GameScene';
 
 const cam = scene.camera || {position:[0,0,-10],orthographic_size:6,background_color:[0.4,0.7,1,1]};
 const camSize = cam.orthographic_size || 6;
@@ -131,7 +147,8 @@ function draw(){
 }
 
 function loop(){update();draw();requestAnimationFrame(loop);}
-loop();
+    loop();
+})();
 </script>
 </body>
 </html>

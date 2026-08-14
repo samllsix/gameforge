@@ -52,7 +52,7 @@ def sample_config():
         },
         "agents": {
             "orchestrator": {},
-            "code_generator": {"supported_engines": ["unity", "unreal"]},
+            "code_generator": {"supported_engines": ["godot"]},
             "code_reviewer": {},
             "test_generator": {},
             "debugger": {},
@@ -108,7 +108,7 @@ def sample_game_state():
         "is_complete": False,
         "requires_human_input": False,
         "project_context": {
-            "engine": "unity",
+            "engine": "godot",
             "project_name": "TestPlatformer",
             "requirements": "2D平台跳跃游戏",
         },

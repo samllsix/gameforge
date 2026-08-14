@@ -17,6 +17,47 @@ class DebuggerAgent(BaseAgent):
         super().__init__(AgentType.DEBUGGER, config)
         self.llm = get_llm_client(config, provider=self.provider, model=self.model)
         self.max_fix_attempts = self.agent_config.get("max_fix_attempts", 5)
+        # 多智能体改造第四步：是否允许委派调研子 agent 查知识库
+        self.enable_delegation = self.agent_config.get("enable_delegation", True)
+
+    # ---------- 多智能体改造第四步：动态委派查知识库 ----------
+
+    def delegate_to_research(self, error: str, top_k: int = 3) -> Dict[str, Any]:
+        """遇到陌生报错时，委派一个临时调研子 agent 查 Godot 知识库并回收结论。
+
+        这是「自治」的体现：debugger 不再只靠自身 LLM，而是在需要时伸手去检索
+        外部知识（data/godot_knowledge*.json，共 40+ 条 RAG 知识）。
+
+        Args:
+            error: 需要调研的错误信息
+            top_k: 返回最相关的知识条数
+        Returns:
+            {"delegated": bool, "query": str, "findings": [...], "summary": str}
+        """
+        if not self.enable_delegation or not error:
+            return {"delegated": False, "query": error, "findings": [], "summary": "委派已禁用或未提供错误"}
+
+        from src.core.knowledge.lookup import lookup_godot_knowledge
+
+        findings = lookup_godot_knowledge(error, top_k=top_k)
+        summary = (
+            f"调研子 agent 从 Godot 知识库检索到 {len(findings)} 条相关知识"
+            if findings
+            else "知识库中未找到直接匹配，建议结合 Godot 官方文档进一步排查"
+        )
+        return {
+            "delegated": True,
+            "query": error,
+            "findings": [
+                {
+                    "title": f.get("title", ""),
+                    "content": (f.get("content") or f.get("description") or "")[:300],
+                    "tags": f.get("tags", []),
+                }
+                for f in findings
+            ],
+            "summary": summary,
+        }
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         self.log_action("debugger_execute")

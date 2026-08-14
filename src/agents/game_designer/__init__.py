@@ -29,7 +29,7 @@ class GameDesignerAgent(BaseAgent):
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         self.log_action("game_designer_execute")
         requirements = state.get("project_context", {}).get("requirements", "")
-        engine = state.get("project_context", {}).get("engine", "unity")
+        engine = state.get("project_context", {}).get("engine", "godot")
 
         gdm = await self.generate_design_model(requirements, engine)
         if not gdm:

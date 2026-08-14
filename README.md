@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![LangGraph](https://img.shields.io/badge/LangGraph-Latest-green.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-teal.svg)
-![Unity](https://img.shields.io/badge/Unity-2022+-black.svg)
+![Godot](https://img.shields.io/badge/Godot-4.2+-478cbf.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 **让AI Agent帮你完成游戏开发全流程**
@@ -23,7 +23,7 @@ GameForge 是一个基于 **Multi-Agent架构** 的游戏研发AI协作平台，
 ### 核心价值
 
 - 🤖 **智能协作**：多个专业Agent分工协作，模拟真实游戏开发团队
-- 🎮 **游戏专用**：深度理解Unity/Unreal引擎，生成符合规范的游戏代码
+- 🎮 **游戏专用**：面向 Godot 4.x，生成符合规范的 GDScript 与场景文件
 - 🔄 **自动闭环**：生成→测试→修复的自动迭代，持续优化代码质量
 - 📊 **量化评测**：多维度评测体系，客观衡量生成代码质量
 
@@ -40,16 +40,16 @@ GameForge 是一个基于 **Multi-Agent架构** 的游戏研发AI协作平台，
 ```
 
 - **规划Agent**：解析需求文档，生成结构化任务计划
-- **代码生成Agent**：生成Unity C# / Unreal C++代码
+- **代码生成Agent**：生成 Godot GDScript 和场景描述
 - **代码审查Agent**：检查代码质量、规范符合性
 - **测试生成Agent**：自动生成单元测试和集成测试
 - **调试Agent**：分析错误并生成修复方案
 
 ### 2. 游戏专用代码生成
 
-- ✅ 理解GameObject、Component、Prefab等概念
-- ✅ 遵循Unity/Unreal命名规范
-- ✅ 支持ECS、MVC等架构模式
+- ✅ 理解 Node、Scene、Resource 等 Godot 概念
+- ✅ 遵循 Godot 与 GDScript 命名规范
+- ✅ 支持节点组合与脚本组件化设计
 - ✅ 自动添加注释和文档
 
 ### 3. 自动化测试闭环
@@ -86,7 +86,7 @@ GameForge 是一个基于 **Multi-Agent架构** 的游戏研发AI协作平台，
 │  Code Generator | Test Generator | Refactor | Review    │
 ├─────────────────────────────────────────────────────────┤
 │  【工具与执行层】                                        │
-│  Unity/Unreal Editor API | Git | CI/CD | 沙箱执行环境   │
+│  Godot Editor API | Git | CI/CD | 隔离执行环境        │
 ├─────────────────────────────────────────────────────────┤
 │  【记忆与知识层】                                        │
 │  向量数据库 | 项目规范库 | 历史经验库                    │

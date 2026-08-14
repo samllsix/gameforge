@@ -21,7 +21,7 @@ def _load_templates() -> List[Dict[str, Any]]:
 
     templates = []
     template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "config", "templates")
-    for name in ["unity_2d_platformer.json", "unity_space_shooter.json", "unity_rpg_turnbased.json"]:
+    for name in ["godot_2d_platformer.json", "godot_space_shooter.json", "godot_rpg_turnbased.json"]:
         path = os.path.join(template_dir, name)
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -79,18 +79,20 @@ class PlannerAgent(BaseAgent):
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         self.log_action("planner_execute")
-        task_plan = await self.plan(state)
+        result = await self.plan(state)
 
-        if not task_plan:
+        tasks = result.get("tasks", []) if isinstance(result, dict) else result
+        if not tasks:
             self.log_error("no_task_plan_generated")
             return {"error_log": ["Failed to generate task plan"]}
 
         return {
-            "task_plan": task_plan,
+            "task_plan": tasks,
+            "asset_plan": result.get("asset_plan", {}) if isinstance(result, dict) else {},
             "current_phase": "planning_complete",
         }
 
-    async def plan(self, state: GameDevState) -> List[Dict[str, Any]]:
+    async def plan(self, state: GameDevState) -> Dict[str, Any]:
         requirements = state.get("project_context", {}).get("requirements", "")
         if not requirements:
             requirements = "默认游戏开发任务"
@@ -104,7 +106,7 @@ class PlannerAgent(BaseAgent):
             tasks = self._plan_from_gdm(gdm)
             if tasks:
                 self.log_action("task_plan_generated_from_gdm", {"task_count": len(tasks)})
-                return tasks
+                return {"tasks": tasks, "asset_plan": self._derive_asset_plan(gdm)}
 
         # 次优：尝试匹配模板（确定性快速路径）
         tpl = match_template(requirements)
@@ -113,11 +115,41 @@ class PlannerAgent(BaseAgent):
             tasks = tpl.get("task_plan", [])
             for t in tasks:
                 t.setdefault("status", "pending")
-            return tasks
+            return {"tasks": tasks, "asset_plan": {}}
 
         # 兜底：LLM生成
-        engine = state.get("project_context", {}).get("engine", "unity")
+        engine = state.get("project_context", {}).get("engine", "godot")
         return await self._plan_with_llm(requirements, engine)
+
+    def _derive_asset_plan(self, gdm: Dict[str, Any]) -> Dict[str, Any]:
+        """从 GameSpec/GDM 派生初步资源规划（asset_id 留待资源规划智能体补全）"""
+        style = gdm.get("asset_style", "pixel")
+        roles = gdm.get("required_asset_roles", [])
+        assets = [{"role": r, "asset_id": "", "fallback_asset_id": ""} for r in roles]
+        return {
+            "style": style,
+            "assets": assets,
+            "missing_assets": [],
+            "warnings": ["asset_plan 由 GameSpec 派生，asset_id 需资源规划智能体对照 AssetManifest 补全"],
+        }
+
+    def _derive_asset_plan_from_requirements(self, requirements: str) -> Dict[str, Any]:
+        """从需求文本派生最小资源规划占位（兜底用）"""
+        roles = []
+        mapping = {
+            "玩家": "player", "角色": "player", "敌人": "enemy", "怪": "enemy",
+            "金币": "coin", "道具": "pickup", "地面": "ground", "平台": "platform",
+            "子弹": "bullet", "boss": "boss",
+        }
+        for kw, role in mapping.items():
+            if kw in requirements and role not in roles:
+                roles.append(role)
+        return {
+            "style": "pixel",
+            "assets": [{"role": r, "asset_id": "", "fallback_asset_id": ""} for r in roles],
+            "missing_assets": [],
+            "warnings": ["需求派生占位，asset_id 需对照 AssetManifest 补全"],
+        }
 
     def _plan_from_gdm(self, gdm: Dict[str, Any]) -> List[Dict[str, Any]]:
         """根据 Game Design Model 生成任务计划"""
@@ -152,7 +184,7 @@ class PlannerAgent(BaseAgent):
                 "priority": 1 if module.get("priority") == "high" else (3 if module.get("priority") == "low" else 2),
                 "dependencies": dep_ids,
                 "assigned_agent": "code_generator",
-                "output_files": module.get("output_files", [f"Assets/Scripts/{module_name}.cs"]),
+                "output_files": module.get("output_files", [f"scripts/{module_name}.gd"]),
                 "target_game_objects": target_objects,
                 "required_components": module.get("required_components", []),
                 "related_system": module.get("related_system", ""),
@@ -171,7 +203,7 @@ class PlannerAgent(BaseAgent):
                 "priority": 2,
                 "dependencies": scene_task_deps,
                 "assigned_agent": "scene_generator",
-                "output_files": ["Assets/Scenes/scene_description.json"],
+                "output_files": ["scenes/scene_description.json"],
                 "target_game_objects": scenes[0].get("required_objects", []),
                 "required_components": [],
                 "related_system": "scene",
@@ -188,7 +220,7 @@ class PlannerAgent(BaseAgent):
             "priority": 3,
             "dependencies": [],
             "assigned_agent": "code_generator",
-            "output_files": ["Assets/README_Unity.md", "Assets/ProjectSettings_Suggestions.md"],
+            "output_files": ["README.md", "ProjectSettings_Suggestions.md"],
             "target_game_objects": [],
             "required_components": [],
             "related_system": "documentation",
@@ -207,19 +239,22 @@ class PlannerAgent(BaseAgent):
     async def _plan_with_llm(self, requirements: str, engine: str) -> List[Dict[str, Any]]:
         """使用LLM生成任务计划（兜底）"""
         system_prompt = self.get_prompt_template("planner_system")
-        user_prompt = f"""请根据以下游戏需求，生成3-6个代码开发任务列表。
+        user_prompt = f"""请根据以下游戏需求，生成开发计划（包含资源规划与任务拆解两部分）。
 
 游戏引擎: {engine}
 需求描述:
 {requirements}
 
 要求：
-1. 每个任务必须包含 id, name, description, type, priority, dependencies, assigned_agent 字段
-2. type 为 "code"/"ui"/"scene"/"config"
-3. assigned_agent 为 "code_generator" 或 "scene_generator"
-4. 任务之间可以有合理依赖（如 GameManager 先于 UI）
+1. 资源规划（asset_plan）：根据需求中的实体与资源角色，从项目 AssetManifest（data/asset_manifest.json）中为每个角色选择真实存在的 asset_id；找不到时填写 fallback_asset_id。
+2. 任务拆解（tasks）：生成 3-6 个开发任务。
+3. 每个任务必须包含 id, name, description, type, priority, dependencies, assigned_agent 字段
+4. type 为 "code"/"ui"/"scene"/"config"
+5. assigned_agent 为 "code_generator" 或 "scene_generator"
+6. 任务之间可以有合理依赖（如 GameManager 先于 UI）
+7. output_files 必须使用 Godot 路径（scripts/*.gd、scenes/*.tscn）
 
-请严格按照系统提示中的JSON格式输出任务列表。"""
+请严格按照系统提示中的 JSON 格式输出，包含 asset_plan 与 tasks 两个字段。"""
 
         try:
             result = await self.llm.chat_json(
@@ -238,7 +273,8 @@ class PlannerAgent(BaseAgent):
             tasks = result.get("tasks", [])
             if not tasks:
                 self.log_error("no_tasks_in_response")
-                return self._create_sample_task_plan(requirements)
+                sample = self._create_sample_task_plan(requirements)
+                return {"tasks": sample, "asset_plan": self._derive_asset_plan_from_requirements(requirements)}
 
             normalized = []
             for i, task in enumerate(tasks):
@@ -258,8 +294,9 @@ class PlannerAgent(BaseAgent):
                     "acceptance_criteria": task.get("acceptance_criteria", ""),
                 })
 
-            self.log_action("task_plan_generated", {"task_count": len(normalized)})
-            return normalized
+            asset_plan = result.get("asset_plan", {})
+            self.log_action("task_plan_generated", {"task_count": len(normalized), "has_asset_plan": bool(asset_plan)})
+            return {"tasks": normalized, "asset_plan": asset_plan}
 
         except Exception as e:
             self.log_error("planner_llm_error", {"error": str(e)})
@@ -282,9 +319,9 @@ class PlannerAgent(BaseAgent):
                 "priority": 1,
                 "dependencies": [],
                 "assigned_agent": AgentType.CODE_GENERATOR.value,
-                "output_files": ["Assets/Scripts/Player/PlayerController.cs"],
+                "output_files": ["scripts/player.gd"],
                 "scene_objects": ["Player"],
-                "required_components": ["Rigidbody2D", "BoxCollider2D", "SpriteRenderer"],
+                "required_components": ["CharacterBody2D", "CollisionShape2D", "Sprite2D"],
             },
             {
                 "id": "task_002",
@@ -295,7 +332,7 @@ class PlannerAgent(BaseAgent):
                 "priority": 1,
                 "dependencies": [],
                 "assigned_agent": AgentType.CODE_GENERATOR.value,
-                "output_files": ["Assets/Scripts/Core/GameManager.cs", "Assets/Scripts/Core/ScoreManager.cs"],
+                "output_files": ["scripts/game_manager.gd", "scripts/score_manager.gd"],
                 "scene_objects": ["GameManager"],
                 "required_components": [],
             },
@@ -308,9 +345,9 @@ class PlannerAgent(BaseAgent):
                 "priority": 2,
                 "dependencies": [],
                 "assigned_agent": AgentType.CODE_GENERATOR.value,
-                "output_files": ["Assets/Scripts/Enemy/EnemyController.cs", "Assets/Scripts/Collectibles/CoinController.cs"],
+                "output_files": ["scripts/enemy.gd", "scripts/coin.gd"],
                 "scene_objects": ["Enemy1", "Coin1", "Coin2"],
-                "required_components": ["Rigidbody2D", "BoxCollider2D"],
+                "required_components": ["CharacterBody2D", "CollisionShape2D"],
             },
         ]
 

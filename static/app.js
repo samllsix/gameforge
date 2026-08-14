@@ -695,7 +695,7 @@ function handleStreamEvent(data) {
 
         case 'scene_start':
             updatePhaseTimeline('scene', 'active');
-            addSceneProgressMessage(data.message || '正在生成Unity场景...');
+            addSceneProgressMessage(data.message || '正在生成 Godot 场景...');
             appendLog('场景生成开始', 'info');
             updateSceneTab(null);
             break;
@@ -717,7 +717,7 @@ function handleStreamEvent(data) {
             const sceneCard = el('div', { className: 'scene-success' });
             sceneCard.appendChild(el('div', { className: 'scene-icon' }, '✅'));
             const sceneInfo = el('div', { className: 'scene-info' });
-            sceneInfo.innerHTML = '<strong>Unity场景已生成！</strong><br>请切换到Unity Editor查看场景';
+            sceneInfo.innerHTML = '<strong>Godot 场景已生成！</strong><br>请在 Godot Editor 中打开场景查看';
             if (data.scene_path) {
                 sceneInfo.appendChild(el('br'));
                 sceneInfo.appendChild(el('span', { className: 'scene-path' }, escapeHtml(data.scene_path)));
@@ -751,19 +751,19 @@ function handleStreamEvent(data) {
             removeSceneProgress();
 
             const skipReason = data.reason === 'auto_build_disabled'
-                ? '自动构建未启用 (unity.auto_build_scene=false)'
-                : data.reason === 'unity_http_unavailable'
-                    ? 'Unity Editor HTTP Server 未运行'
-                    : escapeHtml(data.message || 'Unity未构建');
+                ? '自动构建未启用 (godot.auto_build_scene=false)'
+                : data.reason === 'godot_http_unavailable'
+                    ? 'Godot Editor HTTP Server 未运行'
+                    : escapeHtml(data.message || 'Godot 未构建');
 
             updateSceneTab({ status: 'skipped', message: skipReason });
 
             const skipCard = el('div', { className: 'scene-warning' });
             skipCard.appendChild(el('div', { className: 'scene-icon' }, '⚠'));
             const skipInfo = el('div', { className: 'scene-info' });
-            skipInfo.innerHTML = '<strong>场景描述已生成，Unity 自动构建已跳过</strong><br>原因：' + skipReason + '<br>';
+            skipInfo.innerHTML = '<strong>场景描述已生成，Godot 自动构建已跳过</strong><br>原因：' + skipReason + '<br>';
             skipInfo.appendChild(el('span', { className: 'scene-note' },
-                '代码生成不受影响，可稍后在 Unity 中导入 scene_description.json 构建场景'));
+                '代码生成不受影响，可稍后在 Godot 中导入 scene_description.json 构建场景'));
             skipCard.appendChild(skipInfo);
             addAIMessage(skipCard);
             break;
@@ -843,10 +843,10 @@ function handleStreamEvent(data) {
                 }
             }
 
-            // Unity 提示
+            // Godot 提示
             if (data.scene_status === 'skipped' || data.scene_status === 'pending') {
-                const hint = el('div', { className: 'unity-hint' });
-                hint.innerHTML = '<strong>提示：</strong>如需自动创建 Unity 场景，请打开 Unity 项目，启动 GameForge HTTP Server，并设置 <code>unity.auto_build_scene=true</code>。';
+                const hint = el('div', { className: 'godot-hint' });
+                hint.innerHTML = '<strong>提示：</strong>如需自动创建 Godot 场景，请打开 Godot 项目，启动 GameForge HTTP Server，并设置 <code>godot.auto_build_scene=true</code>。';
                 resultCard.appendChild(hint);
             }
 
@@ -876,16 +876,16 @@ function handleCompileResult(data) {
         addAIMessage(card);
 
     } else if (data.status === 'skipped') {
-        appendLog('Unity 编译跳过', 'warning');
+        appendLog('Godot 编译跳过', 'warning');
 
         const card = el('div', { className: 'scene-warning' });
         card.appendChild(el('div', { className: 'scene-icon' }, '⚠'));
         card.appendChild(el('div', { className: 'scene-info' },
-            el('strong', null, 'Unity 编译跳过'),
+            el('strong', null, 'Godot 编译跳过'),
             el('br'),
-            document.createTextNode(data.message || 'Unity Editor 未启动或自动构建未启用'),
+            document.createTextNode(data.message || 'Godot Editor 未启动或自动构建未启用'),
             el('br'),
-            el('span', { className: 'scene-note' }, '离线文件已生成，可手动导入 Unity'),
+            el('span', { className: 'scene-note' }, '离线文件已生成，可手动导入 Godot'),
         ));
         addAIMessage(card);
 
@@ -1097,7 +1097,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!requirements || appState.isGenerating) return;
             const engineEl = document.getElementById('engine');
             const nameEl = document.getElementById('projectName');
-            const engine = engineEl ? engineEl.value : 'unity';
+            const engine = engineEl ? engineEl.value : 'godot';
             const projectName = (nameEl ? nameEl.value : '') || 'GameForge Project';
             ta.value = '';
             autoResizeTextarea(ta);

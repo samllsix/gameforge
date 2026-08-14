@@ -10,7 +10,7 @@ app:
 
 # Server configuration
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8000
   workers: 4
   cors_origins:
@@ -101,6 +101,10 @@ agents:
       - godot
     code_style: gdscript
     include_comments: true
+  main_reviewer:
+    enabled: true
+    review_rounds: 2
+    check_game_design: true
   test_generator:
     coverage_target: 80
     test_types:
@@ -113,6 +117,24 @@ agents:
     quality_threshold: 70
     max_file_size: 1000
     auto_refactor: true
+  # 多智能体改造第一步：审查↔重构对话协商。默认关闭，保持原流水线行为。
+  # 设为 true 后，code_reviewer 与 refactor 将通过 DialogueSession 多轮协商。
+  # 需同时关闭 code_reviewer/refactor 的 fast_review/fast_refactor 才能看到真实 LLM 协商。
+  review_refactor:
+    dialogue_enabled: false
+    max_rounds: 3
+  # 多智能体改造第二步：反思回环。默认关闭。
+  # 开启后，main_reviewer 之后插入 reflector，若判定需重规划则回到 planner。
+  reflector:
+    enabled: false
+    fast_reflect: true      # true=启发式(离线可用)；false=调用 LLM 做复盘
+    max_reflections: 1       # 最大重规划次数，防止无限回环
+  # 多智能体改造第四步：debugger 动态委派查知识库（默认开启）。
+  debugger_delegation:
+    enabled: true
+  # 多智能体改造第五步：tester 读取 Godot 真实引擎反馈（默认开启，Godot 未运行时降级）。
+  tester_engine_feedback:
+    enabled: true
 
 # Vector Database Configuration
 vector_db:
@@ -149,7 +171,9 @@ monitoring:
 
 # Sandbox Configuration
 sandbox:
-  enabled: true
+  # Host-process execution is not a sandbox. Keep disabled until an isolated
+  # container or VM backend is available.
+  enabled: false
   timeout: 300
   memory_limit: 512MB
   network_enabled: false
@@ -177,6 +201,11 @@ godot:
   http_port: 8765
   ws_port: 8766
   auto_build_scene: true
+  # 编译/校验闭环模式：
+  #   auto     - 配置了 Godot 引擎路径时走 headless（无需编辑器 GUI），否则退回 8765 HTTP
+  #   headless - 始终走 headless（未配置引擎路径则报错，不退回）
+  #   http     - 始终走 8765 编辑器插件（需打开 Godot 编辑器并启用插件）
+  compile_mode: auto
 
 # Project Templates
 templates:
@@ -189,4 +218,4 @@ security:
   api_key_header: X-API-Key
   rate_limit: 60/minute
   max_input_length: 50000
-  sandbox_code_execution: true
+  sandbox_code_execution: false

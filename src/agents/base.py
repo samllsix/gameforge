@@ -100,21 +100,36 @@ class BaseAgent(ABC):
     def get_prompt_template(self, template_name: str) -> str:
         """获取Prompt模板
 
+        所有模板在返回前都会统一拼装全局系统提示词（global_system.txt），
+        确保"只生成 Godot / 禁止 Unity"等全局约束对所有智能体生效。
+
         Args:
             template_name: 模板名称
 
         Returns:
-            模板内容
+            模板内容（已包含全局约束）；模板不存在时返回空串以触发各 agent 的默认回退。
         """
         project_root = Path(__file__).resolve().parents[2]
-        template_path = project_root / "config" / "prompts" / f"{template_name}.txt"
+        prompt_dir = project_root / "config" / "prompts"
+        template_path = prompt_dir / f"{template_name}.txt"
 
-        if template_path.exists():
-            with template_path.open("r", encoding="utf-8") as f:
-                return f.read()
+        if not template_path.exists():
+            self.logger.warning("prompt_template_not_found", template=template_name)
+            return ""
 
-        self.logger.warning("prompt_template_not_found", template=template_name)
-        return ""
+        with template_path.open("r", encoding="utf-8") as f:
+            content = f.read()
+
+        # 全局约束不递归拼装自身，避免无限嵌套
+        if template_name != "global_system":
+            global_path = prompt_dir / "global_system.txt"
+            if global_path.exists():
+                with global_path.open("r", encoding="utf-8") as f:
+                    global_text = f.read().strip()
+                if global_text:
+                    content = f"{global_text}\n\n---\n\n{content}"
+
+        return content
 
     def format_state_summary(self, state: GameDevState) -> str:
         """格式化状态摘要

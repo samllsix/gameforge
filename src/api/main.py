@@ -78,7 +78,7 @@ def _split_env_list(name: str) -> Optional[List[str]]:
 
 IS_PRODUCTION = os.getenv("GAMEFORGE_ENV", "").lower() == "production"
 SERVER_CONFIG = config.get("server", {})
-DEFAULT_HOST = os.getenv("GAMEFORGE_HOST", str(SERVER_CONFIG.get("host", "0.0.0.0")))
+DEFAULT_HOST = os.getenv("GAMEFORGE_HOST", str(SERVER_CONFIG.get("host", "127.0.0.1")))
 DEFAULT_PORT = _env_int("GAMEFORGE_PORT", int(SERVER_CONFIG.get("port", 8000)))
 
 
@@ -148,13 +148,19 @@ if os.getenv("GAMEFORGE_API_KEYS"):
             key, name = pair.split(":", 1)
             API_KEYS[key.strip()] = name.strip()
 
-if IS_PRODUCTION and not API_KEYS:
-    raise RuntimeError("GAMEFORGE_API_KEYS must be set when GAMEFORGE_ENV=production")
+ALLOW_INSECURE_LOCALHOST = (
+    os.getenv("GAMEFORGE_ALLOW_INSECURE_LOCALHOST", "").lower() == "true"
+)
+if not API_KEYS and not ALLOW_INSECURE_LOCALHOST:
+    raise RuntimeError(
+        "GAMEFORGE_API_KEYS must be set. For loopback-only development, explicitly "
+        "set GAMEFORGE_ALLOW_INSECURE_LOCALHOST=true."
+    )
 
 app.add_middleware(
     APIKeyAuthMiddleware,
     api_keys=API_KEYS,
-    enabled=bool(API_KEYS),
+    enabled=not ALLOW_INSECURE_LOCALHOST,
 )
 
 
@@ -516,8 +522,70 @@ async def list_agents():
             {"name": "test_generator", "description": "测试生成Agent - 生成测试用例", "status": "available"},
             {"name": "debugger", "description": "调试Agent - 分析错误并生成修复方案", "status": "available"},
             {"name": "refactor", "description": "重构Agent - 分析代码质量并优化重构", "status": "available"},
+            {"name": "reflector", "description": "反思Agent - 复盘运行并决定是否重规划（多智能体改造第二步）", "status": "available"},
+            {"name": "scene_generator", "description": "场景生成Agent - 生成 Godot 场景", "status": "available"},
+            {"name": "main_reviewer", "description": "主审查Agent - 终审与设计审查", "status": "available"},
         ]
     }
+
+
+@app.post("/api/v1/debug/feature")
+async def debug_feature(request: Dict[str, Any]):
+    """调试端点：在浏览器中实测多智能体改造的每一项新能力（无需 LLM / 无需 Godot）。
+
+    请求体：{"feature": "reflect" | "bus" | "delegate" | "engine", "state": {...可选覆盖}}
+    仅用于验证功能，不参与真实生成流水线。
+    """
+    feature = request.get("feature")
+    state = request.get("state", {}) or {}
+
+    # 构造最小可用 state
+    base_state = {
+        "task_plan": state.get("task_plan", []),
+        "error_log": state.get("error_log", []),
+        "warnings": state.get("warnings", []),
+        "main_review_result": state.get("main_review_result", {}),
+        "design_review_result": state.get("design_review_result", {}),
+        "validation_result": state.get("validation_result", {}),
+        "code_generated": state.get("code_generated", {}),
+        "message_bus": state.get("message_bus", []),
+    }
+
+    if feature == "reflect":
+        from src.agents.reflector import ReflectorAgent
+        agent = ReflectorAgent(config)
+        result = await agent.execute(base_state)
+        return {"feature": "reflect", "reflection": result}
+
+    if feature == "bus":
+        from src.core.state.bus import publish, messages_for, latest
+        # 模拟 main_reviewer 发布一条重规划消息，debugger 读取
+        bus_state = dict(base_state)
+        pub = publish("replan", sender="main_reviewer", content="设计有坑，建议重排", recipient="planner")
+        bus_state["message_bus"] = bus_state.get("message_bus", []) + pub["message_bus"]
+        received = messages_for(bus_state, topic="replan", recipient="planner")
+        return {
+            "feature": "bus",
+            "published": pub["message_bus"][0],
+            "planner_inbox": received,
+            "latest_for_planner": latest(bus_state, recipient="planner"),
+        }
+
+    if feature == "delegate":
+        from src.agents.debugger import DebuggerAgent
+        agent = DebuggerAgent(config)
+        error = state.get("error", "Parser Error: Expected ':' in godot script at line 12")
+        result = agent.delegate_to_research(error)
+        return {"feature": "delegate", "result": result}
+
+    if feature == "engine":
+        from src.agents.test_generator import TestGeneratorAgent
+        agent = TestGeneratorAgent(config)
+        result = await agent.read_engine_feedback()
+        return {"feature": "engine", "result": result}
+
+    raise HTTPException(status_code=400, detail=f"未知 feature: {feature}")
+
 
 
 @app.get("/security/test")
@@ -639,9 +707,12 @@ async def get_history_by_task_id(task_id: str):
 
 def start_server(host: Optional[str] = None, port: Optional[int] = None, workers: int = 1):
     """启动服务器"""
+    resolved_host = host or DEFAULT_HOST
+    if not API_KEYS and resolved_host not in {"127.0.0.1", "::1", "localhost"}:
+        raise RuntimeError("An unauthenticated GameForge API may only bind to loopback.")
     uvicorn.run(
         "src.api.main:app",
-        host=host or DEFAULT_HOST,
+        host=resolved_host,
         port=port or DEFAULT_PORT,
         workers=workers,
         log_level="info",

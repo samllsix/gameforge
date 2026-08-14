@@ -218,7 +218,7 @@ class GodotSceneBuilder:
         for comp in obj.get("components", []):
             comp_type = comp.get("type", "")
             if comp_type and "Collider" not in comp_type and "Collision" not in comp_type:
-                script_path = f"res://scripts/{comp_type.to_snake_case() if hasattr(comp_type, 'to_snake_case') else comp_type.lower()}.gd"
+                script_path = f"res://scripts/{comp_type.lower()}.gd"  # 组件类型转小写即脚本名（str 无 to_snake_case）
                 lines.append(f'[node name="{comp_type}" type="Node" parent="{name}"]')
                 lines.append(f'script = ExtResource("{script_path}")')
 

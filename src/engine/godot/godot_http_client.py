@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import os
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -26,18 +27,26 @@ class GodotHTTPClient:
     默认端口: 8765
     """
 
-    def __init__(self, base_url: str = "http://localhost:8765", timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8765",
+        timeout: float = 30.0,
+        api_token: Optional[str] = None,
+    ):
         if not HAS_HTTPX:
             raise ImportError("需要安装 httpx: pip install httpx")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.api_token = api_token if api_token is not None else os.getenv("GAMEFORGE_GODOT_HTTP_TOKEN", "")
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> "httpx.AsyncClient":
         if self._client is None or self._client.is_closed:
+            headers = {"X-API-Key": self.api_token} if self.api_token else None
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 timeout=httpx.Timeout(self.timeout),
+                headers=headers,
             )
         return self._client
 
@@ -125,11 +134,12 @@ class GodotHTTPClient:
         except Exception:
             return []
 
-    async def send_scene(self, scene_desc: Dict[str, Any], max_retries: int = 15, retry_delay: float = 2.0) -> Dict[str, Any]:
-        """发送场景描述到 Godot 编辑器构建场景
+    async def send_scene(self, scene_desc: Dict[str, Any], tscn_text: str = None, max_retries: int = 15, retry_delay: float = 2.0) -> Dict[str, Any]:
+        """发送场景到 Godot 编辑器构建。
 
         Args:
             scene_desc: 场景描述 JSON
+            tscn_text: 若提供，则为 Python 侧已生成的合法 .tscn 文本，插件优先直接落盘
             max_retries: 最大重试次数
             retry_delay: 重试间隔（秒）
 
@@ -138,7 +148,12 @@ class GodotHTTPClient:
         """
         try:
             client = await self._get_client()
-            resp = await client.post("/api/scene/generate", json=scene_desc)
+            # 优先使用 Python 侧构建的 .tscn 文本（绕开插件端类型错配）
+            payload = (
+                {"tscn": tscn_text, "scene_name": scene_desc.get("scene_name", "GameScene")}
+                if tscn_text else scene_desc
+            )
+            resp = await client.post("/api/scene/generate", json=payload)
             if resp.status_code != 200:
                 return {"status": "error", "error": f"场景构建请求失败: {resp.status_code}"}
 

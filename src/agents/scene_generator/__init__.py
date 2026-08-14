@@ -1,6 +1,6 @@
 ﻿"""GameForge - 场景生成Agent
 
-分析游戏需求和任务计划，生成Unity场景描述JSON并发送到Unity Editor构建场景。
+分析游戏需求和任务计划，生成 Godot 场景描述并发送到 Godot Editor 构建场景。
 与代码生成并行执行，不阻塞主workflow。
 """
 
@@ -13,29 +13,29 @@ import structlog
 
 from src.agents.base import BaseAgent
 from src.core.state.game_state import GameDevState, AgentType
-from src.engine.unity.unity_http_client import UnityHTTPClient
+from src.engine.godot.godot_http_client import GodotHTTPClient
 
 logger = structlog.get_logger()
 
 
 class SceneGeneratorAgent(BaseAgent):
-    """场景生成Agent - 生成Unity场景描述并发送到Unity Editor"""
+    """场景生成Agent - 生成 Godot 场景描述并发送到 Godot Editor"""
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(AgentType.SCENE_GENERATOR, config)
-        unity_config = config.get("unity", {})
-        self.auto_build_scene = unity_config.get("auto_build_scene", False)
-        self.unity_client = UnityHTTPClient(
-            host="localhost",
-            port=unity_config.get("http_port", 8765),
+        godot_config = config.get("godot", {})
+        self.auto_build_scene = godot_config.get("auto_build_scene", False)
+        self.godot_client = GodotHTTPClient(
+            base_url=f"http://{godot_config.get('host', 'localhost')}:{godot_config.get('http_port', 8765)}",
             timeout=60.0,
         )
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         """执行场景生成
 
-        始终生成场景描述JSON，无论Unity Editor是否在线。
-        仅在auto_build_scene=True且Unity在线时才发送到Unity构建。
+        始终生成场景描述JSON，无论 Godot Editor 是否在线。
+        仅在 auto_build_scene=True 且 Godot 在线时才发送构建；
+        Python 侧会先构建合法 .tscn 文本并交由插件落盘。
 
         Args:
             state: 当前游戏开发状态
@@ -44,13 +44,13 @@ class SceneGeneratorAgent(BaseAgent):
             场景生成结果，scene_status为 built/skipped/error
         """
         requirements = state.get("project_context", {}).get("requirements", "")
-        engine = state.get("project_context", {}).get("engine", "unity")
+        engine = state.get("project_context", {}).get("engine", "godot")
         task_plan = state.get("task_plan", [])
         gdm = state.get("game_design_model")
         file_metadata = state.get("file_metadata", {})
 
-        if engine != "unity":
-            return {"scene_status": "skipped", "scene_skip_reason": "unsupported_engine", "message": "仅支持Unity引擎场景生成"}
+        if engine != "godot":
+            return {"scene_status": "skipped", "scene_skip_reason": "unsupported_engine", "message": "仅支持 Godot 引擎场景生成"}
 
         # Step 1: Always generate scene description first
         self.log_action("generating_scene_description", {
@@ -72,35 +72,44 @@ class SceneGeneratorAgent(BaseAgent):
                 "scene_status": "skipped",
                 "scene_skip_reason": "auto_build_disabled",
                 "scene_description": scene_desc,
-                "message": "场景描述已生成，自动构建已关闭（unity.auto_build_scene=false）",
+                "message": "场景描述已生成，自动构建已关闭（godot.auto_build_scene=false）",
             }
 
-        # Step 3: Check Unity Editor health
-        is_alive = await self.unity_client.check_health()
+        # Step 3: Check Godot Editor health
+        is_alive = await self.godot_client.check_health()
         if not is_alive:
-            self.log_action("scene_build_skipped", {"reason": "unity_http_unavailable"})
+            self.log_action("scene_build_skipped", {"reason": "godot_http_unavailable"})
             return {
                 "scene_status": "skipped",
-                "scene_skip_reason": "unity_http_unavailable",
+                "scene_skip_reason": "godot_http_unavailable",
                 "scene_description": scene_desc,
-                "message": "Unity Editor HTTP服务器未运行，场景描述已生成但未构建",
+                "message": "Godot Editor HTTP 服务未运行，场景描述已生成但未构建",
             }
 
-        # Step 4: Import generated code files to Unity Editor
+        # Step 4: Import generated code files to Godot Editor
         code_files = state.get("code_generated", {})
-        cs_files = {k: v for k, v in code_files.items() if k.endswith(".cs")}
-        if cs_files:
-            self.log_action("importing_code_to_unity", {"file_count": len(cs_files)})
-            import_result = await self.unity_client.import_files(cs_files)
+        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
+        if gd_files:
+            self.log_action("importing_code_to_godot", {"file_count": len(gd_files)})
+            import_result = await self.godot_client.import_files(gd_files)
             if import_result.get("status") != "success":
                 self.log_error("import_failed", {"error": import_result.get("error", "未知")})
 
-        # Step 5: Send scene description to Unity Editor
-        self.log_action("sending_scene_to_unity", {
+        # Step 5: 由 Python 侧构建合法 .tscn 文本（绕开插件端类型错配），再推给 Godot
+        tscn_text = None
+        try:
+            from src.engine.godot.scene_builder import GodotSceneBuilder
+            tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
+            self.log_action("scene_tscn_built", {"tscn_len": len(tscn_text)})
+        except Exception as e:
+            self.log_error("scene_tscn_build_failed", {"error": str(e)})
+
+        self.log_action("sending_scene_to_godot", {
             "object_count": len(scene_desc.get("game_objects", [])),
+            "has_tscn": tscn_text is not None,
         })
 
-        result = await self.unity_client.send_scene(scene_desc)
+        result = await self.godot_client.send_scene(scene_desc, tscn_text=tscn_text)
 
         if result.get("status") != "success":
             return {
@@ -110,8 +119,8 @@ class SceneGeneratorAgent(BaseAgent):
             }
 
         # Step 6: Trigger compilation
-        self.log_action("compiling_unity_scripts")
-        compile_result = await self.unity_client.compile_scripts()
+        self.log_action("compiling_godot_scripts")
+        compile_result = await self.godot_client.compile_scripts()
         compile_errors = compile_result.get("errors", [])
 
         return {

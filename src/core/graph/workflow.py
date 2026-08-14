@@ -25,7 +25,10 @@ from src.agents.debugger import DebuggerAgent
 from src.agents.scene_generator import SceneGeneratorAgent
 from src.agents.game_designer import GameDesignerAgent
 from src.agents.refactor import RefactorAgent
+from src.agents.main_reviewer import MainReviewerAgent
+from src.agents.reflector import ReflectorAgent
 from src.core.memory import MemoryManager
+from src.core.dialogue.review_refactor_negotiation import run_review_refactor_dialogue
 
 
 class GameDevWorkflow:
@@ -49,9 +52,31 @@ class GameDevWorkflow:
         self.debugger = DebuggerAgent(config)
         self.scene_generator = SceneGeneratorAgent(config)
         self.refactor_agent = RefactorAgent(config)
+        self.main_reviewer = MainReviewerAgent(config)
+        self.reflector = ReflectorAgent(config)
 
         # 记忆系统 — 让 Agent 有上下文记忆
         self.memory = MemoryManager()
+
+        # 多智能体改造第一步：审查↔重构对话协商开关（默认关闭，保持原流水线行为）
+        self.dialogue_enabled = (
+            config.get("agents", {})
+            .get("review_refactor", {})
+            .get("dialogue_enabled", False)
+        )
+        self.dialogue_max_rounds = (
+            config.get("agents", {})
+            .get("review_refactor", {})
+            .get("max_rounds", 3)
+        )
+
+        # 多智能体改造第二步：反思回环开关（默认关闭，保持原流水线行为）
+        self.reflector_enabled = (
+            config.get("agents", {}).get("reflector", {}).get("enabled", False)
+        )
+        self.max_reflections = (
+            config.get("agents", {}).get("reflector", {}).get("max_reflections", 1)
+        )
 
         self.graph = self._build_graph()
 
@@ -68,6 +93,11 @@ class GameDevWorkflow:
         workflow.add_node("refactor", self._refactor_node)
         workflow.add_node("test_generator", self._test_generator_node)
         workflow.add_node("debugger", self._debugger_node)
+        workflow.add_node("main_reviewer", self._main_reviewer_node)
+        # 对话协商节点（仅在开启时挂到主路径，常驻定义不影响旧行为）
+        workflow.add_node("review_refactor_dialogue", self._review_refactor_dialogue_node)
+        # 反思节点（多智能体改造第二步，常驻定义，仅在开启时接入主路径）
+        workflow.add_node("reflector", self._reflector_node)
 
         # 入口点
         workflow.set_entry_point("game_designer")
@@ -76,10 +106,24 @@ class GameDevWorkflow:
         workflow.add_edge("game_designer", "planner")
         workflow.add_edge("planner", "orchestrator")
         workflow.add_edge("code_generator", "code_reviewer")
-        workflow.add_edge("code_reviewer", "refactor")
-        workflow.add_edge("refactor", "test_generator")
-        workflow.add_edge("test_generator", "orchestrator")
+        workflow.add_edge("test_generator", "main_reviewer")
         workflow.add_edge("debugger", "orchestrator")
+
+        # 多智能体改造第二步：开启反思时，main_reviewer -> reflector -> orchestrator
+        if self.reflector_enabled:
+            workflow.add_edge("main_reviewer", "reflector")
+            workflow.add_edge("reflector", "orchestrator")
+        else:
+            workflow.add_edge("main_reviewer", "orchestrator")
+
+        if self.dialogue_enabled:
+            # 多智能体模式：审查与重构通过多轮对话协商，而非单向交接
+            workflow.add_edge("code_reviewer", "review_refactor_dialogue")
+            workflow.add_edge("review_refactor_dialogue", "test_generator")
+        else:
+            # 原流水线：审查 → 重构 → 测试
+            workflow.add_edge("code_reviewer", "refactor")
+            workflow.add_edge("refactor", "test_generator")
 
         # 条件边：orchestrator 根据当前状态路由到不同节点
         workflow.add_conditional_edges(
@@ -89,6 +133,7 @@ class GameDevWorkflow:
                 "code_generator": "code_generator",
                 "test_generator": "test_generator",
                 "debugger": "debugger",
+                "planner": "planner",  # 多智能体改造第二步：反思触发重规划
                 END: END,
             },
         )
@@ -212,6 +257,33 @@ class GameDevWorkflow:
         except Exception as e:
             return {"error_log": [f"Refactor failed: {e}"], "current_phase": "error"}
 
+    async def _review_refactor_dialogue_node(self, state: GameDevState) -> Dict[str, Any]:
+        """审查↔重构 对话协商节点（多智能体改造第一步）
+
+        调用 DialogueSession 让 code_reviewer(指导者) 与 refactor(助手) 多轮协商，
+        直至审查通过或达到 max_rounds。全程 transcript 写回 state，使协作可见。
+        """
+        try:
+            result = await run_review_refactor_dialogue(
+                self.code_reviewer,
+                self.refactor_agent,
+                state,
+                max_rounds=self.dialogue_max_rounds,
+            )
+            return result
+        except Exception as e:
+            # 兜底：对话失败不阻断主流程，退化为旧行为（仅审查，不重构）
+            self.logger.error("review_refactor_dialogue_failed", error=str(e))
+            try:
+                review_result = await self.code_reviewer.review(state)
+            except Exception:
+                review_result = {}
+            return {
+                "current_phase": "code_reviewed",
+                "review_result": review_result,
+                "error_log": [f"review_refactor_dialogue failed: {e}"],
+            }
+
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """测试生成节点 — 为 GDScript 代码生成 GUT 测试用例"""
         try:
@@ -263,6 +335,41 @@ class GameDevWorkflow:
         except Exception as e:
             return {"error_log": [f"Orchestrator failed: {e}"], "current_phase": "error"}
 
+    async def _main_reviewer_node(self, state: GameDevState) -> Dict[str, Any]:
+        """主审查节点：最终代码二次审查 + 场景/人物/环境设计审查。"""
+        try:
+            return await self.main_reviewer.execute(state)
+        except Exception as e:
+            return {
+                "main_review_result": {"passed": False, "error": str(e)},
+                "design_review_result": {"passed": False, "warnings": [str(e)]},
+                "error_log": [f"Main reviewer failed: {e}"],
+                "current_phase": "main_review_error",
+            }
+
+    async def _reflector_node(self, state: GameDevState) -> Dict[str, Any]:
+        """反思节点（多智能体改造第二步）
+
+        在 main_reviewer 之后复盘整次运行，判断是否需要重规划。
+        结果写入 reflection_result / reflection_count，由 _route_next 决定是否回到 planner。
+        """
+        try:
+            result = await self.reflector.execute(state)
+            count = state.get("reflection_count", 0) + 1
+            return {
+                "reflection_result": result,
+                "reflection_count": count,
+                "current_phase": "reflected",
+            }
+        except Exception as e:
+            self.logger.error("reflector_failed", error=str(e))
+            return {
+                "reflection_result": {"verdict": "ok", "replan_needed": False, "error": str(e)},
+                "reflection_count": state.get("reflection_count", 0) + 1,
+                "current_phase": "reflected",
+                "error_log": [f"Reflector failed: {e}"],
+            }
+
     async def _debugger_node(self, state: GameDevState) -> Dict[str, Any]:
         """调试节点 — 分析 GDScript 错误并生成修复"""
         try:
@@ -284,6 +391,16 @@ class GameDevWorkflow:
         # 工作流完成
         if current_phase == "workflow_complete" or state.get("is_complete"):
             return END
+
+        # 多智能体改造第二步：反思判定需要重规划，且未超过最大反思次数 → 回到 planner
+        refl = state.get("reflection_result") or {}
+        if (
+            self.reflector_enabled
+            and refl.get("replan_needed")
+            and current_phase == "reflected"
+            and state.get("reflection_count", 0) < self.max_reflections
+        ):
+            return "planner"
 
         # 需要修复 → debugger
         if current_phase == "needs_fix":
@@ -364,6 +481,11 @@ class GameDevWorkflow:
                 scene_json = json.dumps(scene_desc, indent=2, ensure_ascii=False)
                 state["code_generated"]["scenes/scene_description.json"] = scene_json
 
+            # 场景生成后立即执行人物、环境和玩法闭环审查。
+            design_review = self.main_reviewer.review_game_design(state)
+            state["design_review_result"] = design_review
+            await event_callback("design_review", design_review)
+
             if status == "built":
                 msg = "Godot 场景已生成！请在 Godot Editor 中查看"
                 await event_callback("scene_complete", {
@@ -390,6 +512,26 @@ class GameDevWorkflow:
     async def _godot_compile_loop(self, state: GameDevState, event_callback, max_rounds: int = 3):
         """Godot 编译闭环：导入 → 编译 → 读错误 → 自动修复 → 重编译"""
         from src.engine.godot.godot_http_client import GodotHTTPClient
+
+        # —— 编译闭环模式路由 ——
+        # auto    : 配置了 Godot 引擎路径则走 headless（无需编辑器 GUI），否则退回 8765 HTTP
+        # headless: 始终走 headless（未配置引擎路径则报错，不退回）
+        # http    : 始终走 8765 编辑器插件（需打开 Godot 并启用插件）
+        compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
+        if compile_mode in ("auto", "headless"):
+            from src.engine.godot import GodotEditor
+            editor = GodotEditor(self.config)
+            valid, _editor_msg = editor.validate()
+            if valid:
+                await self._godot_compile_loop_headless(state, event_callback, max_rounds, editor)
+                return
+            if compile_mode == "headless":
+                await event_callback("compile_result", {
+                    "status": "error",
+                    "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法使用 headless 编译",
+                })
+                return
+        # 以下为原 8765 编辑器插件路径
 
         client = GodotHTTPClient()
         if not await client.check_health():
@@ -467,8 +609,141 @@ class GameDevWorkflow:
             "message": f"经过{max_rounds}轮修复仍有编译错误，可能需要人工介入",
         })
 
+    async def _godot_compile_loop_headless(
+        self, state: GameDevState, event_callback, max_rounds: int, editor
+    ) -> None:
+        """Headless 编译闭环（无需 Godot 编辑器 GUI）
+
+        流程：将 AI 生成的 .gd 写入项目磁盘 → 用 Godot 引擎 headless 校验 →
+        有错则 debugger 修复并重写 → 重新校验，最多 max_rounds 轮。
+        同时把场景描述构建为合法 .tscn 落盘，完成"实现游戏"的落盘环节。
+        """
+        import asyncio
+
+        code_files = state.get("code_generated", {})
+        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
+        if not gd_files:
+            return
+
+        # 1) 写入 GDScript 到项目磁盘
+        await event_callback("phase_start", {
+            "phase": "compiling", "message": "正在写入 GDScript 到 Godot 项目...",
+        })
+        import_result = editor.import_files(gd_files)
+        if import_result.get("status") == "error":
+            await event_callback("compile_result", {
+                "status": "error",
+                "message": f"写入文件失败: {import_result.get('error', '')}",
+            })
+            return
+
+        # 2) 场景描述 -> 合法 .tscn 落盘（绕开 8765 插件端的类型错配）
+        scene_desc = state.get("scene_description")
+        if not scene_desc:
+            scene_json_str = code_files.get("scenes/scene_description.json")
+            if isinstance(scene_json_str, str):
+                try:
+                    scene_desc = json.loads(scene_json_str)
+                except Exception:
+                    scene_desc = None
+        if scene_desc and isinstance(scene_desc, dict):
+            try:
+                from src.engine.godot.scene_builder import GodotSceneBuilder
+                tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
+                name = scene_desc.get("scene_name", "GameScene")
+                editor.import_files({f"scenes/{name}.tscn": tscn_text})
+                state["scene_status"] = "success"
+                state["scene_path"] = f"res://scenes/{name}.tscn"
+                await event_callback("scene_complete", {
+                    "scene_name": name,
+                    "scene_path": state["scene_path"],
+                    "object_count": len(scene_desc.get("game_objects", [])),
+                    "compile_status": "headless",
+                })
+            except Exception as e:
+                self.log_error("headless_scene_build_failed", {"error": str(e)})
+
+        # 3) 校验闭环
+        res_paths = ["res://" + k for k in gd_files.keys()]
+        for round_num in range(max_rounds):
+            await event_callback("phase_start", {
+                "phase": "compiling",
+                "message": f"正在校验 GDScript (第{round_num + 1}轮)...",
+            })
+            # 同步 subprocess 包在 to_thread 中执行，避免阻塞事件循环
+            result = await asyncio.to_thread(editor.check_scripts, res_paths)
+            errors = result.errors
+
+            if not errors:
+                await event_callback("compile_result", {
+                    "status": "success",
+                    "message": f"编译成功！共 {len(gd_files)} 个文件",
+                    "round": round_num + 1,
+                })
+                return
+
+            await event_callback("compile_result", {
+                "status": "error",
+                "message": f"编译发现 {len(errors)} 个错误",
+                "errors": errors[:10],
+                "round": round_num + 1,
+            })
+
+            await event_callback("phase_start", {
+                "phase": "debugging",
+                "message": f"正在自动修复编译错误 (第{round_num + 1}轮)...",
+            })
+
+            error_log = []
+            for err in errors:
+                if isinstance(err, dict):
+                    error_log.append(
+                        f"{err.get('file', '')}:{err.get('line', '')}: error: {err.get('message', '')}"
+                    )
+                else:
+                    error_log.append(str(err))
+
+            state["error_log"] = error_log
+            debug_result = await self._debugger_node(state)
+            state.update(debug_result)
+
+            updated_files = state.get("code_generated", {})
+            updated_gd = {k: v for k, v in updated_files.items() if k.endswith(".gd")}
+            if updated_gd != gd_files:
+                gd_files = updated_gd
+                editor.import_files(gd_files)
+                res_paths = ["res://" + k for k in gd_files.keys()]
+
+        await event_callback("compile_result", {
+            "status": "partial",
+            "message": f"经过 {max_rounds} 轮修复仍有编译错误，可能需要人工介入",
+        })
+
     async def _try_godot_pipeline(self, state: GameDevState, event_callback) -> None:
-        """Godot 一键构建：导入代码 → 编译 → 构建场景"""
+        """Godot 一键构建：导入代码 → 编译 → 构建场景
+
+        路由逻辑同 :meth:`_godot_compile_loop`：
+
+        - ``auto`` / ``headless`` 且配置了 Godot 引擎路径 → 走 headless
+          （无需打开编辑器 GUI，直接调用 Godot 引擎二进制落盘 .gd/.tscn 并校验）
+        - 否则退回 8765 HTTP 编辑器插件
+        """
+        # —— 一键构建模式路由 ——
+        compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
+        if compile_mode in ("auto", "headless"):
+            from src.engine.godot import GodotEditor
+            editor = GodotEditor(self.config)
+            valid, _editor_msg = editor.validate()
+            if valid:
+                await self._try_godot_pipeline_headless(state, event_callback, editor)
+                return
+            if compile_mode == "headless":
+                await event_callback("scene_skipped", {
+                    "reason": "godot_unavailable",
+                    "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法使用 headless 构建",
+                })
+                return
+
         from src.engine.godot.godot_http_client import GodotHTTPClient
 
         client = GodotHTTPClient()
@@ -517,8 +792,15 @@ class GameDevWorkflow:
                     pass
 
         if scene_desc:
+            # 由 Python 侧构建合法 .tscn 文本（绕开插件端类型错配）
+            tscn_text = None
+            try:
+                from src.engine.godot.scene_builder import GodotSceneBuilder
+                tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
+            except Exception:
+                tscn_text = None  # 失败时回退到插件端构建
             await event_callback("scene_start", {"message": "正在构建 Godot 场景..."})
-            scene_result = await client.send_scene(scene_desc)
+            scene_result = await client.send_scene(scene_desc, tscn_text=tscn_text)
             if scene_result.get("status") == "success":
                 state["scene_status"] = "success"
                 state["scene_path"] = scene_result.get("scene_path", "")
@@ -535,6 +817,80 @@ class GameDevWorkflow:
                 })
 
         if not errors:
+            await event_callback("compile_result", {
+                "status": "success",
+                "message": f"编译成功！共 {len(gd_files)} 个文件",
+            })
+
+    async def _try_godot_pipeline_headless(
+        self, state: GameDevState, event_callback, editor
+    ) -> None:
+        """一键构建的 headless 实现（无需 Godot 编辑器 GUI）
+
+        流程：把 AI 生成的 .gd 写入项目磁盘 → 由 Python 侧构建合法 .tscn 落盘
+        → 用 Godot 引擎 headless 校验 GDScript，一次性报告结果（不做自动修复闭环）。
+        """
+        import asyncio
+
+        code_files = state.get("code_generated", {})
+        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
+        if not gd_files:
+            return
+
+        # 1) 写入 GDScript 到项目磁盘
+        await event_callback("phase_start", {
+            "phase": "compiling",
+            "message": "正在导入代码到 Godot 项目...",
+        })
+        import_result = editor.import_files(gd_files)
+        if import_result.get("status") == "error":
+            await event_callback("compile_result", {
+                "status": "error",
+                "message": f"写入文件失败: {import_result.get('error', '')}",
+            })
+            return
+
+        # 2) 场景描述 -> 合法 .tscn 落盘（绕开 8765 插件端的类型错配）
+        scene_desc = state.get("scene_description")
+        if not scene_desc:
+            scene_json_str = code_files.get("scenes/scene_description.json")
+            if isinstance(scene_json_str, str):
+                try:
+                    scene_desc = json.loads(scene_json_str)
+                except Exception:
+                    scene_desc = None
+        if scene_desc and isinstance(scene_desc, dict):
+            try:
+                from src.engine.godot.scene_builder import GodotSceneBuilder
+                tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
+                name = scene_desc.get("scene_name", "GameScene")
+                editor.import_files({f"scenes/{name}.tscn": tscn_text})
+                state["scene_status"] = "success"
+                state["scene_path"] = f"res://scenes/{name}.tscn"
+                await event_callback("scene_complete", {
+                    "scene_name": name,
+                    "scene_path": state["scene_path"],
+                    "object_count": len(scene_desc.get("game_objects", [])),
+                    "compile_status": "headless",
+                })
+            except Exception as e:
+                self.log_error("headless_scene_build_failed", {"error": str(e)})
+
+        # 3) headless 一次性校验（不做自动修复闭环）
+        res_paths = ["res://" + k for k in gd_files.keys()]
+        await event_callback("phase_start", {
+            "phase": "compiling",
+            "message": "正在校验 GDScript...",
+        })
+        result = await asyncio.to_thread(editor.check_scripts, res_paths)
+        errors = result.errors
+        if errors:
+            await event_callback("compile_result", {
+                "status": "error",
+                "message": f"编译发现 {len(errors)} 个错误",
+                "errors": errors[:10],
+            })
+        else:
             await event_callback("compile_result", {
                 "status": "success",
                 "message": f"编译成功！共 {len(gd_files)} 个文件",
@@ -655,6 +1011,10 @@ class GameDevWorkflow:
             "file_metadata": {},
             "validation_result": None,
             "warnings": [],
+            # 多智能体改造：反思回环 + 消息总线初始值
+            "reflection_result": None,
+            "reflection_count": 0,
+            "message_bus": [],
         }
 
     async def _post_process(self, state: GameDevState, scene_task, event_callback=None):
@@ -859,6 +1219,14 @@ class GameDevWorkflow:
                             await event_callback("review_result", review)
 
             if final_state is not None:
+                # 场景生成任务在 LangGraph 之外并行运行，其写入的字段不在 final_state 中。
+                # 合并进来，否则末尾 _try_godot_pipeline 拿不到 scene_description，无法构建 .tscn。
+                for _key in (
+                    "scene_status", "scene_description", "scene_path",
+                    "scene_error", "scene_compile_errors",
+                ):
+                    if _key in state and _key not in final_state:
+                        final_state[_key] = state[_key]
                 state = final_state
 
         except Exception as e:

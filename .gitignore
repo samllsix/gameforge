@@ -37,6 +37,7 @@ ENV/
 .env
 .env.local
 .env.production
+.env.backup
 
 # Database
 *.db
@@ -85,6 +86,14 @@ temp/
 
 # Claude Code local settings
 .claude/
+.godot/
+.workbuddy/
+_diag_*.py
+_scene_resp.json
+_writetest.txt
+scenes/generated/
+scripts/generated/
+assets/generated/
 
 # Binaries
 *.exe

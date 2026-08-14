@@ -98,20 +98,37 @@ class GodotProjectGenerator:
                 lines.append(f'{name}="*{path}"')
             lines.append("")
 
-        # 输入映射
-        input_map = gdm.get("input_map", {})
+        # 输入映射（兼容 list 与 dict 两种形态）
+        raw_input_map = gdm.get("input_map", {}) or {}
+        input_map: Dict[str, Any] = {}
+        if isinstance(raw_input_map, list):
+            for i, item in enumerate(raw_input_map):
+                if isinstance(item, dict):
+                    name = item.get("name") or f"action_{i}"
+                    input_map[name] = item
+        elif isinstance(raw_input_map, dict):
+            input_map = raw_input_map
+
         if input_map:
             lines.append("[input]")
             lines.append("")
             for action_name, action_config in input_map.items():
+                if not isinstance(action_config, dict):
+                    action_config = {}
                 deadzone = action_config.get("deadzone", 0.5)
                 lines.append(f'{action_name}={{')
                 lines.append(f'  "deadzone": {deadzone},')
                 lines.append(f'  "events": [')
-                for event in action_config.get("events", []):
-                    key = event.get("key", "")
-                    if key:
-                        lines.append(f'    Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":{key},"key_label":0,"unicode":0,"echo":false,"script":null)')
+                events = action_config.get("events", [])
+                if isinstance(events, list):
+                    for event in events:
+                        if isinstance(event, dict) and event.get("key"):
+                            key = event.get("key")
+                            lines.append(f'    Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":{key},"key_label":0,"unicode":0,"echo":false,"script":null)')
+                # 列表形态也可能直接把 key 放在 action 顶层
+                elif action_config.get("key"):
+                    key = action_config.get("key")
+                    lines.append(f'    Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":{key},"key_label":0,"unicode":0,"echo":false,"script":null)')
                 lines.append(f'  ]')
                 lines.append(f'}}')
             lines.append("")

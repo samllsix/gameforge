@@ -20,6 +20,15 @@ def merge_dicts(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
     return {**old, **new}
 
 
+def append_to_bus(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """消息总线 reducer：列表追加（多智能体改造第三步）"""
+    if old is None:
+        return new or []
+    if new is None:
+        return old
+    return old + new
+
+
 class TaskStatus(str, Enum):
     """任务状态枚举"""
     PENDING = "pending"
@@ -54,6 +63,8 @@ class AgentType(str, Enum):
     DEBUGGER = "debugger"
     REFACTOR = "refactor"
     SCENE_GENERATOR = "scene_generator"
+    MAIN_REVIEWER = "main_reviewer"
+    REFLECTOR = "reflector"  # 多智能体改造第二步：反思回环
 
 
 class Task(BaseModel):
@@ -164,8 +175,22 @@ class GameDevState(TypedDict):
     # 一致性校验
     validation_result: Optional[Dict[str, Any]]
 
+    # 主审查：代码二次审查与游戏设计审查
+    main_review_result: Optional[Dict[str, Any]]
+    design_review_result: Optional[Dict[str, Any]]
+
     # 警告 — reducer: 列表追加
     warnings: Annotated[List[str], add]
+
+    # 审查-重构对话协商记录（让 agent 协作可见；多智能体改造第一步）
+    review_dialogue_transcript: Optional[Dict[str, Any]]
+
+    # 反思回环结果（多智能体改造第二步）
+    reflection_result: Optional[Dict[str, Any]]
+    reflection_count: int
+
+    # 消息总线（多智能体改造第三步）：发布-订阅，解耦硬编码边
+    message_bus: Annotated[List[Dict[str, Any]], append_to_bus]
 
 
 class ProjectContext(BaseModel):
