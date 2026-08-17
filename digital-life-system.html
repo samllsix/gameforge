@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数字生命系统 · Digital Life System</title>
+<style>
+  :root{
+    --bg0:#04060d; --bg1:#070b16; --bg2:#0a1020;
+    --line:rgba(120,170,230,.12);
+    --glass:rgba(18,28,48,.45);
+    --glass2:rgba(22,34,58,.55);
+    --blue:#3da9ff; --cyan:#39e0ff; --purple:#9a7bff; --white:#eaf4ff;
+    --muted:#7e90b0; --good:#46e0a8; --warn:#ffcb5e;
+    --glow-b:0 0 18px rgba(61,169,255,.45);
+    --glow-c:0 0 18px rgba(57,224,255,.4);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 800px at 50% -10%,rgba(57,224,255,.08),transparent 60%),
+               radial-gradient(900px 700px at 90% 110%,rgba(154,123,255,.10),transparent 60%),
+               linear-gradient(160deg,var(--bg0),var(--bg1) 50%,var(--bg2));
+    color:var(--white); overflow:hidden; height:100vh;
+  }
+  #bgCanvas{position:fixed;inset:0;z-index:0}
+  .app{position:relative;z-index:1;height:100vh;display:grid;
+    grid-template-columns:248px 1fr 340px;
+    grid-template-rows:66px 1fr 196px;
+    grid-template-areas:"header header header" "left center right" "bottom bottom bottom";
+    gap:14px;padding:14px;}
+
+  .glass{background:linear-gradient(180deg,var(--glass2),var(--glass));
+    border:1px solid var(--line);border-radius:14px;
+    backdrop-filter:blur(10px);box-shadow:0 8px 30px rgba(0,0,0,.35),inset 0 0 0 1px rgba(255,255,255,.02);}
+
+  /* Header */
+  header{grid-area:header;display:flex;align-items:center;justify-content:space-between;padding:0 22px;}
+  .brand{display:flex;align-items:center;gap:14px}
+  .logo{width:38px;height:38px;border-radius:10px;position:relative;
+    background:conic-gradient(from 0deg,var(--blue),var(--cyan),var(--purple),var(--blue));
+    box-shadow:var(--glow-b);animation:spin 9s linear infinite}
+  .logo::after{content:"";position:absolute;inset:5px;border-radius:7px;background:var(--bg1)}
+  .logo::before{content:"";position:absolute;inset:13px;border-radius:50%;
+    background:radial-gradient(circle,var(--cyan),transparent 70%);box-shadow:var(--glow-c)}
+  .title h1{font-size:20px;font-weight:800;letter-spacing:3px;
+    background:linear-gradient(90deg,#bfe4ff,#9a7bff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .title p{font-size:10.5px;color:var(--muted);letter-spacing:2px;margin-top:1px}
+  .status{display:flex;gap:10px}
+  .st{font-size:11px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);
+    background:var(--glass);color:var(--muted);display:flex;align-items:center;gap:6px}
+  .st b{color:var(--white);font-weight:600}
+  .pulse{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 8px var(--good);animation:pulse 1.8s infinite}
+
+  /* Left */
+  aside.left{grid-area:left;padding:16px 14px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+  .panel-h{font-size:13px;font-weight:700;letter-spacing:1px;color:#cfe2ff;margin-bottom:4px;
+    display:flex;align-items:center;gap:8px}
+  .panel-h::before{content:"";width:3px;height:14px;background:linear-gradient(var(--blue),var(--cyan));border-radius:2px}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:11px;
+    border:1px solid transparent;cursor:pointer;transition:.2s;color:var(--muted)}
+  .nav-item:hover{background:var(--glass);border-color:var(--line);color:var(--white);transform:translateX(4px)}
+  .nav-item .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:15px;
+    background:rgba(61,169,255,.12);border:1px solid rgba(61,169,255,.2);color:var(--cyan)}
+  .nav-item .tx b{display:block;font-size:13.5px;color:var(--white);font-weight:600}
+  .nav-item .tx small{font-size:10.5px;color:var(--muted)}
+
+  /* Center */
+  .center{grid-area:center;position:relative;overflow:hidden;display:grid;place-items:center}
+  .core-wrap{position:absolute;inset:0;display:grid;place-items:center}
+  .core{position:relative;width:300px;height:300px;border-radius:50%;display:grid;place-items:center}
+  .sphere{width:170px;height:170px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,rgba(180,230,255,.9),rgba(61,169,255,.35) 45%,rgba(10,20,45,.2) 75%);
+    box-shadow:0 0 60px rgba(61,169,255,.5),inset 0 0 40px rgba(57,224,255,.35);
+    animation:breathe 5s ease-in-out infinite;position:relative}
+  .sphere::before{content:"";position:absolute;inset:0;border-radius:50%;
+    background:repeating-radial-gradient(circle,transparent 0 8px,rgba(57,224,255,.10) 9px 10px)}
+  .ring{position:absolute;border-radius:50%;border:1px solid rgba(57,224,255,.25)}
+  .ring.r1{inset:-30px;border-top-color:var(--cyan);border-right-color:transparent;animation:spin 7s linear infinite}
+  .ring.r2{inset:-55px;border-left-color:var(--purple);border-bottom-color:transparent;animation:spin 11s linear infinite reverse}
+  .ring.r3{inset:-80px;border-top-color:var(--blue);border-style:dashed;animation:spin 16s linear infinite}
+  .orbit{position:absolute;width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:var(--glow-c)}
+  .o1{top:-80px;animation:spin 16s linear infinite;transform-origin:150px 150px}
+  .o2{top:-55px;animation:spin 11s linear infinite reverse;transform-origin:150px 150px;background:var(--purple);box-shadow:0 0 10px var(--purple)}
+  .o3{top:-30px;animation:spin 7s linear infinite;transform-origin:150px 150px;background:var(--blue)}
+
+  .float-card{position:absolute;width:178px;padding:13px 14px;border-radius:13px;
+    background:linear-gradient(180deg,rgba(20,32,56,.7),rgba(12,20,38,.6));
+    border:1px solid var(--line);backdrop-filter:blur(8px);box-shadow:0 6px 24px rgba(0,0,0,.4);
+    transition:.25s}
+  .float-card:hover{transform:scale(1.05);border-color:rgba(57,224,255,.4);box-shadow:0 10px 34px rgba(57,224,255,.18)}
+  .float-card h4{font-size:12.5px;color:#cfe2ff;font-weight:700;display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  .float-card h4 .dotc{width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:var(--glow-c)}
+  .float-card .row{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);padding:2px 0}
+  .float-card .row b{color:#bfe0ff;font-weight:500}
+  .fc1{top:18px;left:14px}.fc2{top:18px;right:14px}.fc3{top:46%;left:-6px;transform:translateY(-50%)}
+  .fc4{top:46%;right:-6px;transform:translateY(-50%)}.fc5{bottom:16px;left:22px}.fc6{bottom:16px;right:22px}
+
+  .center .scan{position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(57,224,255,.05),transparent);
+    background-size:50% 100%;animation:scan 6s linear infinite}
+
+  /* Right */
+  aside.right{grid-area:right;padding:14px;display:flex;flex-direction:column;overflow:hidden}
+  .net{flex:1;position:relative}
+  .agent-node{position:absolute;transform:translate(-50%,-50%);text-align:center}
+  .agent-node .n{width:42px;height:42px;border-radius:50%;margin:0 auto;
+    background:radial-gradient(circle at 35% 30%,rgba(57,224,255,.9),rgba(61,169,255,.3));
+    border:1px solid rgba(57,224,255,.5);box-shadow:var(--glow-c);display:grid;place-items:center;font-size:16px;
+    animation:pulse 2.4s infinite}
+  .agent-node .lb{font-size:10.5px;color:#cfe2ff;margin-top:4px;white-space:nowrap}
+  .agent-node .stt{font-size:9px;color:var(--good)}
+  #netSvg{position:absolute;inset:0;width:100%;height:100%}
+  #netSvg line{stroke:rgba(57,224,255,.28);stroke-width:1;stroke-dasharray:4 6;animation:dash 1.2s linear infinite}
+
+  /* Bottom */
+  .bottom{grid-area:bottom;display:grid;grid-template-columns:1fr 1fr 1.5fr;gap:14px}
+  .bpanel{padding:14px 16px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .bpanel h4{font-size:12px;color:#cfe2ff;font-weight:700;letter-spacing:1px;display:flex;align-items:center;gap:8px}
+  .bpanel h4::before{content:"";width:3px;height:13px;background:linear-gradient(var(--cyan),var(--purple));border-radius:2px}
+  .stat-row{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--muted)}
+  .stat-row b{font-size:19px;color:#bfe0ff;font-weight:700;font-variant-numeric:tabular-nums}
+  .mini-chart{width:100%;height:54px;display:block}
+  .energy{display:flex;align-items:center;gap:14px}
+  .energy canvas{width:84px;height:84px}
+  .energy .el{font-size:11px;color:var(--muted);flex:1}
+  .energy .el .v{font-size:15px;color:#bfe0ff;font-weight:600}
+  .stream{position:relative;height:100%;overflow:hidden;border-radius:10px;background:rgba(8,14,28,.5)}
+  .stream .lane{position:absolute;height:2px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);animation:flow 4s linear infinite}
+
+  /* Command bar */
+  .cmd{position:absolute;left:50%;transform:translateX(-50%);bottom:212px;z-index:5;
+    width:min(620px,46vw);display:flex;gap:10px;padding:8px;
+    background:linear-gradient(180deg,rgba(20,32,56,.85),rgba(12,20,38,.8));
+    border:1px solid rgba(57,224,255,.3);border-radius:999px;backdrop-filter:blur(12px);
+    box-shadow:0 10px 40px rgba(0,0,0,.5),0 0 22px rgba(57,224,255,.18)}
+  .cmd input{flex:1;background:transparent;border:none;outline:none;color:var(--white);font-size:13.5px;padding:0 16px}
+  .cmd input::placeholder{color:var(--muted)}
+  .cmd button{border:none;cursor:pointer;padding:10px 22px;border-radius:999px;font-size:13px;font-weight:700;
+    color:#04121f;background:linear-gradient(90deg,var(--cyan),var(--blue));box-shadow:var(--glow-c);transition:.2s}
+  .cmd button:hover{filter:brightness(1.12);transform:scale(1.03)}
+
+  .toast{position:fixed;left:50%;top:84px;transform:translateX(-50%);z-index:20;
+    padding:10px 22px;border-radius:999px;font-size:13px;color:var(--white);
+    background:rgba(12,24,44,.9);border:1px solid rgba(57,224,255,.4);box-shadow:var(--glow-c);
+    opacity:0;transition:.4s;pointer-events:none}
+  .toast.show{opacity:1;top:96px}
+
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes breathe{0%,100%{box-shadow:0 0 50px rgba(61,169,255,.4),inset 0 0 36px rgba(57,224,255,.3)}
+    50%{box-shadow:0 0 80px rgba(61,169,255,.7),inset 0 0 50px rgba(57,224,255,.5)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  @keyframes dash{to{stroke-dashoffset:-20}}
+  @keyframes scan{0%{background-position:-50% 0}100%{background-position:150% 0}}
+  @keyframes flow{0%{left:-30%}100%{left:100%}}
+</style>
+</head>
+<body>
+<canvas id="bgCanvas"></canvas>
+
+<div class="app">
+  <!-- HEADER -->
+  <header class="glass">
+    <div class="brand">
+      <div class="logo"></div>
+      <div class="title">
+        <h1>数字生命系统</h1>
+        <p>DIGITAL LIFE SIMULATION &amp; CREATION PLATFORM</p>
+      </div>
+    </div>
+    <div class="status">
+      <div class="st"><span class="pulse"></span>AI Model <b>Active</b></div>
+      <div class="st"><span class="pulse"></span>Simulation <b>Running</b></div>
+      <div class="st">Agents <b>12</b> Online</div>
+      <div class="st">World Status <b>Stable</b></div>
+    </div>
+  </header>
+
+  <!-- LEFT -->
+  <aside class="left glass">
+    <div class="panel-h">数字生命构建模块</div>
+    <div class="nav-item"><div class="ico">🜨</div><div class="tx"><b>世界设计</b><small>World Design</small></div></div>
+    <div class="nav-item"><div class="ico">🧬</div><div class="tx"><b>生命生成</b><small>Life Creation</small></div></div>
+    <div class="nav-item"><div class="ico">🕸️</div><div class="tx"><b>行为建模</b><small>Behavior Modeling</small></div></div>
+    <div class="nav-item"><div class="ico">🌐</div><div class="tx"><b>环境模拟</b><small>Environment</small></div></div>
+    <div class="nav-item"><div class="ico">🧠</div><div class="tx"><b>记忆网络</b><small>Memory Network</small></div></div>
+    <div class="nav-item"><div class="ico">📈</div><div class="tx"><b>进化控制</b><small>Evolution Control</small></div></div>
+    <div class="nav-item"><div class="ico">🧪</div><div class="tx"><b>模拟测试</b><small>Simulation Testing</small></div></div>
+  </aside>
+
+  <!-- CENTER -->
+  <div class="center glass">
+    <div class="scan"></div>
+    <div class="core-wrap">
+      <div class="core">
+        <div class="ring r3"></div><div class="ring r2"></div><div class="ring r1"></div>
+        <div class="sphere"></div>
+        <div class="orbit o1"></div><div class="orbit o2"></div><div class="orbit o3"></div>
+      </div>
+    </div>
+
+    <div class="float-card fc1"><h4><span class="dotc"></span>World Model</h4>
+      <div class="row"><span>Environment</span><b>Simulating</b></div>
+      <div class="row"><span>Physics Engine</span><b>Active</b></div>
+      <div class="row"><span>Climate System</span><b>Stable</b></div></div>
+    <div class="float-card fc2"><h4><span class="dotc"></span>Life Generator</h4>
+      <div class="row"><span>Entity Creation</span><b>128</b></div>
+      <div class="row"><span>Behavior Model</span><b>Learning</b></div>
+      <div class="row"><span>Evolution</span><b>Iter 4.2k</b></div></div>
+    <div class="float-card fc3"><h4><span class="dotc"></span>Intelligence Engine</h4>
+      <div class="row"><span>AI Reasoning</span><b>On</b></div>
+      <div class="row"><span>Learning</span><b>RLHF</b></div>
+      <div class="row"><span>Decision</span><b>Opt</b></div></div>
+    <div class="float-card fc4"><h4><span class="dotc"></span>Memory System</h4>
+      <div class="row"><span>Experience</span><b>2.1 TB</b></div>
+      <div class="row"><span>Knowledge Graph</span><b>Linked</b></div>
+      <div class="row"><span>History</span><b>Archived</b></div></div>
+    <div class="float-card fc5"><h4><span class="dotc"></span>Simulation Engine</h4>
+      <div class="row"><span>Prediction</span><b>Real-time</b></div>
+      <div class="row"><span>Scenarios</span><b>37 Tests</b></div>
+      <div class="row"><span>Optimization</span><b>Auto</b></div></div>
+    <div class="float-card fc6"><h4><span class="dotc"></span>Evolution Monitor</h4>
+      <div class="row"><span>Life Growth</span><b>+3.4%</b></div>
+      <div class="row"><span>System Change</span><b>Tracking</b></div>
+      <div class="row"><span>Future</span><b>Projected</b></div></div>
+  </div>
+
+  <!-- RIGHT -->
+  <aside class="right glass">
+    <div class="panel-h">AI Agent Collaboration Network</div>
+    <div class="net">
+      <svg id="netSvg" viewBox="0 0 320 360" preserveAspectRatio="none"></svg>
+      <!-- nodes positioned by JS -->
+    </div>
+  </aside>
+
+  <!-- BOTTOM -->
+  <div class="bottom">
+    <div class="bpanel glass">
+      <h4>Digital Ecosystem</h4>
+      <div class="stat-row"><span>Population</span><b id="pop">12800</b></div>
+      <div class="stat-row"><span>Environment</span><b style="color:var(--good)">Stable</b></div>
+      <div class="stat-row"><span>Interactions</span><b id="inter">56321</b></div>
+      <canvas class="mini-chart" id="ecoChart"></canvas>
+    </div>
+    <div class="bpanel glass">
+      <h4>Simulation Energy</h4>
+      <div class="energy">
+        <canvas id="energyArc" width="84" height="84"></canvas>
+        <div class="el">
+          <div>Computing Power</div><div class="v">94.2 PFLOPS</div>
+          <div style="margin-top:6px">GPU Usage</div><div class="v" id="gpu">76%</div>
+          <div style="margin-top:6px">AI Processing</div><div class="v">Nominal</div>
+        </div>
+      </div>
+    </div>
+    <div class="bpanel glass">
+      <h4>Evolution Stream</h4>
+      <div class="stream" id="stream">
+        <div class="lane" style="top:22%"></div><div class="lane" style="top:44%;animation-delay:1s"></div>
+        <div class="lane" style="top:62%;animation-delay:.5s"></div><div class="lane" style="top:82%;animation-delay:1.5s"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMMAND -->
+  <div class="cmd">
+    <input id="cmdInput" placeholder="Describe the digital world you want to create...">
+    <button id="initBtn">Initialize Simulation</button>
+  </div>
+</div>
+
+<div class="toast" id="toast">Simulation core initializing…</div>
+
+<script>
+/* ---------- Background particle field ---------- */
+const cvs=document.getElementById('bgCanvas'),ctx=cvs.getContext('2d');
+let W,H,pts;
+function resize(){W=cvs.width=innerWidth;H=cvs.height=innerHeight;
+  pts=Array.from({length:90},()=>({x:Math.random()*W,y:Math.random()*H,
+    vx:(Math.random()-.5)*.25,vy:(Math.random()-.5)*.25,r:Math.random()*1.6+.4}));}
+resize();addEventListener('resize',resize);
+function drawBG(){
+  ctx.clearRect(0,0,W,H);
+  for(let i=0;i<pts.length;i++){const p=pts[i];
+    p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fillStyle='rgba(120,200,255,.7)';ctx.fill();
+    for(let j=i+1;j<pts.length;j++){const q=pts[j],d=Math.hypot(p.x-q.x,p.y-q.y);
+      if(d<120){ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);
+        ctx.strokeStyle='rgba(57,224,255,'+(.12*(1-d/120))+')';ctx.lineWidth=.6;ctx.stroke();}}}
+  requestAnimationFrame(drawBG);}
+drawBG();
+
+/* ---------- Agent network (right) ---------- */
+const net=document.querySelector('.net'),svg=document.getElementById('netSvg');
+const agents=[
+  {n:'World Agent',i:'🌍',x:.5,y:.12},{n:'Life Agent',i:'🧬',x:.16,y:.34},
+  {n:'Behavior Agent',i:'🕸️',x:.84,y:.34},{n:'Code Agent',i:'⌨️',x:.26,y:.7},
+  {n:'Analysis Agent',i:'📊',x:.74,y:.7},{n:'Optimization Agent',i:'⚡',x:.5,y:.9}];
+const core={x:.5,y:.5};
+agents.forEach((a,i)=>{
+  const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+  ln.setAttribute('x1',core.x*320);ln.setAttribute('y1',core.y*360);
+  ln.setAttribute('x2',a.x*320);ln.setAttribute('y2',a.y*360);svg.appendChild(ln);
+  const el=document.createElement('div');el.className='agent-node';
+  el.style.left=(a.x*100)+'%';el.style.top=(a.y*100)+'%';
+  el.innerHTML='<div class="n">'+a.i+'</div><div class="lb">'+a.n+'</div><div class="stt">● online</div>';
+  el.style.animationDelay=(i*.2)+'s';net.appendChild(el);});
+const coreEl=document.createElement('div');coreEl.className='agent-node';
+coreEl.style.left='50%';coreEl.style.top='50%';coreEl.style.transform='translate(-50%,-50%) scale(1.25)';
+coreEl.innerHTML='<div class="n" style="background:radial-gradient(circle at 35% 30%,#fff,rgba(154,123,255,.5));box-shadow:0 0 22px rgba(154,123,255,.7)">🧠</div><div class="lb">AI Core</div>';
+net.appendChild(coreEl);
+
+/* ---------- Energy arc ---------- */
+const ea=document.getElementById('energyArc'),eax=ea.getContext('2d');
+function drawArc(v){const c=ea.width/2;eax.clearRect(0,0,84,84);
+  eax.lineWidth=8;eax.strokeStyle='rgba(80,120,170,.25)';eax.beginPath();eax.arc(c,c,c-8,0,7);eax.stroke();
+  const g=eax.createLinearGradient(0,0,84,84);g.addColorStop(0,'#39e0ff');g.addColorStop(1,'#9a7bff');
+  eax.strokeStyle=g;eax.beginPath();eax.arc(c,c,c-8,-Math.PI/2,-Math.PI/2+2*Math.PI*v);eax.stroke();
+  eax.fillStyle='#eaf4ff';eax.font='bold 15px Segoe UI';eax.textAlign='center';eax.textBaseline='middle';
+  eax.fillText(Math.round(v*100)+'%',c,c);}
+drawArc(.76);
+
+/* ---------- Eco mini chart ---------- */
+const ec=document.getElementById('ecoChart'),ecx=ec.getContext('2d');
+function sizeChart(c){const r=c.getBoundingClientRect();c.width=r.width;c.height=r.height;}
+sizeChart(ec);
+let data=Array.from({length:40},()=>Math.random()*.6+.2);
+function drawEco(){const w=ec.width,h=ec.height;ecx.clearRect(0,0,w,h);
+  ecx.beginPath();data.forEach((v,i)=>{const x=i/(data.length-1)*w,y=h-v*h*.9;
+    i?ecx.lineTo(x,y):ecx.moveTo(x,y);});
+  const grad=ecx.createLinearGradient(0,0,w,0);grad.addColorStop(0,'#39e0ff');grad.addColorStop(1,'#9a7bff');
+  ecx.strokeStyle=grad;ecx.lineWidth=1.6;ecx.stroke();
+  ecx.lineTo(w,h);ecx.lineTo(0,h);ecx.closePath();ecx.fillStyle='rgba(57,224,255,.08)';ecx.fill();}
+drawEco();
+
+/* ---------- Live updates ---------- */
+setInterval(()=>{
+  data.push(Math.random()*.6+.2);data.shift();drawEco();
+  const pop=12800+Math.floor((Math.random()-.4)*40);
+  document.getElementById('pop').textContent=pop.toLocaleString();
+  document.getElementById('inter').textContent=(56321+Math.floor(Math.random()*200)).toLocaleString();
+  const gpu=72+Math.floor(Math.random()*10);document.getElementById('gpu').textContent=gpu+'%';
+  drawArc(gpu/100);
+},1600);
+
+/* ---------- Init action: particle wave ---------- */
+const toast=document.getElementById('toast');
+document.getElementById('initBtn').addEventListener('click',()=>{
+  const txt=document.getElementById('cmdInput').value.trim();
+  toast.textContent = txt? 'Initializing: '+txt.slice(0,40) : 'Simulation core initializing…';
+  toast.classList.add('show');
+  // burst
+  for(let i=0;i<60;i++){pts.push({x:W/2,y:H/2,vx:(Math.random()-.5)*6,vy:(Math.random()-.5)*6,r:Math.random()*2+1});}
+  if(pts.length>200)pts.splice(0,pts.length-200);
+  setTimeout(()=>toast.classList.remove('show'),2600);
+});
+addEventListener('resize',()=>sizeChart(ec));
+</script>
+</body>
+</html>

@@ -94,6 +94,7 @@ _writetest.txt
 scenes/generated/
 scripts/generated/
 assets/generated/
+generated-images/
 
 # Binaries
 *.exe

@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数字生命系统 · Digital Life Simulation Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg0:#05070e; --bg1:#0a0f1c; --bg2:#0d1424; --bg3:#0f1830;
+    --line:rgba(120,170,230,.14);
+    --glass:rgba(16,26,46,.40); --glass2:rgba(20,33,58,.58); --glass3:rgba(13,22,40,.66);
+    --blue:#3da9ff; --cyan:#36e3ff; --purple:#8f7bff; --white:#e8f1ff;
+    --muted:#8497b8; --good:#3fe0a0; --warn:#ffcf6b;
+    --mono:'Share Tech Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:'Rajdhani','Microsoft YaHei',system-ui,sans-serif;
+    background:
+      radial-gradient(1200px 820px at 50% -12%,rgba(54,227,255,.07),transparent 60%),
+      radial-gradient(900px 720px at 88% 112%,rgba(143,123,255,.09),transparent 60%),
+      radial-gradient(700px 600px at 8% 90%,rgba(61,169,255,.06),transparent 60%),
+      linear-gradient(162deg,var(--bg0),var(--bg1) 52%,var(--bg2));
+    color:var(--white); overflow:hidden; height:100vh; position:relative; letter-spacing:.3px;
+  }
+  /* filmic grain + light leaks */
+  .grain{position:fixed;inset:0;z-index:2;pointer-events:none;opacity:.045;mix-blend-mode:overlay}
+  .leak{position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(38% 30% at 16% 20%,rgba(61,169,255,.10),transparent 70%),
+               radial-gradient(34% 28% at 84% 80%,rgba(143,123,255,.10),transparent 70%);}
+  #bgCanvas{position:fixed;inset:0;z-index:0}
+  .app{position:relative;z-index:3;height:100vh;display:grid;
+    grid-template-columns:256px 1fr 348px;
+    grid-template-rows:64px 1fr 232px;
+    grid-template-areas:"header header header" "left center right" "bottom bottom bottom";
+    gap:14px;padding:14px;}
+
+  /* refined glass: inner refraction + 1px white 12% border + tinted shadow */
+  .glass{background:linear-gradient(180deg,var(--glass2),var(--glass));
+    border:1px solid var(--line);border-radius:16px;
+    backdrop-filter:blur(14px) saturate(120%);
+    box-shadow:0 10px 34px rgba(0,0,0,.40),inset 0 1px 0 rgba(255,255,255,.10),inset 0 0 34px rgba(54,227,255,.03);
+    position:relative;}
+
+  /* ---------- HEADER ---------- */
+  header{grid-area:header;display:flex;align-items:center;justify-content:space-between;padding:0 22px;overflow:hidden}
+  header::before{content:"";position:absolute;inset:0;background:
+    repeating-linear-gradient(90deg,rgba(120,170,230,.05) 0 1px,transparent 1px 46px);opacity:.5;pointer-events:none}
+  .brand{display:flex;align-items:center;gap:14px;z-index:1}
+  .logo{width:36px;height:36px;border-radius:10px;position:relative;
+    background:conic-gradient(from 0deg,var(--blue),var(--cyan),var(--purple),var(--blue));
+    box-shadow:0 0 16px rgba(61,169,255,.4);animation:spin 11s linear infinite}
+  .logo::after{content:"";position:absolute;inset:4px;border-radius:7px;background:var(--bg1)}
+  .logo::before{content:"";position:absolute;inset:12px;border-radius:50%;
+    background:radial-gradient(circle,var(--cyan),transparent 70%);box-shadow:0 0 10px var(--cyan)}
+  .title h1{font-family:'Chakra Petch',sans-serif;font-size:21px;font-weight:700;letter-spacing:4px;
+    color:#dff0ff;text-shadow:0 0 18px rgba(54,227,255,.45),0 0 2px rgba(255,255,255,.6)}
+  .title p{font-size:10px;color:var(--muted);letter-spacing:2.5px;margin-top:1px;font-weight:500}
+  .status{display:flex;gap:9px;z-index:1}
+  .st{font-size:11px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);
+    background:var(--glass);color:var(--muted);display:flex;align-items:center;gap:7px;font-weight:500}
+  .st b{color:var(--white);font-weight:600}
+  .pulse{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 9px var(--good);animation:pulse 1.9s infinite}
+  .pulse.b{background:var(--cyan);box-shadow:0 0 9px var(--cyan)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---------- LEFT PANEL ---------- */
+  aside.left{grid-area:left;padding:16px 13px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .panel-h{font-size:13px;font-weight:600;letter-spacing:1.5px;color:#cfe2ff;margin:2px 4px 8px;display:flex;align-items:center;gap:9px}
+  .panel-h::before{content:"";width:3px;height:15px;background:linear-gradient(var(--blue),var(--cyan));border-radius:2px;box-shadow:0 0 8px var(--cyan)}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:12px;
+    border:1px solid transparent;cursor:pointer;transition:.22s;color:var(--muted);position:relative;overflow:hidden}
+  .nav-item::after{content:"";position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,rgba(54,227,255,.16),transparent);transition:.25s}
+  .nav-item:hover{background:var(--glass);border-color:var(--line);color:var(--white);transform:translateX(3px)}
+  .nav-item:hover::after{width:100%}
+  .nav-item.active{border-color:rgba(54,227,255,.45);color:var(--white);
+    box-shadow:0 0 16px rgba(54,227,255,.18),inset 0 0 18px rgba(54,227,255,.06);background:rgba(20,40,68,.55)}
+  .nav-item .ico{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-size:16px;flex:0 0 32px;
+    background:rgba(61,169,255,.12);border:1px solid rgba(61,169,255,.22);color:var(--cyan);
+    box-shadow:inset 0 0 12px rgba(54,227,255,.10)}
+  .nav-item .tx b{display:block;font-size:13.5px;color:var(--white);font-weight:600;letter-spacing:.5px}
+  .nav-item .tx small{font-size:10px;color:var(--muted);letter-spacing:.5px}
+
+  /* ---------- CENTER ---------- */
+  .center{grid-area:center;position:relative;overflow:hidden;display:grid;place-items:center}
+  .center .core-label{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:5;text-align:center;pointer-events:none}
+  .center .core-label .t{font-family:'Chakra Petch',sans-serif;font-size:13px;letter-spacing:3px;color:#cfe9ff;text-shadow:0 0 12px rgba(54,227,255,.4)}
+  .center .core-label .s{font-size:9.5px;color:var(--muted);letter-spacing:2px;margin-top:2px}
+  #core3d{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+  .scan{position:absolute;inset:0;z-index:2;pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(54,227,255,.045),transparent);
+    background-size:50% 100%;animation:scan 6.5s linear infinite}
+  @keyframes scan{0%{background-position:-50% 0}100%{background-position:150% 0}}
+  .connectors{position:absolute;inset:0;z-index:2;pointer-events:none}
+
+  .float-card{position:absolute;z-index:4;width:182px;padding:12px 13px;border-radius:13px;
+    background:linear-gradient(180deg,rgba(18,30,54,.72),rgba(11,19,36,.62));
+    border:1px solid var(--line);backdrop-filter:blur(10px);
+    box-shadow:0 8px 26px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.08);
+    transition:.25s;animation:floaty 7s ease-in-out infinite}
+  .float-card:hover{transform:scale(1.045);border-color:rgba(54,227,255,.42);box-shadow:0 12px 36px rgba(54,227,255,.2)}
+  @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+  .float-card h4{font-size:12.5px;color:#d4e8ff;font-weight:600;display:flex;align-items:center;gap:7px;margin-bottom:8px;letter-spacing:.5px}
+  .float-card h4 .dotc{width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan)}
+  .float-card .row{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);padding:2px 0;font-weight:500}
+  .float-card .row b{color:#bfe0ff;font-weight:600}
+  .float-card .tag{display:inline-block;margin-top:7px;font-size:9.5px;letter-spacing:1px;padding:2px 9px;border-radius:999px;
+    border:1px solid rgba(54,227,255,.35);color:var(--cyan);background:rgba(54,227,255,.08)}
+  .fc1{top:20px;left:12px;animation-delay:0s}.fc2{top:20px;right:12px;animation-delay:.6s}
+  .fc3{top:46%;left:-4px;transform:translateY(-50%);animation-delay:1.2s}.fc4{top:46%;right:-4px;transform:translateY(-50%);animation-delay:1.8s}
+  .fc5{bottom:18px;left:18px;animation-delay:2.4s}.fc6{bottom:18px;right:18px;animation-delay:3s}
+
+  /* ---------- RIGHT PANEL ---------- */
+  aside.right{grid-area:right;padding:14px;display:flex;flex-direction:column;overflow:hidden}
+  .net{flex:1;position:relative;margin-top:6px}
+  .agent-node{position:absolute;transform:translate(-50%,-50%);text-align:center;z-index:2}
+  .agent-node .n{width:44px;height:44px;border-radius:50%;margin:0 auto;display:grid;place-items:center;font-size:17px;
+    background:radial-gradient(circle at 35% 30%,rgba(54,227,255,.92),rgba(61,169,255,.28));
+    border:1px solid rgba(54,227,255,.5);box-shadow:0 0 14px var(--cyan),inset 0 0 10px rgba(255,255,255,.18);
+    animation:pulse 2.6s infinite}
+  .agent-node .lb{font-size:10.5px;color:#cfe2ff;margin-top:5px;white-space:nowrap;font-weight:500}
+  .agent-node .stt{font-size:9px;color:var(--good);letter-spacing:.5px}
+  .agent-node.core .n{background:radial-gradient(circle at 35% 30%,#fff,rgba(143,123,255,.55));
+    box-shadow:0 0 26px rgba(143,123,255,.75),inset 0 0 12px rgba(255,255,255,.3);width:56px;height:56px;font-size:22px}
+  #netSvg{position:absolute;inset:0;width:100%;height:100%}
+  #netSvg line{stroke:rgba(54,227,255,.30);stroke-width:1;stroke-dasharray:3 7;animation:dash 1.1s linear infinite}
+  #netSvg line.core{stroke:rgba(143,123,255,.42)}
+  @keyframes dash{to{stroke-dashoffset:-20}}
+
+  /* ---------- BOTTOM ---------- */
+  .bottom{grid-area:bottom;display:flex;flex-direction:column;gap:12px;min-height:0}
+  .bpanels{flex:1;display:grid;grid-template-columns:1.05fr .9fr 1.15fr 1.35fr;gap:14px;min-height:0}
+  .bpanel{padding:13px 15px;display:flex;flex-direction:column;gap:8px;overflow:hidden;min-height:0}
+  .bpanel h4{font-size:12px;color:#cfe2ff;font-weight:600;letter-spacing:1px;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .bpanel h4::before{content:"";width:3px;height:13px;background:linear-gradient(var(--cyan),var(--purple));border-radius:2px}
+  .stat-row{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--muted);font-weight:500}
+  .stat-row b{font-family:var(--mono);font-size:18px;color:#bfe0ff;font-weight:400}
+  .stat-row b.g{color:var(--good)} .stat-row b.c{color:var(--cyan)}
+  .mini-wrap{flex:1;position:relative;border-radius:10px;overflow:hidden;background:rgba(8,14,28,.45);min-height:0}
+  .mini-wrap canvas{position:absolute;inset:0;width:100%;height:100%}
+  .evol-label{position:absolute;left:10px;bottom:8px;font-size:9.5px;color:var(--muted);letter-spacing:1px;z-index:2}
+  .evol-tag{position:absolute;right:8px;top:8px;font-size:9px;letter-spacing:1px;color:var(--cyan);z-index:2;
+    border:1px solid rgba(54,227,255,.3);padding:1px 7px;border-radius:999px;background:rgba(54,227,255,.07)}
+
+  /* command terminal */
+  .cmd{height:52px;flex:0 0 52px;display:flex;gap:10px;padding:8px 9px;align-items:center;
+    background:linear-gradient(180deg,rgba(20,33,58,.85),rgba(11,19,36,.8));
+    border:1px solid rgba(54,227,255,.28);border-radius:14px;backdrop-filter:blur(14px);
+    box-shadow:0 10px 36px rgba(0,0,0,.5),0 0 20px rgba(54,227,255,.12),inset 0 1px 0 rgba(255,255,255,.07)}
+  .cmd .prompt{font-family:var(--mono);color:var(--cyan);font-size:14px;padding-left:8px;opacity:.8}
+  .cmd input{flex:1;background:transparent;border:none;outline:none;color:var(--white);font-size:14px;padding:0 6px;
+    font-family:'Rajdhani',sans-serif;letter-spacing:.5px}
+  .cmd input::placeholder{color:var(--muted)}
+  .cmd button{border:none;cursor:pointer;padding:10px 24px;border-radius:10px;font-size:13px;font-weight:600;letter-spacing:1px;
+    color:#04121f;background:linear-gradient(90deg,var(--cyan),var(--blue));box-shadow:0 0 14px rgba(54,227,255,.4);transition:.2s;
+    font-family:'Rajdhani',sans-serif}
+  .cmd button:hover{filter:brightness(1.12);transform:translateY(-1px)}
+
+  .toast{position:fixed;left:50%;top:80px;transform:translateX(-50%);z-index:30;
+    padding:10px 24px;border-radius:999px;font-size:13px;color:var(--white);letter-spacing:.5px;
+    background:rgba(12,24,44,.92);border:1px solid rgba(54,227,255,.4);box-shadow:0 0 16px rgba(54,227,255,.3);
+    opacity:0;transition:.4s;pointer-events:none}
+  .toast.show{opacity:1;top:94px}
+</style>
+</head>
+<body>
+<svg class="grain" xmlns="http://www.w3.org/2000/svg"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+<div class="leak"></div>
+<canvas id="bgCanvas"></canvas>
+
+<div class="app">
+  <!-- TOP HEADER -->
+  <header class="glass">
+    <div class="brand"><div class="logo"></div>
+      <div class="title"><h1>数字生命系统</h1><p>DIGITAL LIFE SIMULATION &amp; CREATION PLATFORM</p></div></div>
+    <div class="status">
+      <div class="st"><span class="pulse"></span>AI核心 <b>运行中</b></div>
+      <div class="st"><span class="pulse b"></span>模拟状态 <b>实时运行</b></div>
+      <div class="st">智能体 <b>12</b> 个在线</div>
+      <div class="st">世界稳定度 <b style="color:var(--good)">98.7%</b></div>
+    </div>
+  </header>
+
+  <!-- LEFT PANEL -->
+  <aside class="left glass">
+    <div class="panel-h">数字生命构建模块</div>
+    <div class="nav-item active"><div class="ico">⬡</div><div class="tx"><b>世界构建</b><small>World Construction</small></div></div>
+    <div class="nav-item"><div class="ico">⬢</div><div class="tx"><b>生命生成</b><small>Life Generation</small></div></div>
+    <div class="nav-item"><div class="ico">⊹</div><div class="tx"><b>行为建模</b><small>Behavior Modeling</small></div></div>
+    <div class="nav-item"><div class="ico">◈</div><div class="tx"><b>环境模拟</b><small>Environment</small></div></div>
+    <div class="nav-item"><div class="ico">❖</div><div class="tx"><b>记忆网络</b><small>Memory Network</small></div></div>
+    <div class="nav-item"><div class="ico">↗</div><div class="tx"><b>进化控制</b><small>Evolution Control</small></div></div>
+    <div class="nav-item"><div class="ico">◎</div><div class="tx"><b>模拟测试</b><small>Simulation Testing</small></div></div>
+    <div class="nav-item"><div class="ico">⏻</div><div class="tx"><b>系统部署</b><small>System Deploy</small></div></div>
+  </aside>
+
+  <!-- CENTER -->
+  <div class="center glass">
+    <div class="core-label"><div class="t">数字生命核心 · DIGITAL LIFE CORE</div><div class="s">TRANSPARENT HOLOGRAPHIC LIFE SPHERE</div></div>
+    <canvas id="core3d"></canvas>
+    <svg class="connectors" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <line x1="50" y1="50" x2="18" y2="20" stroke="rgba(54,227,255,.22)" stroke-width=".25"/>
+      <line x1="50" y1="50" x2="82" y2="20" stroke="rgba(54,227,255,.22)" stroke-width=".25"/>
+      <line x1="50" y1="50" x2="7"  y2="52" stroke="rgba(54,227,255,.22)" stroke-width=".25"/>
+      <line x1="50" y1="50" x2="93" y2="52" stroke="rgba(54,227,255,.22)" stroke-width=".25"/>
+      <line x1="50" y1="50" x2="20" y2="84" stroke="rgba(54,227,255,.22)" stroke-width=".25"/>
+      <line x1="50" y1="50" x2="80" y2="84" stroke="rgba(54,227,255,.22)" stroke-width=".25"/>
+    </svg>
+    <div class="scan"></div>
+
+    <div class="float-card fc1"><h4><span class="dotc"></span>世界模型</h4>
+      <div class="row"><span>环境模拟</span><b>Running</b></div><div class="row"><span>物理规则</span><b>Active</b></div><div class="row"><span>气候系统</span><b>Stable</b></div>
+      <span class="tag">实时模拟</span></div>
+    <div class="float-card fc2"><h4><span class="dotc"></span>生命生成</h4>
+      <div class="row"><span>数字生命</span><b id="lifeN">12 870</b></div><div class="row"><span>行为模型</span><b>RL</b></div><div class="row"><span>进化速度</span><b>×1.4</b></div>
+      <span class="tag">学习中</span></div>
+    <div class="float-card fc3"><h4><span class="dotc"></span>智能引擎</h4>
+      <div class="row"><span>AI推理</span><b>On</b></div><div class="row"><span>决策系统</span><b>DRL</b></div><div class="row"><span>自主学习</span><b>On</b></div>
+      <span class="tag">优化中</span></div>
+    <div class="float-card fc4"><h4><span class="dotc"></span>记忆网络</h4>
+      <div class="row"><span>知识图谱</span><b>Linked</b></div><div class="row"><span>经验库</span><b>2.4 TB</b></div><div class="row"><span>历史记录</span><b>Arch</b></div>
+      <span class="tag">连接成功</span></div>
+    <div class="float-card fc5"><h4><span class="dotc"></span>模拟引擎</h4>
+      <div class="row"><span>未来预测</span><b>Live</b></div><div class="row"><span>场景测试</span><b>37</b></div><div class="row"><span>实时优化</span><b>Auto</b></div>
+      <span class="tag">运行中</span></div>
+    <div class="float-card fc6"><h4><span class="dotc"></span>进化监控</h4>
+      <div class="row"><span>生命增长</span><b>+3.4%</b></div><div class="row"><span>系统变化</span><b>Track</b></div><div class="row"><span>未来趋势</span><b>Proj</b></div>
+      <span class="tag">追踪中</span></div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <aside class="right glass">
+    <div class="panel-h">AI Agent 协作网络</div>
+    <div class="net"><svg id="netSvg" viewBox="0 0 320 360" preserveAspectRatio="none"></svg></div>
+  </aside>
+
+  <!-- BOTTOM -->
+  <div class="bottom">
+    <div class="bpanels">
+      <!-- 数字生态 -->
+      <div class="bpanel glass"><h4>数字生态</h4>
+        <div class="stat-row"><span>生命数量</span><b id="pop" class="c">12 870</b></div>
+        <div class="stat-row"><span>环境状态</span><b class="g">稳定</b></div>
+        <div class="stat-row"><span>交互次数</span><b id="inter">56 342</b></div>
+        <div class="mini-wrap"><canvas id="planetCanvas"></canvas><span class="evol-tag">LIVE</span></div>
+      </div>
+      <!-- AI计算核心 -->
+      <div class="bpanel glass"><h4>AI 计算核心</h4>
+        <div class="stat-row"><span>计算能力</span><b class="c">94.2 PFLOPS</b></div>
+        <div class="stat-row"><span>GPU 使用率</span><b id="gpu" class="c">76%</b></div>
+        <div class="stat-row"><span>AI 处理状态</span><b class="g">正常</b></div>
+        <div class="mini-wrap"><canvas id="energyCanvas"></canvas></div>
+      </div>
+      <!-- 生命演化数据流 -->
+      <div class="bpanel glass"><h4>生命演化数据流</h4>
+        <div class="stat-row"><span>知识增长</span><b class="c">+18.4%</b></div>
+        <div class="stat-row"><span>行为变化</span><b class="c">+9.1%</b></div>
+        <div class="stat-row"><span>生命进化</span><b class="g">Active</b></div>
+        <div class="mini-wrap" id="stream"><span class="evol-label">KNOWLEDGE · BEHAVIOR · EVOLUTION</span></div>
+      </div>
+      <!-- 世界实时预览 -->
+      <div class="bpanel glass"><h4>世界实时预览</h4>
+        <div class="stat-row"><span>地形</span><b class="c">Gen</b></div>
+        <div class="stat-row"><span>建筑</span><b class="c">23</b></div>
+        <div class="stat-row"><span>天气</span><b class="g">晴 / 微雨</b></div>
+        <div class="mini-wrap"><canvas id="worldCanvas"></canvas><span class="evol-tag">SIM</span></div>
+      </div>
+    </div>
+    <div class="cmd"><span class="prompt">›</span>
+      <input id="cmdInput" placeholder="描述你想创造的数字世界……">
+      <button id="initBtn">初始化模拟</button></div>
+  </div>
+</div>
+<div class="toast" id="toast">数字生命核心初始化中……</div>
+
+<!-- background particles -->
+<script>
+const cvs=document.getElementById('bgCanvas'),ctx=cvs.getContext('2d');let W,H,pts;
+function resize(){W=cvs.width=innerWidth;H=cvs.height=innerHeight;
+  pts=Array.from({length:96},()=>({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.22,vy:(Math.random()-.5)*.22,r:Math.random()*1.5+.4}));}
+resize();addEventListener('resize',resize);
+(function drawBG(){ctx.clearRect(0,0,W,H);
+  for(let i=0;i<pts.length;i++){const p=pts[i];p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fillStyle='rgba(120,200,255,.7)';ctx.fill();
+    for(let j=i+1;j<pts.length;j++){const q=pts[j],d=Math.hypot(p.x-q.x,p.y-q.y);
+      if(d<120){ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.strokeStyle='rgba(54,227,255,'+(.12*(1-d/120))+')';ctx.lineWidth=.6;ctx.stroke();}}}
+  requestAnimationFrame(drawBG);})();
+</script>
+
+<!-- agent network + bottom panels -->
+<script>
+const net=document.querySelector('.net'),svg=document.getElementById('netSvg');
+const agents=[{n:'世界 Agent',i:'🌐',x:.5,y:.12},{n:'生命 Agent',i:'🧬',x:.16,y:.34},{n:'行为 Agent',i:'🕸',x:.84,y:.34},{n:'代码 Agent',i:'⌨',x:.26,y:.7},{n:'分析 Agent',i:'📊',x:.74,y:.7},{n:'优化 Agent',i:'⚡',x:.5,y:.9}];
+const core={x:.5,y:.5};
+agents.forEach((a,i)=>{const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+  ln.setAttribute('x1',core.x*320);ln.setAttribute('y1',core.y*360);ln.setAttribute('x2',a.x*320);ln.setAttribute('y2',a.y*360);svg.appendChild(ln);
+  const el=document.createElement('div');el.className='agent-node';el.style.left=(a.x*100)+'%';el.style.top=(a.y*100)+'%';
+  el.innerHTML='<div class="n">'+a.i+'</div><div class="lb">'+a.n+'</div><div class="stt">● online</div>';
+  el.style.animationDelay=(i*.2)+'s';net.appendChild(el);});
+const cEl=document.createElement('div');cEl.className='agent-node core';cEl.style.left='50%';cEl.style.top='50%';cEl.style.transform='translate(-50%,-50%)';
+cEl.innerHTML='<div class="n">🧠</div><div class="lb">数字生命大脑</div>';net.appendChild(cEl);
+const cln=document.createElementNS('http://www.w3.org/2000/svg','line');
+cln.setAttribute('x1',core.x*320);cln.setAttribute('y1',core.y*360);cln.setAttribute('x2',core.x*320);cln.setAttribute('y2',core.y*360);cln.setAttribute('class','core');svg.appendChild(cln);
+
+/* mini rotating dot-planet (数字生态) */
+const pc=document.getElementById('planetCanvas'),pcx=pc.getContext('2d');
+function sizeC(c){const r=c.getBoundingClientRect();c.width=r.width*devicePixelRatio;c.height=r.height*devicePixelRatio;return r;}
+let pr=sizeC(pc);const pPts=Array.from({length:220},()=>{const u=Math.random(),v=Math.random();
+  const th=2*Math.PI*u,ph=Math.acos(2*v-1);return{th,ph,r:0.5+Math.random()*0.5};});
+function drawPlanet(t){const w=pc.width,h=pc.height;pcx.clearRect(0,0,w,h);
+  const cx=w/2,cy=h/2,R=Math.min(w,h)*0.36;
+  for(const p of pPts){const a=p.th+t*0.5;const x=Math.sin(p.ph)*Math.cos(a),y=Math.cos(p.ph),z=Math.sin(p.ph)*Math.sin(a);
+    const px=cx+x*R,py=cy-y*R*0.92;const depth=(z+1)/2;
+    const land=Math.sin(p.ph*4+t*0.2)>0.3;
+    pcx.beginPath();pcx.arc(px,py,(land?1.6:1.1)*devicePixelRatio,0,7);
+    pcx.fillStyle=land?('rgba(70,224,160,'+(0.4+depth*0.6)+')'):('rgba(54,227,255,'+(0.25+depth*0.5)+')');pcx.fill();}}
+drawPlanet(0);
+
+/* AI compute core quantum ring (AI 计算核心) */
+const ec=document.getElementById('energyCanvas'),ecx=ec.getContext('2d');
+function drawEnergy(v){const r=sizeC(ec),w=ec.width,h=ec.height,cx=w/2,cy=h/2,R=Math.min(w,h)*0.38;
+  ecx.clearRect(0,0,w,h);ecx.lineWidth=3*devicePixelRatio;
+  ecx.strokeStyle='rgba(80,120,170,.22)';ecx.beginPath();ecx.arc(cx,cy,R,0,7);ecx.stroke();
+  const g=ecx.createLinearGradient(0,0,w,h);g.addColorStop(0,'#36e3ff');g.addColorStop(1,'#8f7bff');
+  ecx.strokeStyle=g;ecx.beginPath();ecx.arc(cx,cy,R,-Math.PI/2,-Math.PI/2+2*Math.PI*v);ecx.stroke();
+  ecx.lineWidth=1.2*devicePixelRatio;ecx.strokeStyle='rgba(54,227,255,.35)';
+  for(let k=0;k<3;k++){ecx.beginPath();ecx.arc(cx,cy,R*0.7,R*0.3+k,R*0.3+k+3.4);ecx.stroke();}
+  ecx.fillStyle='#e8f1ff';ecx.font='bold '+(15*devicePixelRatio)+'px "Share Tech Mono",monospace';ecx.textAlign='center';ecx.textBaseline='middle';
+  ecx.fillText(Math.round(v*100)+'%',cx,cy);}
+drawEnergy(.76);
+
+/* evolution stream (flowing data river) */
+const stream=document.getElementById('stream');
+for(let i=0;i<5;i++){const l=document.createElement('div');l.style.cssText='position:absolute;height:2px;left:-30%;width:30%;background:linear-gradient(90deg,transparent,#36e3ff,transparent);animation:flow '+(3+i*.6)+'s linear infinite;top:'+(12+i*18)+'%';stream.appendChild(l);}
+const st=document.createElement('style');st.textContent='@keyframes flow{to{left:100%}}';document.head.appendChild(st);
+
+/* world real-time preview (mini simulator) */
+const wc=document.getElementById('worldCanvas'),wcx=wc.getContext('2d');let wr=sizeC(wc),wt=0;
+function drawWorld(){const w=wc.width,h=wc.height;wcx.clearRect(0,0,w,h);
+  const sky=wcx.createLinearGradient(0,0,0,h);sky.addColorStop(0,'#0a1428');sky.addColorStop(1,'#0d1e30');wcx.fillStyle=sky;wcx.fillRect(0,0,w,h);
+  const horizon=h*0.62;
+  // terrain
+  wcx.beginPath();wcx.moveTo(0,horizon);
+  for(let x=0;x<=w;x+=6){const y=horizon+Math.sin(x*0.012+wt*0.4)*8*devicePixelRatio+Math.sin(x*0.03)*4*devicePixelRatio;wcx.lineTo(x,y);}wcx.lineTo(w,h);wcx.lineTo(0,h);wcx.closePath();
+  const tg=wcx.createLinearGradient(0,horizon,0,h);tg.addColorStop(0,'#123a2e');tg.addColorStop(1,'#0a1f1a');wcx.fillStyle=tg;wcx.fill();
+  // buildings
+  for(let i=0;i<6;i++){const bx=w*(0.12+i*0.14),bh=(30+((i*37)%40))*devicePixelRatio,bw=14*devicePixelRatio;
+    wcx.fillStyle='rgba(20,40,70,.9)';wcx.fillRect(bx,horizon-bh,bw,bh);
+    for(let wy=horizon-bh+4*devicePixelRatio;wy<horizon-3*devicePixelRatio;wy+=6*devicePixelRatio){for(let wx=bx+2*devicePixelRatio;wx<bx+bw-2*devicePixelRatio;wx+=5*devicePixelRatio){
+      if(((wx+wy+Math.floor(wt*8))%13)<5){wcx.fillStyle='rgba(54,227,255,.85)';wcx.fillRect(wx,wy,2*devicePixelRatio,2*devicePixelRatio);}}}}
+  // character
+  const cx=w*(0.5+0.3*Math.sin(wt*0.7)),cy=horizon-10*devicePixelRatio;
+  wcx.fillStyle='#36e3ff';wcx.beginPath();wcx.arc(cx,cy-6*devicePixelRatio,3*devicePixelRatio,0,7);wcx.fill();
+  wcx.fillRect(cx-2*devicePixelRatio,cy-3*devicePixelRatio,4*devicePixelRatio,8*devicePixelRatio);
+  // weather
+  wcx.strokeStyle='rgba(120,200,255,.4)';wcx.lineWidth=1*devicePixelRatio;
+  for(let i=0;i<22;i++){const rx=(i*53+wt*60)%w,ry=((i*37+wt*120)%horizon);wcx.beginPath();wcx.moveTo(rx,ry);wcx.lineTo(rx-2*devicePixelRatio,ry+8*devicePixelRatio);wcx.stroke();}
+  wt+=0.016;}
+drawWorld();
+
+function tick(){const t=performance.now()/1000;drawPlanet(t);drawWorld();
+  document.getElementById('pop').textContent=(12870+Math.floor((Math.random()-.4)*40)).toLocaleString('en-US').replace(/,/g,' ');
+  document.getElementById('inter').textContent=(56342+Math.floor(Math.random()*220)).toLocaleString('en-US').replace(/,/g,' ');
+  const gpu=72+Math.floor(Math.random()*10);document.getElementById('gpu').textContent=gpu+'%';drawEnergy(gpu/100);
+  requestAnimationFrame(tick);}
+requestAnimationFrame(tick);
+
+const toast=document.getElementById('toast');
+document.getElementById('initBtn').addEventListener('click',()=>{const t=document.getElementById('cmdInput').value.trim();
+  toast.textContent=t?('初始化模拟：'+t.slice(0,42)):'数字生命核心初始化中……';toast.classList.add('show');
+  for(let i=0;i<70;i++)pts.push({x:W/2,y:H/2,vx:(Math.random()-.5)*6,vy:(Math.random()-.5)*6,r:Math.random()*2+1});
+  if(pts.length>220)pts.splice(0,pts.length-220);setTimeout(()=>toast.classList.remove('show'),2800);});
+addEventListener('resize',()=>{pr=sizeC(pc);wr=sizeC(wc);});
+</script>
+
+<!-- 3D DIGITAL LIFE CORE (Three.js + UnrealBloom) -->
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+let ready=false;const fb=document.createElement('div');
+function showFallback(){ if(!ready){} }
+window.addEventListener('error',showFallback);
+setTimeout(showFallback,7000);
+
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+const host=document.querySelector('.center');
+const canvas=document.getElementById('core3d');
+const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(45,1,0.1,100);camera.position.set(0,0,5.6);
+
+const group=new THREE.Group();scene.add(group);
+
+const NOISE=`
+float hash(vec3 p){p=fract(p*0.3183099+0.1);p*=17.0;return fract(p.x*p.y*p.z*(p.x+p.y+p.z));}
+float vnoise(vec3 x){vec3 i=floor(x);vec3 f=fract(x);f=f*f*(3.0-2.0*f);
+  return mix(mix(mix(hash(i+vec3(0,0,0)),hash(i+vec3(1,0,0)),f.x),
+                 mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),
+                 mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);}
+float fbm(vec3 p){float v=0.0,a=0.5;for(int i=0;i<5;i++){v+=a*vnoise(p);p*=2.02;a*=0.5;}return v;}
+`;
+
+/* --- LIVING PLANET (transparent digital life sphere interior) --- */
+const geo=new THREE.IcosahedronGeometry(1.5,48);
+const pmat=new THREE.ShaderMaterial({uniforms:{uTime:{value:0}},
+  vertexShader:NOISE+`
+    varying float vElev; varying vec3 vPos; varying vec3 vNormal;
+    void main(){ vPos=position; vec3 n=normalize(position);
+      float e=fbm(n*1.9+vec3(0.0,0.0,uTime*0.03)); vElev=e;
+      vec3 p=position+n*(e-0.5)*0.42;
+      vNormal=normalize(normalMatrix*normal);
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0); }`,
+  fragmentShader:NOISE+`
+    uniform float uTime; varying float vElev; varying vec3 vPos; varying vec3 vNormal;
+    void main(){ vec3 n=normalize(vPos);
+      float land=smoothstep(0.46,0.54,vElev);
+      vec3 ocean=vec3(0.02,0.10,0.28);
+      vec3 landCol=mix(vec3(0.0,0.34,0.40),vec3(0.10,0.72,0.52),smoothstep(0.55,0.82,vElev));
+      float city=fbm(n*9.0+uTime*0.02); float cityMask=smoothstep(0.60,0.65,city)*land;
+      vec3 col=mix(ocean,landCol,land);
+      float coast=smoothstep(0.44,0.5,vElev)*(1.0-land); col=mix(col,vec3(0.0,0.6,0.95),coast);
+      col+=vec3(0.45,0.95,1.0)*cityMask*1.6;
+      float river=1.0-smoothstep(0.0,0.035,abs(fbm(n*5.0+11.0)-0.5));
+      col+=vec3(0.25,0.7,1.0)*river*land*0.7;
+      float rim=pow(1.0-abs(dot(normalize(vNormal),vec3(0.0,0.0,1.0))),2.0);
+      col+=vec3(0.1,0.5,1.0)*rim*0.45;
+      gl_FragColor=vec4(col,1.0); }`});
+const planet=new THREE.Mesh(geo,pmat);group.add(planet);
+
+/* --- INNER NEURAL NETWORK (blue network layer) --- */
+const NN=18,nnPos=[],nnRad=1.68;
+for(let i=0;i<NN;i++){const th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+  nnPos.push(new THREE.Vector3(Math.sin(ph)*Math.cos(th),Math.cos(ph),Math.sin(ph)*Math.sin(th)).multiplyScalar(nnRad*(0.85+Math.random()*0.2)));}
+const nnGeo=new THREE.BufferGeometry();const linePts=[];
+for(let i=0;i<NN;i++){let best=[],d=[];
+  for(let j=0;j<NN;j++)if(i!==j)d.push([nnPos[i].distanceTo(nnPos[j]),j]);d.sort((a,b)=>a[0]-b[0]);
+  for(let k=0;k<3;k++){linePts.push(nnPos[i].x,nnPos[i].y,nnPos[i].z,nnPos[d[k][1]].x,nnPos[d[k][1]].y,nnPos[d[k][1]].z);}}
+nnGeo.setAttribute('position',new THREE.Float32BufferAttribute(linePts,3));
+const nnLines=new THREE.LineSegments(nnGeo,new THREE.LineBasicMaterial({color:0x36e3ff,transparent:true,opacity:0.32,blending:THREE.AdditiveBlending}));
+group.add(nnLines);
+function nnSprite(c){const cv=document.createElement('canvas');cv.width=cv.height=48;const g=cv.getContext('2d');
+  const gr=g.createRadialGradient(24,24,0,24,24,24);gr.addColorStop(0,c);gr.addColorStop(.4,c.replace('1)','.5)'));gr.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=gr;g.fillRect(0,0,48,48);return new THREE.CanvasTexture(cv);}
+const nnNodes=new THREE.Points(new THREE.BufferGeometry().setFromPoints(nnPos),
+  new THREE.PointsMaterial({size:0.14,map:nnSprite('rgba(120,230,255,1)'),transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,color:0x9fe8ff}));
+group.add(nnNodes);
+
+/* --- DATA PARTICLE ORBITS --- */
+function dotTex(){const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d');
+  const grd=g.createRadialGradient(32,32,0,32,32,32);grd.addColorStop(0,'rgba(255,255,255,1)');grd.addColorStop(.3,'rgba(120,220,255,.8)');grd.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=grd;g.fillRect(0,0,64,64);return new THREE.CanvasTexture(c);}
+const PT=2400,pg=new THREE.BufferGeometry(),pp=new Float32Array(PT*3),pc2=new Float32Array(PT*3);
+const cA=new THREE.Color(0x36e3ff),cB=new THREE.Color(0x8f7bff);
+for(let i=0;i<PT;i++){const rad=2.1+Math.random()*1.6,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+  pp[i*3]=Math.sin(ph)*Math.cos(th)*rad;pp[i*3+1]=Math.sin(ph)*rad*0.6;pp[i*3+2]=Math.cos(ph)*rad;
+  const c=Math.random()<.5?cA:cB;pc2[i*3]=c.r;pc2[i*3+1]=c.g;pc2[i*3+2]=c.b;}
+pg.setAttribute('position',new THREE.BufferAttribute(pp,3));pg.setAttribute('color',new THREE.BufferAttribute(pc2,3));
+const particles=new THREE.Points(pg,new THREE.PointsMaterial({size:0.045,map:dotTex(),vertexColors:true,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending}));
+group.add(particles);
+
+/* --- QUANTUM SIMULATION RINGS --- */
+function ring(r,col,axis,op){const m=new THREE.Mesh(new THREE.TorusGeometry(r,0.01,8,140),
+  new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:op}));if(axis==='x')m.rotation.x=Math.PI/2;if(axis==='z')m.rotation.y=Math.PI/2;group.add(m);return m;}
+const r1=ring(2.05,0x36e3ff,'x',.5),r2=ring(2.32,0x8f7bff,'z',.4),r3=ring(2.6,0x3da9ff,'x',.3);
+
+/* --- OUTER GLASS SHELL (fresnel rim) --- */
+const shell=new THREE.Mesh(new THREE.SphereGeometry(1.86,48,48),
+  new THREE.ShaderMaterial({uniforms:{glowColor:{value:new THREE.Color(0x36e3ff)}},
+    vertexShader:`varying float intensity;void main(){vec3 vn=normalize(normalMatrix*normal);vec3 vp=normalize((modelViewMatrix*vec4(position,1.0)).xyz);intensity=pow(0.60-dot(vn,vp),3.2);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+    fragmentShader:`uniform vec3 glowColor;varying float intensity;void main(){gl_FragColor=vec4(glowColor,1.0)*clamp(intensity,0.0,1.0);}`,
+    blending:THREE.AdditiveBlending,side:THREE.BackSide,transparent:true,depthWrite:false}));
+group.add(shell);
+
+/* --- BLOOM --- */
+const composer=new EffectComposer(renderer);composer.addPass(new RenderPass(scene,camera));
+const bloom=new UnrealBloomPass(new THREE.Vector2(1,1),1.05,0.55,0.0);composer.addPass(bloom);
+
+function fit(){const w=host.clientWidth,h=host.clientHeight;renderer.setSize(w,h,false);composer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();}
+fit();addEventListener('resize',fit);
+
+const clock=new THREE.Clock();
+(function animate(){requestAnimationFrame(animate);const t=clock.getElapsedTime();
+  pmat.uniforms.uTime.value=t;
+  group.rotation.y=t*0.14;group.rotation.x=Math.sin(t*0.1)*0.1;
+  r1.rotation.z=t*0.25;r2.rotation.z=-t*0.2;r3.rotation.z=t*0.15;
+  particles.rotation.y=t*0.05;nnLines.rotation.y=-t*0.04;nnNodes.rotation.y=-t*0.04;
+  composer.render();})();
+ready=true;
+</script>
+</body>
+</html>

@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gameforge-数字生命系统</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg0:#03040a; --bg1:#060b16; --bg2:#0a1124;
+    --line:rgba(120,170,230,.16);
+    --blue:#3da9ff; --cyan:#43e6ff; --purple:#a06bff; --violet:#8b5cf6; --white:#eaf3ff;
+    --muted:#7e93b8; --good:#36e0aa; --warn:#ffb454; --err:#ff5d6c;
+    --mono:'Share Tech Mono',ui-monospace,monospace;
+    --edge:rgba(96,180,255,.28); --edgeHi:rgba(130,200,255,.65);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:'Rajdhani','Microsoft YaHei',system-ui,sans-serif;
+    background:
+      radial-gradient(1100px 760px at 50% -14%,rgba(140,90,255,.16),transparent 60%),
+      radial-gradient(900px 720px at 88% 112%,rgba(96,80,255,.16),transparent 60%),
+      radial-gradient(760px 620px at 8% 92%,rgba(61,169,255,.10),transparent 60%),
+      linear-gradient(162deg,var(--bg0),var(--bg1) 52%,var(--bg2));
+    color:var(--white); overflow:hidden; height:100vh; position:relative; letter-spacing:.3px;}
+  .grain{position:fixed;inset:0;z-index:4;pointer-events:none;opacity:.05;mix-blend-mode:overlay}
+  #bgCanvas{position:fixed;inset:0;z-index:0}
+  /* 透视网格地面 */
+  .floor{position:fixed;left:-20%;right:-20%;bottom:-4%;height:42%;z-index:1;pointer-events:none;
+    background-image:linear-gradient(rgba(96,160,255,.14) 1px,transparent 1px),linear-gradient(90deg,rgba(96,160,255,.14) 1px,transparent 1px);
+    background-size:48px 48px;transform:perspective(700px) rotateX(64deg);transform-origin:bottom;
+    -webkit-mask-image:linear-gradient(transparent,#000 40%);mask-image:linear-gradient(transparent,#000 40%);opacity:.5}
+
+  /* ===== 空间化：整景 perspective + 环绕倾斜 ===== */
+  .scene{position:relative;z-index:3;height:100vh}
+  .app{height:100%;display:grid;
+    grid-template-columns:208px minmax(0,1fr) 298px;
+    grid-template-rows:54px minmax(0,1fr) 156px 18px;
+    grid-template-areas:"header header header" "left center right" "bottom bottom bottom" "footer footer footer";
+    gap:12px;padding:14px;}
+  .app>*{min-height:0;min-width:0}
+
+  /* ===== 统一全息玻璃基底 ===== */
+  .hud{position:relative;overflow:hidden;
+    background:linear-gradient(165deg,rgba(24,34,68,.42),rgba(8,14,32,.62));
+    border:1px solid var(--edge);border-radius:12px;
+    backdrop-filter:blur(16px) saturate(130%);
+    box-shadow:0 18px 50px rgba(0,0,0,.5),0 0 24px rgba(120,90,255,.12),inset 0 1px 0 rgba(255,255,255,.08),inset 0 0 30px rgba(96,180,255,.04);}
+  /* 四角科技切割 */
+  .hud::before,.hud::after{content:"";position:absolute;width:14px;height:14px;pointer-events:none;z-index:8;border-color:rgba(140,200,255,.6);border-style:solid}
+  .hud::before{top:0;left:0;border-width:2px 0 0 2px;border-top-left-radius:11px}
+  .hud::after{bottom:0;right:0;border-width:0 2px 2px 0;border-bottom-right-radius:11px}
+  .grid{position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.4;
+    background-image:linear-gradient(rgba(120,170,230,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(120,170,230,.05) 1px,transparent 1px);background-size:26px 26px}
+  .scanln{position:absolute;inset:0;z-index:1;pointer-events:none;opacity:.5;
+    background:repeating-linear-gradient(0deg,rgba(120,200,255,.03) 0 1px,transparent 1px 3px)}
+  /* 动态扫描光（全局面板扫过） */
+  .beam{position:absolute;top:0;bottom:0;width:36%;left:-40%;z-index:2;pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(140,220,255,.10),transparent);transform:skewX(-16deg);animation:beam 7s linear infinite}
+  @keyframes beam{to{left:140%}}
+  .hex{display:grid;place-items:center;color:var(--cyan);background:rgba(96,150,255,.16);
+    clip-path:polygon(25% 5%,75% 5%,100% 50%,75% 95%,25% 95%,0 50%);filter:drop-shadow(0 0 5px rgba(120,150,255,.6))}
+  .ph{display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;letter-spacing:1px;color:#d6e6ff;margin:0 2px 7px;position:relative;z-index:2;flex:0 0 auto}
+  .ph::before{content:"";width:3px;height:13px;background:linear-gradient(var(--cyan),var(--purple));border-radius:2px;box-shadow:0 0 8px var(--cyan)}
+  .ph .en{font-size:7.5px;color:var(--muted);letter-spacing:1px;font-family:var(--mono);font-weight:400}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* ===== HEADER ===== */
+  header{grid-area:header;display:flex;align-items:center;justify-content:space-between;padding:0 16px}
+  .h-left{display:flex;align-items:center;gap:9px;z-index:2;flex:0 0 auto}
+  .gf{font-family:'Chakra Petch',sans-serif;font-size:18px;font-weight:700;letter-spacing:1px;
+    background:linear-gradient(90deg,#9ff3ff,#5db7ff 55%,#b98cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .gf-sub{font-size:9px;color:var(--muted);letter-spacing:.5px;border-left:1px solid var(--line);padding-left:9px}
+  .h-center{text-align:center;z-index:2;position:absolute;left:50%;transform:translateX(-50%)}
+  .h-center h1{font-family:'Chakra Petch',sans-serif;font-size:21px;font-weight:700;letter-spacing:3px;color:#eef6ff;
+    text-shadow:0 0 22px rgba(120,160,255,.65),0 0 2px rgba(255,255,255,.6);white-space:nowrap}
+  .h-center h1 span{color:#8ff0ff}
+  .h-center p{font-size:9px;color:var(--muted);letter-spacing:2.5px;margin-top:1px}
+  .h-center p::before,.h-center p::after{content:"—";color:var(--cyan);opacity:.6;margin:0 7px}
+  .h-right{display:flex;align-items:center;gap:11px;z-index:2;font-size:10px;color:var(--muted);flex:0 0 auto}
+  .h-right b{color:var(--white);font-weight:600}
+  .h-right .lvl{color:var(--cyan)}.h-right .eng{color:#c9a6ff}
+  .avatar{width:28px;height:28px;clip-path:polygon(25% 5%,75% 5%,100% 50%,75% 95%,25% 95%,0 50%);
+    background:conic-gradient(from 0deg,var(--blue),var(--cyan),var(--purple),var(--blue));box-shadow:0 0 12px rgba(120,150,255,.6)}
+
+  /* ===== LEFT ===== */
+  aside.left{grid-area:left;padding:10px 9px;display:flex;flex-direction:column;gap:4px}
+  .nav{display:flex;flex-direction:column;gap:4px;flex:0 0 auto}
+  .nav-item{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;min-height:33px;
+    border:1px solid rgba(120,170,230,.10);background:rgba(8,15,30,.42);cursor:pointer;transition:.18s;color:var(--muted);position:relative;overflow:hidden;flex:0 0 auto}
+  .nav-item::after{content:"";position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,rgba(120,180,255,.16),transparent);transition:.2s}
+  .nav-item:hover{background:rgba(16,26,52,.6);border-color:var(--edge);color:var(--white)}
+  .nav-item:hover::after{width:100%}
+  .nav-item .hex{width:22px;height:22px;flex:0 0 22px;font-size:12px}
+  .nav-item .tx{flex:1;min-width:0;z-index:1}
+  .nav-item .tx b{display:block;font-size:12px;color:var(--white);font-weight:600;letter-spacing:.3px}
+  .nav-item .tx small{display:block;font-size:8px;color:var(--muted);letter-spacing:.3px}
+  .nav-item .bar{position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(var(--cyan),var(--purple));box-shadow:0 0 8px var(--cyan);opacity:0;transition:.18s}
+  .nav-item.active{border-color:var(--edgeHi);color:var(--white);background:linear-gradient(180deg,rgba(30,40,80,.6),rgba(16,24,52,.55));box-shadow:0 0 16px rgba(120,150,255,.25),inset 0 0 18px rgba(120,150,255,.08)}
+  .nav-item.active .bar{opacity:1}.nav-item.active .hex{background:rgba(140,170,255,.3);color:#eaffff}
+  .sysstat{margin-top:auto;padding:8px 9px;border-radius:9px;border:1px solid var(--edge);background:rgba(8,15,30,.5);position:relative;z-index:2;flex:0 0 auto}
+  .sysstat .tt{font-size:11px;color:#cfe2ff;font-weight:600;letter-spacing:.5px}
+  .sysstat .ok{color:var(--good);font-size:9.5px;display:flex;align-items:center;gap:5px;margin-top:1px}
+  .sysstat .ok i{width:6px;height:6px;border-radius:50%;background:var(--good);box-shadow:0 0 7px var(--good);animation:pulse 1.8s infinite}
+  #ecg{width:100%;height:18px;margin:4px 0 2px}
+  .mbar{font-size:8.5px;color:var(--muted);margin-top:3px}
+  .mbar .row{display:flex;justify-content:space-between;margin-bottom:1px}
+  .mbar .tr{height:3px;border-radius:2px;background:rgba(120,170,230,.15);overflow:hidden}
+  .mbar .tr i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 5px var(--cyan)}
+
+  /* ===== CENTER（空间核心） ===== */
+  .center{grid-area:center;display:flex;flex-direction:column;gap:6px;min-height:0;overflow:visible}
+  .welcome{text-align:center;flex:0 0 auto;z-index:6;position:relative}
+  .welcome h2{font-family:'Chakra Petch',sans-serif;font-size:17px;font-weight:600;letter-spacing:2px;color:#f0f7ff;text-shadow:0 0 16px rgba(130,170,255,.6)}
+  .welcome p{font-size:9.5px;color:#a6dcff;letter-spacing:2px;margin-top:2px}
+  .welcome p i{color:var(--cyan);font-style:normal;margin:0 5px}
+  .galaxy-wrap{flex:1;position:relative;min-height:0;perspective:760px;perspective-origin:50% 45%}
+  #galaxy{position:absolute;inset:0;width:100%;height:100%}
+  .links{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none}
+  .fcard{position:absolute;z-index:6;width:172px;padding:9px 11px;border-radius:11px;
+    background:linear-gradient(160deg,rgba(30,26,72,.8),rgba(10,16,38,.66));border:1px solid rgba(150,120,255,.45);
+    box-shadow:0 16px 40px rgba(0,0,0,.5),0 0 24px rgba(150,110,255,.32),inset 0 1px 0 rgba(255,255,255,.1);
+    backdrop-filter:blur(10px);transition:.22s;transform-style:preserve-3d}
+  .fcard:hover{border-color:rgba(175,145,255,.75);box-shadow:0 18px 46px rgba(150,110,255,.45)}
+  .fcard .hd{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+  .fcard .hd .hex{width:20px;height:20px;flex:0 0 20px;font-size:11px}
+  .fcard .hd b{font-size:12.5px;color:#e6dfff;font-weight:600;letter-spacing:.4px}
+  .fcard .brow{display:flex;align-items:center;gap:8px}
+  .fcard .tags{flex:1;font-size:8.5px;color:#bcb1e6;letter-spacing:.4px;line-height:1.65}
+  .fcard .tags b{color:#8ff0ff;font-weight:500}
+  .holo{width:46px;height:46px;flex:0 0 46px;filter:drop-shadow(0 0 6px rgba(120,200,255,.5))}
+  /* 4 卡片各自 3D 倾角 + 漂浮 */
+  .fc1{top:6%;left:3%;transform:rotateY(30deg) rotateX(8deg);animation:fy1 8s ease-in-out infinite}
+  .fc2{bottom:11%;left:5%;transform:rotateY(27deg) rotateX(-6deg);animation:fy2 9.5s ease-in-out infinite}
+  .fc3{top:8%;right:3%;transform:rotateY(-30deg) rotateX(8deg);animation:fy3 8.6s ease-in-out infinite}
+  .fc4{bottom:9%;right:5%;transform:rotateY(-27deg) rotateX(-6deg);animation:fy4 10s ease-in-out infinite}
+  @keyframes fy1{0%,100%{transform:rotateY(30deg) rotateX(8deg) translateY(0)}50%{transform:rotateY(30deg) rotateX(8deg) translateY(-9px)}}
+  @keyframes fy2{0%,100%{transform:rotateY(27deg) rotateX(-6deg) translateY(0)}50%{transform:rotateY(27deg) rotateX(-6deg) translateY(-7px)}}
+  @keyframes fy3{0%,100%{transform:rotateY(-30deg) rotateX(8deg) translateY(0)}50%{transform:rotateY(-30deg) rotateX(8deg) translateY(-9px)}}
+  @keyframes fy4{0%,100%{transform:rotateY(-27deg) rotateX(-6deg) translateY(0)}50%{transform:rotateY(-27deg) rotateX(-6deg) translateY(-7px)}}
+  .cmdbar{display:flex;gap:9px;padding:8px 9px;align-items:center;border-radius:11px;z-index:6;position:relative;flex:0 0 auto;
+    background:linear-gradient(180deg,rgba(28,32,66,.88),rgba(13,19,40,.82));border:1px solid rgba(150,120,255,.4);
+    box-shadow:0 12px 30px rgba(0,0,0,.5),0 0 22px rgba(140,110,255,.2),inset 0 0 24px rgba(96,180,255,.05)}
+  .cmdbar .pr{font-family:var(--mono);color:var(--cyan);font-size:13px;padding-left:5px;opacity:.8}
+  .cmdbar input{flex:1;background:transparent;border:none;outline:none;color:var(--white);font-size:13px;padding:0 5px;font-family:'Rajdhani',sans-serif;min-width:0}
+  .cmdbar input::placeholder{color:var(--muted)}
+  .cmdbar button{border:none;cursor:pointer;padding:8px 18px;border-radius:8px;font-size:12.5px;font-weight:600;letter-spacing:1px;flex:0 0 auto;
+    color:#061018;background:linear-gradient(90deg,var(--cyan),var(--blue));box-shadow:0 0 14px rgba(54,227,255,.4);transition:.18s;display:flex;align-items:center;gap:5px}
+  .cmdbar button:hover{filter:brightness(1.12);transform:translateY(-1px)}
+  .qt-h{font-size:10.5px;color:#cfe2ff;font-weight:600;letter-spacing:1px;display:flex;align-items:center;gap:7px;z-index:6;position:relative;flex:0 0 auto}
+  .qt-h::before{content:"";width:3px;height:11px;background:linear-gradient(var(--cyan),var(--purple));border-radius:2px}
+  .qt{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;z-index:6;position:relative;flex:0 0 auto}
+  .qt .t{border-radius:8px;overflow:hidden;border:1px solid var(--edge);cursor:pointer;transition:.18s;position:relative;height:46px;display:flex;align-items:flex-end}
+  .qt .t:hover{border-color:var(--edgeHi);transform:translateY(-2px);box-shadow:0 8px 18px rgba(120,150,255,.25)}
+  .qt .t .art{position:absolute;inset:0}
+  .qt .t .art canvas{position:absolute;inset:0;width:100%;height:100%}
+  .qt .t .lb{position:relative;z-index:2;font-size:9px;color:#eaf5ff;font-weight:600;letter-spacing:.3px;padding:3px 5px;width:100%;background:linear-gradient(transparent,rgba(4,8,16,.88));text-shadow:0 1px 3px #000}
+
+  /* ===== RIGHT ===== */
+  aside.right{grid-area:right;padding:10px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .proc{flex:0 0 auto}
+  .proc-sub{font-size:8.5px;color:var(--muted);letter-spacing:1px;margin-bottom:3px}
+  .proc-list{display:flex;flex-direction:column;gap:5px}
+  .proc-item{display:flex;align-items:center;gap:8px}
+  .proc-item .hex{width:22px;height:22px;flex:0 0 22px;font-size:11px}
+  .proc-item .in{flex:1;min-width:0}
+  .proc-item .in b{display:block;font-size:10.5px;color:#d9ecff;font-weight:600}
+  .proc-item .in small{display:block;font-size:7.5px;color:var(--muted);letter-spacing:.2px}
+  .proc-item .pc{font-family:var(--mono);font-size:10px;color:var(--cyan);width:30px;text-align:right;flex:0 0 auto}
+  .proc-item .tr{height:3px;border-radius:2px;background:rgba(120,170,230,.15);overflow:hidden;margin-top:2px}
+  .proc-item .tr i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 5px var(--cyan);transition:width .6s}
+  .proc-item .wait{font-size:8px;color:var(--muted);font-style:italic}
+  .prev{flex:0 0 auto}
+  .prev-box{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--edge);height:74px;margin-top:3px}
+  #prevCanvas{position:absolute;inset:0;width:100%;height:100%}
+  .prev-box .tag{position:absolute;left:5px;top:5px;font-size:8px;letter-spacing:1px;color:var(--cyan);border:1px solid rgba(96,200,255,.35);padding:1px 5px;border-radius:4px;background:rgba(4,8,16,.6);font-family:var(--mono);z-index:2}
+  .logbox{flex:1;min-height:0;display:flex;flex-direction:column}
+  #log{flex:1;overflow:hidden;font-family:var(--mono);font-size:8.5px;line-height:1.6;color:#9fc6e8;display:flex;flex-direction:column;justify-content:flex-end;min-height:0}
+  #log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #log .t{color:var(--cyan)}#log .ok{color:var(--good)}#log .wa{color:var(--warn)}
+
+  /* ===== BOTTOM ===== */
+  .bottom{grid-area:bottom;display:grid;grid-template-columns:1.15fr .85fr 1.2fr 1.1fr;gap:12px;min-height:0}
+  .bpanel{padding:9px 11px;display:flex;flex-direction:column;gap:5px;min-height:0}
+  .bp-body{flex:1;min-height:0;position:relative;display:flex;gap:9px}
+  .wd-net{flex:0 0 42%;position:relative;border-radius:7px;overflow:hidden;background:rgba(8,14,28,.5);border:1px solid rgba(120,150,255,.12)}
+  #wdCanvas{position:absolute;inset:0;width:100%;height:100%}
+  .wd-ev{flex:1;display:flex;flex-direction:column;gap:5px;justify-content:center;font-size:9px;min-width:0}
+  .wd-ev .ev{display:flex;gap:6px;align-items:flex-start}
+  .wd-ev .ev i{width:6px;height:6px;border-radius:50%;margin-top:3px;flex:0 0 6px}
+  .wd-ev .ev.v1 i{background:var(--purple);box-shadow:0 0 6px var(--purple)}
+  .wd-ev .ev.v2 i{background:var(--cyan);box-shadow:0 0 6px var(--cyan)}
+  .wd-ev .ev.v3 i{background:var(--blue);box-shadow:0 0 6px var(--blue)}
+  .wd-ev .ev b{color:#d9ecff;font-weight:600;display:block;font-size:9.5px}
+  .wd-ev .ev small{color:var(--muted);font-size:7.5px}
+  .energy-c{flex:1;display:flex;align-items:center;gap:10px;position:relative;min-width:0}
+  #energyCanvas{width:78px;height:78px;flex:0 0 78px}
+  .energy-c .et b{font-family:var(--mono);font-size:21px;color:#cfe4ff}
+  .energy-c .et small{display:block;font-size:8.5px;color:var(--muted);letter-spacing:1px;margin-top:1px}
+  .energy-c .et .st{color:var(--cyan);font-size:9px;margin-top:3px}
+  .flow-wrap{flex:1;position:relative;border-radius:7px;overflow:hidden;background:rgba(8,14,28,.5);border:1px solid rgba(120,150,255,.12)}
+  #flowCanvas{position:absolute;inset:0;width:100%;height:100%}
+  .tips{display:flex;flex-direction:column;gap:5px;justify-content:center;font-size:9px}
+  .tip{display:flex;gap:7px;align-items:flex-start;padding:5px 7px;border-radius:7px;border:1px solid rgba(120,170,230,.12);background:rgba(8,15,30,.4)}
+  .tip i{width:15px;height:15px;flex:0 0 15px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-style:normal}
+  .tip.ok i{background:rgba(54,224,170,.18);color:var(--good);border:1px solid rgba(54,224,170,.4)}
+  .tip.info i{background:rgba(96,200,255,.15);color:var(--cyan);border:1px solid rgba(96,200,255,.4)}
+  .tip.warn i{background:rgba(255,180,84,.15);color:var(--warn);border:1px solid rgba(255,180,84,.4)}
+  .tip .tt b{display:block;font-size:9.5px;font-weight:600}
+  .tip.ok .tt b{color:var(--good)}.tip.info .tt b{color:var(--cyan)}.tip.warn .tt b{color:var(--warn)}
+  .tip .tt small{color:var(--muted);font-size:7.5px}
+
+  footer{grid-area:footer;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:8.5px;color:var(--muted);letter-spacing:1px}
+  footer .c{color:#9db8d8}
+  footer .r{font-family:'Chakra Petch',sans-serif;color:var(--cyan);letter-spacing:1px}
+
+  .toast{position:fixed;left:50%;top:74px;transform:translateX(-50%);z-index:40;padding:9px 22px;border-radius:6px;font-size:12.5px;color:var(--white);
+    background:rgba(16,22,50,.95);border:1px solid rgba(150,120,255,.5);box-shadow:0 0 16px rgba(140,110,255,.35);opacity:0;transition:.35s;pointer-events:none}
+  .toast.show{opacity:1;top:86px}
+</style>
+</head>
+<body>
+<svg class="grain" xmlns="http://www.w3.org/2000/svg"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+<canvas id="bgCanvas"></canvas>
+<div class="floor"></div>
+
+<div class="scene">
+<div class="app">
+  <!-- HEADER -->
+  <header class="hud"><span class="grid"></span><span class="scanln"></span><span class="beam"></span>
+    <div class="h-left"><div class="gf">GameForge</div><div class="gf-sub">AI游戏研发·全流程协作平台</div></div>
+    <div class="h-center"><h1>Gameforge<span>-数字生命系统</span></h1><p>构建属于你的小说世界</p></div>
+    <div class="h-right">
+      <span>Godot <b>4.2</b></span>
+      <span class="lvl">系统等级 <b>Lv.7</b></span>
+      <span class="eng">能量值 <b>1287/3000</b></span>
+      <div class="avatar"></div>
+    </div>
+  </header>
+
+  <!-- LEFT -->
+  <aside class="left hud"><span class="grid"></span><span class="scanln"></span>
+    <div class="ph">系统菜单</div>
+    <div class="nav">
+      <div class="nav-item active"><span class="bar"></span><div class="hex">◈</div><div class="tx"><b>世界概览</b><small>世界状态总览</small></div></div>
+      <div class="nav-item"><span class="bar"></span><div class="hex">⊞</div><div class="tx"><b>任务规划</b><small>主线与支线任务</small></div></div>
+      <div class="nav-item"><span class="bar"></span><div class="hex">⬡</div><div class="tx"><b>角色设定</b><small>角色创建管理</small></div></div>
+      <div class="nav-item"><span class="bar"></span><div class="hex">⌨</div><div class="tx"><b>代码生成</b><small>AI 自动生成代码</small></div></div>
+      <div class="nav-item"><span class="bar"></span><div class="hex">⛬</div><div class="tx"><b>场景构建</b><small>场景与关卡编辑</small></div></div>
+      <div class="nav-item"><span class="bar"></span><div class="hex">▤</div><div class="tx"><b>资产库</b><small>资源与素材管理</small></div></div>
+      <div class="nav-item"><span class="bar"></span><div class="hex">✓</div><div class="tx"><b>测试审查</b><small>测试与 Bug 检测</small></div></div>
+      <div class="nav-item"><span class="bar"></span><div class="hex">⏶</div><div class="tx"><b>部署发布</b><small>打包与发布管理</small></div></div>
+      <div class="nav-item"><span class="bar"></span><div class="hex">≣</div><div class="tx"><b>系统日志</b><small>操作日志记录</small></div></div>
+    </div>
+    <div class="sysstat">
+      <div class="tt">系统状态</div>
+      <div class="ok"><i></i>稳定运行中 · AI System Online</div>
+      <canvas id="ecg"></canvas>
+      <div class="mbar"><div class="row"><span>核心能量</span><span>77%</span></div><div class="tr"><i style="width:77%"></i></div></div>
+      <div class="mbar"><div class="row"><span>内存占用</span><span>61%</span></div><div class="tr"><i style="width:61%"></i></div></div>
+      <div class="mbar"><div class="row"><span>进程数</span><span>16/22</span></div><div class="tr"><i style="width:73%"></i></div></div>
+    </div>
+  </aside>
+
+  <!-- CENTER（空间核心） -->
+  <div class="center">
+    <div class="welcome"><h2>欢迎回来，开发者</h2><p><i>◆</i>在数字世界中书写你的传奇<i>◆</i></p></div>
+    <div class="galaxy-wrap">
+      <canvas id="galaxy"></canvas>
+      <svg class="links" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="lk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#43e6ff"/><stop offset="1" stop-color="#a06bff"/></linearGradient>
+          <radialGradient id="dt" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#bff"/><stop offset="100%" stop-color="rgba(120,200,255,0)"/></radialGradient>
+        </defs>
+        <path id="L1" d="M50,50 Q34,36 13,15" stroke="url(#lk)" stroke-width=".28" fill="none" opacity=".5" stroke-dasharray="2 3" class="flow"/>
+        <path id="L2" d="M50,50 Q34,64 16,80" stroke="url(#lk)" stroke-width=".28" fill="none" opacity=".5" stroke-dasharray="2 3" class="flow"/>
+        <path id="L3" d="M50,50 Q66,36 87,16" stroke="url(#lk)" stroke-width=".28" fill="none" opacity=".5" stroke-dasharray="2 3" class="flow"/>
+        <path id="L4" d="M50,50 Q66,64 84,80" stroke="url(#lk)" stroke-width=".28" fill="none" opacity=".5" stroke-dasharray="2 3" class="flow"/>
+        <circle r=".7" fill="url(#dt)"><animateMotion dur="2.6s" repeatCount="indefinite"><mpath href="#L1"/></animateMotion></circle>
+        <circle r=".7" fill="url(#dt)"><animateMotion dur="3.1s" repeatCount="indefinite" begin=".5s"><mpath href="#L2"/></animateMotion></circle>
+        <circle r=".7" fill="url(#dt)"><animateMotion dur="2.8s" repeatCount="indefinite" begin=".3s"><mpath href="#L3"/></animateMotion></circle>
+        <circle r=".7" fill="url(#dt)"><animateMotion dur="3.3s" repeatCount="indefinite" begin=".8s"><mpath href="#L4"/></animateMotion></circle>
+      </svg>
+      <div class="fcard fc1"><div class="hd"><div class="hex">◈</div><b>世界设定</b></div><div class="brow"><div class="tags"><b>种族</b> | 地理 | 历史<br><b>神话</b> | 势力 | 周期</div><canvas class="holo" data-k="world"></canvas></div></div>
+      <div class="fcard fc2"><div class="hd"><div class="hex">⬡</div><b>核心玩法</b></div><div class="brow"><div class="tags"><b>战斗</b> | 探索 | 成长<br><b>任务</b> | 交易 | 制造</div><canvas class="holo" data-k="play"></canvas></div></div>
+      <div class="fcard fc3"><div class="hd"><div class="hex">♟</div><b>角色设定</b></div><div class="brow"><div class="tags"><b>角色</b> | 技能 | 职业<br><b>关系</b> | 背景故事</div><canvas class="holo" data-k="role"></canvas></div></div>
+      <div class="fcard fc4"><div class="hd"><div class="hex">✦</div><b>系统规则</b></div><div class="brow"><div class="tags"><b>世界</b> | 天气 | 生态<br><b>物理</b> | 魔法 | 科技</div><canvas class="holo" data-k="rule"></canvas></div></div>
+    </div>
+    <div class="cmdbar"><span class="pr">›</span><input id="cmdInput" placeholder="输入你的游戏创意，AI 将为你生成完整的游戏世界…"><button id="buildBtn">开始构建 ➤</button></div>
+    <div class="qt-h">快速模板</div>
+    <div class="qt">
+      <div class="t"><div class="art" data-g="g1"></div><div class="lb">2D平台冒险</div></div>
+      <div class="t"><div class="art" data-g="g2"></div><div class="lb">开放世界RPG</div></div>
+      <div class="t"><div class="art" data-g="g3"></div><div class="lb">策略战争</div></div>
+      <div class="t"><div class="art" data-g="g4"></div><div class="lb">科幻射击</div></div>
+      <div class="t"><div class="art" data-g="g5"></div><div class="lb">模拟经营</div></div>
+      <div class="t"><div class="art" data-g="g6"></div><div class="lb">恐怖解谜</div></div>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <aside class="right hud"><span class="grid"></span><span class="scanln"></span>
+    <div class="proc">
+      <div class="ph">系统进程 <span class="en">AGENT OPS</span></div>
+      <div class="proc-sub">多智能体协作中…</div>
+      <div class="proc-list">
+        <div class="proc-item"><div class="hex">◈</div><div class="in"><b>世界设计师</b><small>构建世界板块</small><div class="tr"><i style="width:23%"></i></div></div><div class="pc">23%</div></div>
+        <div class="proc-item"><div class="hex">⊞</div><div class="in"><b>任务规划师</b><small>设计任务链</small><div class="tr"><i style="width:45%"></i></div></div><div class="pc">45%</div></div>
+        <div class="proc-item"><div class="hex">⌨</div><div class="in"><b>代码工程师</b><small>生成核心代码</small><div class="tr"><i style="width:68%"></i></div></div><div class="pc">68%</div></div>
+        <div class="proc-item"><div class="hex">✓</div><div class="in"><b>代码审查员</b><small>检查代码质量</small><div class="tr"><i style="width:12%"></i></div></div><div class="pc">12%</div></div>
+        <div class="proc-item"><div class="hex">⚗</div><div class="in"><b>测试工程师</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
+        <div class="proc-item"><div class="hex">⛬</div><div class="in"><b>场景构建师</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
+        <div class="proc-item"><div class="hex">⏶</div><div class="in"><b>系统整合员</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
+      </div>
+    </div>
+    <div class="prev"><div class="ph">实时预览 <span class="en">LIVE</span></div><div class="prev-box"><canvas id="prevCanvas"></canvas><span class="tag">SIM</span></div></div>
+    <div class="logbox"><div class="ph">系统日志 <span class="en">SYS LOG</span></div><div id="log"></div></div>
+  </aside>
+
+  <!-- BOTTOM -->
+  <div class="bottom">
+    <div class="bpanel hud"><span class="grid"></span><span class="scanln"></span><div class="ph">世界动态 <span class="en">WORLD DYNAMICS</span></div>
+      <div class="bp-body"><div class="wd-net"><canvas id="wdCanvas"></canvas></div>
+        <div class="wd-ev">
+          <div class="ev v1"><i></i><div><b>北境王国发生叛乱</b><small>2 分钟前</small></div></div>
+          <div class="ev v2"><i></i><div><b>神秘商人出现</b><small>5 分钟前</small></div></div>
+          <div class="ev v3"><i></i><div><b>新的传送门被发现</b><small>12 分钟前</small></div></div>
+        </div></div></div>
+    <div class="bpanel hud"><span class="grid"></span><span class="scanln"></span><div class="ph">能量核心 <span class="en">ENERGY CORE</span></div>
+      <div class="bp-body"><div class="energy-c"><canvas id="energyCanvas"></canvas>
+        <div class="et"><b>72%</b><small>能量充能</small><div class="st">能量循环中…</div></div></div></div></div>
+    <div class="bpanel hud"><span class="grid"></span><span class="scanln"></span><div class="ph">数据流动 <span class="en">DATA FLOW</span></div>
+      <div class="bp-body"><div class="flow-wrap"><canvas id="flowCanvas"></canvas></div></div></div>
+    <div class="bpanel hud"><span class="grid"></span><span class="scanln"></span><div class="ph">系统提示 <span class="en">SYSTEM NOTICE</span></div>
+      <div class="bp-body"><div class="tips">
+        <div class="tip ok"><i>✓</i><div class="tt"><b>任务完成</b><small>世界架构搭建完成！</small></div></div>
+        <div class="tip info"><i>⌨</i><div class="tt"><b>代码生成</b><small>PlayerController.cs 生成完成</small></div></div>
+        <div class="tip warn"><i>⚠</i><div class="tt"><b>系统警告</b><small>检测到资源冲突，已自动修复</small></div></div>
+      </div></div></div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="hud"><span class="scanln"></span>
+    <span>Gameforge-数字生命系统 v1.00</span>
+    <span class="c">在数据的流动中，生命得以诞生，世界由你书写。</span>
+    <span class="r">GameForge AI Lab</span>
+  </footer>
+</div>
+</div>
+<div class="toast" id="toast">已开始构建你的世界……</div>
+
+<script>
+function sizeC(c){const r=c.getBoundingClientRect();c.width=Math.max(2,r.width*devicePixelRatio);c.height=Math.max(2,r.height*devicePixelRatio);return r;}
+const T=()=>performance.now()/1000;
+
+/* 背景：粒子星云 + 神经网络 */
+const bg=document.getElementById('bgCanvas'),bgx=bg.getContext('2d');let W,H,pts;
+function bgr(){W=bg.width=innerWidth;H=bg.height=innerHeight;pts=Array.from({length:110},()=>({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.22,vy:(Math.random()-.5)*.22,r:Math.random()*1.5+.4}));}
+bgr();addEventListener('resize',bgr);
+(function dBG(){bgx.clearRect(0,0,W,H);
+  for(let i=0;i<pts.length;i++){const p=pts[i];p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1;
+    bgx.beginPath();bgx.arc(p.x,p.y,p.r,0,7);bgx.fillStyle='rgba(140,200,255,.6)';bgx.fill();
+    for(let j=i+1;j<pts.length;j++){const q=pts[j],d=Math.hypot(p.x-q.x,p.y-q.y);
+      if(d<130){bgx.beginPath();bgx.moveTo(p.x,p.y);bgx.lineTo(q.x,q.y);bgx.strokeStyle='rgba(120,150,255,'+(.10*(1-d/130))+')';bgx.lineWidth=.6;bgx.stroke();}}}
+  requestAnimationFrame(dBG);})();
+
+/* 中央星系：蓝紫螺旋 + 核心数据光柱 */
+const gx=document.getElementById('galaxy'),gc=gx.getContext('2d');let gr=sizeC(gx);
+const ARMS=2,GN=2600,WIND=5.0,gp=[];
+for(let i=0;i<GN;i++){const arm=i%ARMS;
+  const r=0.04+Math.pow(Math.random(),1.35)*0.96;      // 沿旋臂从核到缘分布
+  const spread=0.09+r*0.30;                            // 垂直散布，越外越宽
+  gp.push({arm,r,jit:(Math.random()-0.5)*spread,sz:Math.random()*1.7+.5,tw:Math.random()*6.28,knot:Math.random()<0.035});}
+function drawGalaxy(t){const w=gx.width,h=gx.height;gc.clearRect(0,0,w,h);
+  const cx=w/2,cy=h/2,R=Math.min(w,h)*0.62,tilt=0.72;
+  /* 外层紫晕 */
+  let halo=gc.createRadialGradient(cx,cy,R*0.1,cx,cy,R*1.3);
+  halo.addColorStop(0,'rgba(150,90,255,.20)');halo.addColorStop(.55,'rgba(110,70,230,.10)');halo.addColorStop(1,'rgba(0,0,0,0)');
+  gc.fillStyle=halo;gc.beginPath();gc.arc(cx,cy,R*1.3,0,7);gc.fill();
+  gc.globalCompositeOperation='lighter';
+  const rot=t*0.16;
+  /* 中央核球（暖白亮斑） */
+  let bulge=gc.createRadialGradient(cx,cy,0,cx,cy,R*0.34);
+  bulge.addColorStop(0,'rgba(255,246,225,.95)');bulge.addColorStop(.4,'rgba(200,225,255,.55)');bulge.addColorStop(1,'rgba(0,0,0,0)');
+  gc.fillStyle=bulge;gc.beginPath();gc.arc(cx,cy,R*0.34,0,7);gc.fill();
+  /* 中央短棒（随星系旋转，构成棒旋结构） */
+  gc.save();gc.translate(cx,cy);gc.rotate(rot);gc.scale(1,tilt);
+  let bar=gc.createLinearGradient(-R*0.34,0,R*0.34,0);
+  bar.addColorStop(0,'rgba(255,240,210,0)');bar.addColorStop(.5,'rgba(255,242,214,.5)');bar.addColorStop(1,'rgba(255,240,210,0)');
+  gc.fillStyle=bar;gc.beginPath();gc.ellipse(0,0,R*0.34,R*0.12,0,0,7);gc.fill();gc.restore();
+  /* 两条清晰旋臂 + 恒星形成区亮结 */
+  for(const p of gp){const ang=p.arm*Math.PI+p.r*WIND+rot+p.jit;
+    const rad=p.r*R;
+    const x=Math.cos(ang)*rad,y=Math.sin(ang)*rad*tilt;
+    const px=cx+x,py=cy+y;
+    const d=p.r;let col,a;
+    if(d<0.14){col='255,244,220';a=.95}        /* 核球暖白 */
+    else if(d<0.4){col='160,215,255';a=.85}    /* 内臂蓝 */
+    else if(d<0.72){col='150,120,255';a=.78}   /* 中臂紫罗兰 */
+    else{col='190,110,252';a=.62}              /* 外缘品紫 */
+    let sz=p.sz*(1.35-d*0.5);
+    if(p.knot){col=(d<0.5)?'255,150,220':'255,190,235';a=.95;sz*=2.2;}  /* 亮结 */
+    a*=(0.5+0.5*Math.sin(t*2+p.tw));
+    gc.beginPath();gc.arc(px,py,sz*devicePixelRatio*0.72,0,7);gc.fillStyle='rgba('+col+','+a+')';gc.fill();}
+  /* 核心升起的数据光柱 */
+  for(let i=0;i<4;i++){const bx=cx+(i-1.5)*R*0.12,bw=R*0.05,fl=0.5+0.5*Math.sin(t*2.2+i*1.7);
+    let bg2=gc.createLinearGradient(0,cy,0,cy-R*0.95);
+    bg2.addColorStop(0,'rgba(150,220,255,'+(0.28*fl)+')');bg2.addColorStop(1,'rgba(150,220,255,0)');
+    gc.fillStyle=bg2;gc.fillRect(bx-bw/2,cy-R*0.95,bw,R*0.95);}
+  gc.globalCompositeOperation='source-over';}
+
+/* 卡片全息小可视化 */
+const holos=[];
+document.querySelectorAll('.holo').forEach(cv=>{sizeC(cv);holos.push({cv,c:cv.getContext('2d'),k:cv.getAttribute('data-k')});});
+function drawHolo(h,t){const c=h.c,w=h.cv.width,hgt=h.cv.height,cx=w/2,cy=hgt/2,R=Math.min(w,hgt)*0.4;c.clearRect(0,0,w,hgt);
+  c.strokeStyle='rgba(120,220,255,.8)';c.fillStyle='rgba(120,220,255,.7)';c.lineWidth=1.2*devicePixelRatio;c.shadowColor='rgba(120,200,255,.8)';c.shadowBlur=5;
+  if(h.k==='world'){c.beginPath();c.arc(cx,cy,R,0,7);c.stroke();
+    for(let i=0;i<3;i++){c.beginPath();c.ellipse(cx,cy,R,R*0.35*Math.abs(Math.sin(t+i)),t*0.5,0,7);c.stroke();}}
+  else if(h.k==='play'){const s=R*(0.7+0.2*Math.sin(t*3));c.beginPath();c.moveTo(cx-s,cy-s);c.lineTo(cx+s,cy+s);c.moveTo(cx+s,cy-s);c.lineTo(cx-s,cy+s);c.stroke();
+    c.beginPath();c.arc(cx,cy,R*0.3,0,7);c.stroke();}
+  else if(h.k==='role'){c.beginPath();c.arc(cx,cy-R*0.4,R*0.28,0,7);c.stroke();
+    c.beginPath();c.arc(cx,cy+R*0.7,R*0.62,Math.PI,2*Math.PI);c.stroke();}
+  else{for(let i=1;i<=3;i++){c.beginPath();c.arc(cx,cy,R*i/3,t*(0.5+i*0.2),t*(0.5+i*0.2)+4.5);c.stroke();}
+    c.beginPath();c.arc(cx,cy,2*devicePixelRatio,0,7);c.fill();}
+  c.shadowBlur=0;}
+
+/* ECG */
+const ec=document.getElementById('ecg'),ecx=ec.getContext('2d');sizeC(ec);
+function drawECG(t){const w=ec.width,h=ec.height;ecx.clearRect(0,0,w,h);
+  ecx.beginPath();const mid=h*0.55;ecx.moveTo(0,mid);
+  for(let x=0;x<=w;x+=2){const ph=((x/w*2+t*1.2)%2);let y=mid;
+    if(ph>0.9&&ph<0.94)y=mid-(ph-0.9)/0.04*h*0.4;else if(ph>=0.94&&ph<1.0)y=mid-(0.04-(ph-0.94))/0.06*h*0.55+h*0.15;else if(ph>=1.0&&ph<1.06)y=mid+h*0.18;ecx.lineTo(x,y);}
+  ecx.strokeStyle='rgba(54,224,170,.85)';ecx.lineWidth=1.3*devicePixelRatio;ecx.shadowColor='rgba(54,224,170,.8)';ecx.shadowBlur=5;ecx.stroke();ecx.shadowBlur=0;}
+
+/* 实时预览城堡 */
+const pv=document.getElementById('prevCanvas'),pvx=pv.getContext('2d');sizeC(pv);let pvt=0;
+function drawPrev(){const w=pv.width,h=pv.height;pvx.clearRect(0,0,w,h);
+  const sky=pvx.createLinearGradient(0,0,0,h);sky.addColorStop(0,'#33195a');sky.addColorStop(.5,'#5a2a72');sky.addColorStop(.75,'#b06a4a');sky.addColorStop(1,'#e0a05a');pvx.fillStyle=sky;pvx.fillRect(0,0,w,h);
+  const sy=h*0.5;let sg=pvx.createRadialGradient(w*0.7,sy,0,w*0.7,sy,h*0.5);sg.addColorStop(0,'rgba(255,220,160,.9)');sg.addColorStop(1,'rgba(255,220,160,0)');pvx.fillStyle=sg;pvx.fillRect(0,0,w,h);
+  pvx.fillStyle='rgba(50,30,90,.85)';pvx.beginPath();pvx.moveTo(0,h*0.72);for(let x=0;x<=w;x+=8)pvx.lineTo(x,h*0.72-Math.abs(Math.sin(x*0.02))*h*0.16);pvx.lineTo(w,h);pvx.lineTo(0,h);pvx.fill();
+  const bx=w*0.42,by=h*0.72;pvx.fillStyle='#1c0f38';
+  pvx.fillRect(bx,by-h*0.34,w*0.16,h*0.34);
+  for(let k=0;k<4;k++){const tx=bx+k*(w*0.045);pvx.fillRect(tx,by-h*0.44-(k%2)*h*0.06,w*0.03,h*0.44+(k%2)*h*0.06);pvx.beginPath();pvx.moveTo(tx,by-h*0.44-(k%2)*h*0.06);pvx.lineTo(tx+w*0.015,by-h*0.52-(k%2)*h*0.06);pvx.lineTo(tx+w*0.03,by-h*0.44-(k%2)*h*0.06);pvx.fill();}
+  pvx.fillStyle='#140a28';pvx.fillRect(0,h*0.78,w,h*0.22);
+  pvx.fillStyle='rgba(150,220,200,.55)';for(let i=0;i<8;i++)pvx.fillRect((i*53+pvt*20)%w,h*0.82+(i%3)*h*0.04,2,2);
+  pvt+=0.016;}
+
+/* 世界动态节点网 */
+const wd=document.getElementById('wdCanvas'),wdx=wd.getContext('2d');sizeC(wd);
+const wn=Array.from({length:8},()=>({x:.12+Math.random()*.76,y:.15+Math.random()*.7,r:2+Math.random()*2,ph:Math.random()*6.28,c:Math.random()<.55?'165,120,255':'90,200,255'}));
+function drawWD(t){const w=wd.width,h=wd.height;wdx.clearRect(0,0,w,h);
+  for(let i=0;i<wn.length;i++)for(let j=i+1;j<wn.length;j++){const a=wn[i],b=wn[j],d=Math.hypot((a.x-b.x)*w,(a.y-b.y)*h);
+    if(d<w*0.5){wdx.beginPath();wdx.moveTo(a.x*w,a.y*h);wdx.lineTo(b.x*w,b.y*h);wdx.strokeStyle='rgba(130,120,255,'+(.22*(1-d/(w*0.5)))+')';wdx.lineWidth=1;wdx.stroke();}}
+  for(const p of wn){const pulse=.7+.3*Math.sin(t*2+p.ph);wdx.beginPath();wdx.arc(p.x*w,p.y*h,p.r*pulse*devicePixelRatio,0,7);
+    wdx.fillStyle='rgba('+p.c+','+(.6*pulse)+')';wdx.shadowColor='rgba('+p.c+',.9)';wdx.shadowBlur=8;wdx.fill();wdx.shadowBlur=0;}}
+
+/* 能量环 */
+const en=document.getElementById('energyCanvas'),enx=en.getContext('2d');sizeC(en);
+function drawEnergy(t,v){const w=en.width,h=en.height,cx=w/2,cy=h/2,R=Math.min(w,h)*0.4;enx.clearRect(0,0,w,h);
+  enx.lineWidth=4*devicePixelRatio;enx.strokeStyle='rgba(90,110,180,.22)';enx.beginPath();enx.arc(cx,cy,R,0,7);enx.stroke();
+  const g=enx.createLinearGradient(0,0,w,h);g.addColorStop(0,'#43e6ff');g.addColorStop(1,'#a06bff');
+  enx.strokeStyle=g;enx.shadowColor='rgba(120,180,255,.7)';enx.shadowBlur=8;enx.beginPath();enx.arc(cx,cy,R,-Math.PI/2,-Math.PI/2+2*Math.PI*v);enx.stroke();enx.shadowBlur=0;
+  enx.lineWidth=1.1*devicePixelRatio;enx.strokeStyle='rgba(120,200,255,.35)';
+  for(let k=0;k<3;k++){enx.beginPath();enx.arc(cx,cy,R*0.68,t*0.6+k*2.1,t*0.6+k*2.1+3.4);enx.stroke();}
+  enx.fillStyle='#eaf3ff';enx.font='bold '+(15*devicePixelRatio)+'px "Share Tech Mono",monospace';enx.textAlign='center';enx.textBaseline='middle';enx.fillText(Math.round(v*100)+'%',cx,cy);}
+
+/* 数据流 */
+const fl=document.getElementById('flowCanvas'),flx=fl.getContext('2d');sizeC(fl);
+function drawFlow(t){const w=fl.width,h=fl.height;flx.clearRect(0,0,w,h);
+  const waves=[['rgba(96,220,255,',.5,1.1,0],['rgba(160,110,255,',.4,1.5,2],['rgba(110,150,255,',.32,0.8,4]];
+  for(const[c,amp,fr,off]of waves){flx.beginPath();
+    for(let x=0;x<=w;x+=3){const y=h*0.5+Math.sin(x*0.008*fr+t*1.4+off)*h*0.22*amp*2+Math.sin(x*0.02+t)*h*0.06;flx.lineTo(x,y);}
+    flx.lineTo(w,h);flx.lineTo(0,h);flx.closePath();
+    const g=flx.createLinearGradient(0,0,0,h);g.addColorStop(0,c+'0.28)');g.addColorStop(1,c+'0.02)');flx.fillStyle=g;flx.fill();
+    flx.beginPath();for(let x=0;x<=w;x+=3){const y=h*0.5+Math.sin(x*0.008*fr+t*1.4+off)*h*0.22*amp*2+Math.sin(x*0.02+t)*h*0.06;flx.lineTo(x,y);}
+    flx.strokeStyle=c+'0.6)';flx.lineWidth=1.1*devicePixelRatio;flx.stroke();}}
+
+/* 系统日志 */
+const log=document.getElementById('log');
+function ts(){const d=new Date();return '['+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0')+']';}
+[['t','系统启动完成'],['t','连接多智能体网络... <span class="ok">成功</span>'],['t','世界模型初始化... <span class="ok">完成</span>'],['t','等待开发者指令...']].forEach(s=>{const d=document.createElement('div');d.innerHTML='<span class="t">'+ts()+'</span> '+s[1];log.appendChild(d);});
+const pool=['世界设计师：板块生成 <span class="ok">完成</span>','任务规划师：任务链更新','代码工程师：模块编译 <span class="ok">通过</span>','生态模拟：种群平衡 <span class="ok">稳定</span>','记忆网络：节点同步','代码审查员：质量扫描 <span class="wa">1 处建议</span>','数据流：吞吐量 +4.2%'];
+function pushLog(msg){const d=document.createElement('div');d.innerHTML='<span class="t">'+ts()+'</span> '+msg;log.appendChild(d);while(log.children.length>7)log.removeChild(log.firstChild);}
+setInterval(()=>pushLog(pool[Math.floor(Math.random()*pool.length)]),3000);
+
+/* 快速模板缩略图 */
+document.querySelectorAll('.qt .art').forEach(el=>{const cv=document.createElement('canvas');el.appendChild(cv);
+  sizeC(cv);const c=cv.getContext('2d'),w=cv.width,h=cv.height;const kind=el.getAttribute('data-g');
+  const grads={g1:['#2a2a6a','#7a3ab0'],g2:['#331a5a','#b06a4a'],g3:['#0a2a4a','#3a7aaa'],g4:['#241a4a','#7a2aa0'],g5:['#0a3a2a','#3a9a6a'],g6:['#240a24','#5a1a4a']};
+  const g=c.createLinearGradient(0,0,w,h);g.addColorStop(0,grads[kind][0]);g.addColorStop(1,grads[kind][1]);c.fillStyle=g;c.fillRect(0,0,w,h);
+  c.fillStyle='rgba(255,255,255,.12)';for(let i=0;i<18;i++)c.fillRect(Math.random()*w,Math.random()*h,1.5,1.5);
+  c.strokeStyle='rgba(150,200,255,.55)';c.lineWidth=1;c.beginPath();c.arc(w/2,h/2,Math.min(w,h)*0.22,0,7);c.stroke();
+  c.fillStyle='rgba(120,220,255,.75)';c.beginPath();c.arc(w/2,h/2,3,0,7);c.fill();});
+
+/* 交互 */
+const toast=document.getElementById('toast');
+function showToast(t){toast.textContent=t;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2400);}
+document.querySelectorAll('.nav-item').forEach(it=>{it.addEventListener('click',()=>{
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));it.classList.add('active');
+  const name=it.querySelector('b').textContent.trim();showToast('模块激活 · '+name);pushLog('进入模块：'+name);});});
+document.getElementById('buildBtn').addEventListener('click',()=>{const t=document.getElementById('cmdInput').value.trim();
+  showToast(t?('开始构建：'+t.slice(0,36)+'…'):'已开始构建你的世界……');
+  pushLog('接受构建指令：'+(t?t.slice(0,20):'默认世界'));
+  for(let i=0;i<60;i++)pts.push({x:W/2,y:H/2,vx:(Math.random()-.5)*6,vy:(Math.random()-.5)*6,r:Math.random()*2+1});if(pts.length>200)pts.splice(0,pts.length-200);});
+
+/* 主循环 */
+function loop(){const t=T();drawGalaxy(t);drawECG(t);drawPrev();drawWD(t);drawEnergy(t,0.72+Math.sin(t*0.5)*0.02);drawFlow(t);
+  for(const h of holos)drawHolo(h,t);
+  requestAnimationFrame(loop);}
+loop();
+addEventListener('resize',()=>{gr=sizeC(gx);sizeC(ec);sizeC(pv);sizeC(wd);sizeC(en);sizeC(fl);holos.forEach(h=>sizeC(h.cv));});
+</script>
+</body>
+</html>
