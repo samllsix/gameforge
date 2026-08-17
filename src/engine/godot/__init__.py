@@ -236,8 +236,29 @@ class GodotEditor:
         manifest = {"scripts": [p for p in script_paths if p]}
         manifest_path = os.path.join(self.project_path, "_gf_check_manifest.json")
         try:
+            if os.path.exists(manifest_path):
+                os.chmod(manifest_path, 0o666)
+                os.remove(manifest_path)
+        except Exception:
+            pass
+        try:
             with open(manifest_path, "w", encoding="utf-8") as f:
                 json.dump(manifest, f, ensure_ascii=False)
+        except PermissionError:
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.project_path, suffix=".json", prefix="_gf_check_manifest_"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(manifest, f, ensure_ascii=False)
+                manifest_path = tmp_path
+            except Exception as e:
+                return GodotCompileResult(
+                    success=False,
+                    errors=[{"message": f"写入校验 manifest 失败: {e}"}],
+                    warnings=[], output="",
+                )
         except Exception as e:
             return GodotCompileResult(
                 success=False,
@@ -335,11 +356,12 @@ class GodotEditor:
 
         for rel_path, content in files.items():
             try:
-                file_path = os.path.join(self.project_path, rel_path)
+                clean = rel_path.removeprefix("res://").removeprefix("res:/")
+                file_path = os.path.join(self.project_path, clean)
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(content)
-                imported.append(rel_path)
+                imported.append(clean)
             except Exception as e:
                 errors.append(f"{rel_path}: {str(e)}")
 

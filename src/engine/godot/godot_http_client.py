@@ -55,10 +55,17 @@ class GodotHTTPClient:
             await self._client.aclose()
 
     async def check_health(self) -> bool:
-        """检查 Godot 编辑器 HTTP 服务是否可用"""
+        """检查 Godot 编辑器 HTTP 服务是否可用
+
+        使用较短的连接超时（2s 连接 / 3s 总超时），避免 Godot 未运行且端口被
+        静默丢弃时，健康检查一直挂到客户端全局超时（默认 60s）才返回。
+        """
         try:
             client = await self._get_client()
-            resp = await client.get("/api/health")
+            resp = await client.get(
+                "/api/health",
+                timeout=httpx.Timeout(3.0, connect=2.0),
+            )
             return resp.status_code == 200
         except Exception:
             return False
@@ -67,7 +74,10 @@ class GodotHTTPClient:
         """获取 Godot 编辑器信息"""
         try:
             client = await self._get_client()
-            resp = await client.get("/api/health")
+            resp = await client.get(
+                "/api/health",
+                timeout=httpx.Timeout(3.0, connect=2.0),
+            )
             return resp.json() if resp.status_code == 200 else {}
         except Exception as e:
             return {"error": str(e)}

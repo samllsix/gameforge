@@ -123,22 +123,22 @@ def _zone_y(zone: str, is_2d: bool) -> float:
 # ═══════════════════════════════════════════════════════════════
 
 _ROLE_TO_TYPE: Dict[str, str] = {
-    "player": "Capsule",      # 胶囊体 = 角色，视觉辨识度高
-    "ground": "Cube",         # 方块 = 地面
-    "platform": "Cube",       # 方块 = 平台
-    "obstacle": "Cube",       # 方块 = 障碍
-    "enemy": "Cube",          # 红色方块 = 敌人
-    "npc": "Capsule",         # 紫色胶囊 = NPC
-    "pickup": "Sphere",       # 球体 = 金币/道具，最突出
-    "spawner": "Empty",
-    "manager": "Empty",
-    "decoration": "Cylinder",
-    "boundary": "Cube",       # 边界墙用方块
-    "camera": "Camera",
-    "wall": "Cube",
-    "trigger": "Cube",
-    "spawn_point": "Sphere",
-    "light": "Sphere",
+    "player": "CharacterBody2D",
+    "ground": "StaticBody2D",
+    "platform": "StaticBody2D",
+    "obstacle": "StaticBody2D",
+    "enemy": "CharacterBody2D",
+    "npc": "CharacterBody2D",
+    "pickup": "Area2D",
+    "spawner": "Node2D",
+    "manager": "Node",
+    "decoration": "Node2D",
+    "boundary": "StaticBody2D",
+    "camera": "Camera2D",
+    "wall": "StaticBody2D",
+    "trigger": "Area2D",
+    "spawn_point": "Node2D",
+    "light": "PointLight2D",
 }
 
 _ROLE_TO_SCALE: Dict[str, List[float]] = {
@@ -157,17 +157,17 @@ _ROLE_TO_SCALE: Dict[str, List[float]] = {
 }
 
 _ROLE_TO_COMPONENTS: Dict[str, List[str]] = {
-    "player": ["Rigidbody2D", "BoxCollider2D"],
-    "ground": ["BoxCollider2D"],
-    "platform": ["BoxCollider2D"],
-    "obstacle": ["BoxCollider2D"],
-    "enemy": ["Rigidbody2D", "BoxCollider2D"],
-    "npc": ["BoxCollider2D"],
-    "pickup": ["BoxCollider2D"],
+    "player": ["BoxCollision"],
+    "ground": ["BoxCollision"],
+    "platform": ["BoxCollision"],
+    "obstacle": ["BoxCollision"],
+    "enemy": ["BoxCollision"],
+    "npc": ["BoxCollision"],
+    "pickup": ["BoxCollision"],
     "spawner": [],
     "manager": [],
     "decoration": [],
-    "boundary": ["BoxCollider2D"],
+    "boundary": ["BoxCollision"],
     "camera": [],
 }
 
@@ -198,27 +198,24 @@ def _build_scene_object(
     camera_mode: str,
 ) -> SceneObject:
     name = entity.name if entity.count == 1 else f"{entity.name}{instance_idx + 1}"
-    obj_type = _ROLE_TO_TYPE.get(entity.role, "Empty")
+    obj_type = _ROLE_TO_TYPE.get(entity.role, "Node2D")
     scale = list(_ROLE_TO_SCALE.get(entity.role, [1, 1, 1]))
 
-    # 地面在 2D 模式下用薄 Cube（Sprite 无贴图不可见）
     if entity.role == "ground" and "2d" in camera_mode:
-        obj_type = "Cube"
         scale = [20, 0.5, 1]
 
-    # 组件
     components: List[ComponentSpec] = []
     for comp_type in _ROLE_TO_COMPONENTS.get(entity.role, []):
         props: Dict[str, str] = {}
-        if comp_type == "Rigidbody2D":
-            props = {"gravityScale": "3" if entity.role == "player" else "1", "mass": "1"}
-            if entity.role in ("pickup", "decoration"):
-                props["bodyType"] = "Static"
-        elif comp_type == "BoxCollider2D":
+        if comp_type == "BoxCollision":
             if entity.role == "ground":
-                props = {"size": "20,1"}
+                props = {"size": [20, 1]}
             elif entity.role == "pickup":
-                props = {"isTrigger": "true"}
+                props = {"size": [0.5, 0.5], "isTrigger": "true"}
+            elif entity.role == "platform":
+                props = {"size": [4, 0.5]}
+            else:
+                props = {"size": [1, 1]}
         components.append(ComponentSpec(type=comp_type, properties=props))
 
     # 自定义脚本
@@ -235,6 +232,7 @@ def _build_scene_object(
     return SceneObject(
         name=name,
         type=obj_type,
+        role=entity.role,
         position=list(position),
         rotation=[0, 0, 0],
         scale=scale,

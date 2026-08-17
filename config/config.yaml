@@ -47,8 +47,8 @@ llm:
       api_key_env: SENSENOVA_API_KEY
   models:
     planner:
-      provider: mimo
-      model: mimo-v2.5-pro
+      provider: deepseek
+      model: deepseek-v4-pro
       temperature: 0.4
       max_tokens: 4096
     code_generator:
@@ -77,15 +77,20 @@ llm:
       temperature: 0.2
       max_tokens: 8192
     game_designer:
-      provider: mimo
-      model: mimo-v2.5-pro
+      provider: deepseek
+      model: deepseek-v4-pro
       temperature: 0.4
       max_tokens: 4096
     scene_generator:
-      provider: sensenova
-      model: sensenova-6.7-flash-lite
+      provider: deepseek
+      model: deepseek-v4-pro
       temperature: 0.3
       max_tokens: 8192
+    main_reviewer:
+      provider: deepseek
+      model: deepseek-v4-pro
+      temperature: 0.2
+      max_tokens: 4096
 
 # Agent Configuration
 agents:

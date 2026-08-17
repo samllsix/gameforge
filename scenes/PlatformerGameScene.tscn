@@ -1,0 +1,381 @@
+[gd_scene load_steps=60 format=3]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/pickup.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/score_manager.gd" id="3"]
+
+[sub_resource type="StandardMaterial3D" id="sub_1"]
+albedo_color = Color(0.53, 0.81, 0.92, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_2"]
+size = Vector2(200, 200)
+material = SubResource("sub_1")
+
+[sub_resource type="RectangleShape2D" id="sub_3"]
+size = Vector2(1.0, 1.0)
+
+[sub_resource type="StandardMaterial3D" id="sub_4"]
+albedo_color = Color(0.2, 0.4, 0.9, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_5"]
+size = Vector2(1.0, 1.0)
+material = SubResource("sub_4")
+
+[sub_resource type="RectangleShape2D" id="sub_6"]
+size = Vector2(20.0, 1.0)
+
+[sub_resource type="StandardMaterial3D" id="sub_7"]
+albedo_color = Color(0.36, 0.25, 0.15, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_8"]
+size = Vector2(20.0, 0.5)
+material = SubResource("sub_7")
+
+[sub_resource type="RectangleShape2D" id="sub_9"]
+size = Vector2(4.0, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_10"]
+albedo_color = Color(0.5, 0.5, 0.4, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_11"]
+size = Vector2(4.0, 0.5)
+material = SubResource("sub_10")
+
+[sub_resource type="RectangleShape2D" id="sub_12"]
+size = Vector2(4.0, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_13"]
+albedo_color = Color(0.5, 0.5, 0.4, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_14"]
+size = Vector2(4.0, 0.5)
+material = SubResource("sub_13")
+
+[sub_resource type="RectangleShape2D" id="sub_15"]
+size = Vector2(4.0, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_16"]
+albedo_color = Color(0.5, 0.5, 0.4, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_17"]
+size = Vector2(4.0, 0.5)
+material = SubResource("sub_16")
+
+[sub_resource type="RectangleShape2D" id="sub_18"]
+size = Vector2(4.0, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_19"]
+albedo_color = Color(0.5, 0.5, 0.4, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_20"]
+size = Vector2(4.0, 0.5)
+material = SubResource("sub_19")
+
+[sub_resource type="RectangleShape2D" id="sub_21"]
+size = Vector2(4.0, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_22"]
+albedo_color = Color(0.5, 0.5, 0.4, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_23"]
+size = Vector2(4.0, 0.5)
+material = SubResource("sub_22")
+
+[sub_resource type="RectangleShape2D" id="sub_24"]
+size = Vector2(4.0, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_25"]
+albedo_color = Color(0.5, 0.5, 0.4, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_26"]
+size = Vector2(4.0, 0.5)
+material = SubResource("sub_25")
+
+[sub_resource type="RectangleShape2D" id="sub_27"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_28"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_29"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_28")
+
+[sub_resource type="RectangleShape2D" id="sub_30"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_31"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_32"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_31")
+
+[sub_resource type="RectangleShape2D" id="sub_33"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_34"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_35"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_34")
+
+[sub_resource type="RectangleShape2D" id="sub_36"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_37"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_38"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_37")
+
+[sub_resource type="RectangleShape2D" id="sub_39"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_40"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_41"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_40")
+
+[sub_resource type="RectangleShape2D" id="sub_42"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_43"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_44"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_43")
+
+[sub_resource type="RectangleShape2D" id="sub_45"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_46"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_47"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_46")
+
+[sub_resource type="RectangleShape2D" id="sub_48"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_49"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_50"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_49")
+
+[sub_resource type="RectangleShape2D" id="sub_51"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_52"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_53"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_52")
+
+[sub_resource type="RectangleShape2D" id="sub_54"]
+size = Vector2(0.5, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="sub_55"]
+albedo_color = Color(1.0, 0.85, 0.2, 1.0)
+shading_mode = 0
+
+[sub_resource type="QuadMesh" id="sub_56"]
+size = Vector2(0.5, 0.5)
+material = SubResource("sub_55")
+
+[node name="PlatformerGameScene" type="Node2D"]
+
+[node name="Background" type="MeshInstance2D" parent="."]
+mesh = SubResource("sub_2")
+z_index = -100
+
+[node name="Camera" type="Camera2D" parent="."]
+zoom = Vector2(0.16666666666666666, 0.16666666666666666)
+position = Vector2(0.0, 0.0)
+
+[node name="Light" type="DirectionalLight2D" parent="."]
+energy = 1.0
+
+[node name="Player" type="CharacterBody2D" parent="."]
+position = Vector2(-28.5, 0.0)
+script = ExtResource("1")
+[node name="CollisionShape" type="CollisionShape2D" parent="Player"]
+shape = SubResource("sub_3")
+[node name="Mesh" type="MeshInstance2D" parent="Player"]
+mesh = SubResource("sub_5")
+
+[node name="Ground" type="StaticBody2D" parent="."]
+position = Vector2(-25.5, -3.0)
+scale = Vector2(20.0, 0.5)
+[node name="CollisionShape" type="CollisionShape2D" parent="Ground"]
+shape = SubResource("sub_6")
+[node name="Mesh" type="MeshInstance2D" parent="Ground"]
+mesh = SubResource("sub_8")
+
+[node name="Platform1" type="StaticBody2D" parent="."]
+position = Vector2(-22.5, 1.0)
+scale = Vector2(4.0, 0.5)
+[node name="CollisionShape" type="CollisionShape2D" parent="Platform1"]
+shape = SubResource("sub_9")
+[node name="Mesh" type="MeshInstance2D" parent="Platform1"]
+mesh = SubResource("sub_11")
+
+[node name="Platform2" type="StaticBody2D" parent="."]
+position = Vector2(-19.5, 1.0)
+scale = Vector2(4.0, 0.5)
+[node name="CollisionShape" type="CollisionShape2D" parent="Platform2"]
+shape = SubResource("sub_12")
+[node name="Mesh" type="MeshInstance2D" parent="Platform2"]
+mesh = SubResource("sub_14")
+
+[node name="Platform3" type="StaticBody2D" parent="."]
+position = Vector2(-16.5, 1.0)
+scale = Vector2(4.0, 0.5)
+[node name="CollisionShape" type="CollisionShape2D" parent="Platform3"]
+shape = SubResource("sub_15")
+[node name="Mesh" type="MeshInstance2D" parent="Platform3"]
+mesh = SubResource("sub_17")
+
+[node name="Platform4" type="StaticBody2D" parent="."]
+position = Vector2(-13.5, 1.0)
+scale = Vector2(4.0, 0.5)
+[node name="CollisionShape" type="CollisionShape2D" parent="Platform4"]
+shape = SubResource("sub_18")
+[node name="Mesh" type="MeshInstance2D" parent="Platform4"]
+mesh = SubResource("sub_20")
+
+[node name="Platform5" type="StaticBody2D" parent="."]
+position = Vector2(-10.5, 1.0)
+scale = Vector2(4.0, 0.5)
+[node name="CollisionShape" type="CollisionShape2D" parent="Platform5"]
+shape = SubResource("sub_21")
+[node name="Mesh" type="MeshInstance2D" parent="Platform5"]
+mesh = SubResource("sub_23")
+
+[node name="Platform6" type="StaticBody2D" parent="."]
+position = Vector2(-7.5, 1.0)
+scale = Vector2(4.0, 0.5)
+[node name="CollisionShape" type="CollisionShape2D" parent="Platform6"]
+shape = SubResource("sub_24")
+[node name="Mesh" type="MeshInstance2D" parent="Platform6"]
+mesh = SubResource("sub_26")
+
+[node name="Coin1" type="Area2D" parent="."]
+position = Vector2(-4.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin1"]
+shape = SubResource("sub_27")
+[node name="Mesh" type="MeshInstance2D" parent="Coin1"]
+mesh = SubResource("sub_29")
+
+[node name="Coin2" type="Area2D" parent="."]
+position = Vector2(-1.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin2"]
+shape = SubResource("sub_30")
+[node name="Mesh" type="MeshInstance2D" parent="Coin2"]
+mesh = SubResource("sub_32")
+
+[node name="Coin3" type="Area2D" parent="."]
+position = Vector2(1.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin3"]
+shape = SubResource("sub_33")
+[node name="Mesh" type="MeshInstance2D" parent="Coin3"]
+mesh = SubResource("sub_35")
+
+[node name="Coin4" type="Area2D" parent="."]
+position = Vector2(4.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin4"]
+shape = SubResource("sub_36")
+[node name="Mesh" type="MeshInstance2D" parent="Coin4"]
+mesh = SubResource("sub_38")
+
+[node name="Coin5" type="Area2D" parent="."]
+position = Vector2(7.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin5"]
+shape = SubResource("sub_39")
+[node name="Mesh" type="MeshInstance2D" parent="Coin5"]
+mesh = SubResource("sub_41")
+
+[node name="Coin6" type="Area2D" parent="."]
+position = Vector2(10.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin6"]
+shape = SubResource("sub_42")
+[node name="Mesh" type="MeshInstance2D" parent="Coin6"]
+mesh = SubResource("sub_44")
+
+[node name="Coin7" type="Area2D" parent="."]
+position = Vector2(13.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin7"]
+shape = SubResource("sub_45")
+[node name="Mesh" type="MeshInstance2D" parent="Coin7"]
+mesh = SubResource("sub_47")
+
+[node name="Coin8" type="Area2D" parent="."]
+position = Vector2(16.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin8"]
+shape = SubResource("sub_48")
+[node name="Mesh" type="MeshInstance2D" parent="Coin8"]
+mesh = SubResource("sub_50")
+
+[node name="Coin9" type="Area2D" parent="."]
+position = Vector2(19.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin9"]
+shape = SubResource("sub_51")
+[node name="Mesh" type="MeshInstance2D" parent="Coin9"]
+mesh = SubResource("sub_53")
+
+[node name="Coin10" type="Area2D" parent="."]
+position = Vector2(22.5, 1.0)
+scale = Vector2(0.5, 0.5)
+script = ExtResource("2")
+[node name="CollisionShape" type="CollisionShape2D" parent="Coin10"]
+shape = SubResource("sub_54")
+[node name="Mesh" type="MeshInstance2D" parent="Coin10"]
+mesh = SubResource("sub_56")
+
+[node name="ScoreManager" type="Node" parent="."]
+script = ExtResource("3")

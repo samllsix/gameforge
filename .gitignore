@@ -98,3 +98,7 @@ assets/generated/
 # Binaries
 *.exe
 cloudflared.exe
+
+# TRAE internal
+.trae-html-share-packages/
+_gf_check_result.json

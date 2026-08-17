@@ -101,7 +101,7 @@ class SceneIR(BaseModel):
 
 class ComponentSpec(BaseModel):
     type: str
-    properties: Dict[str, str] = Field(default_factory=dict)
+    properties: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CameraSpec(BaseModel):
@@ -120,6 +120,7 @@ class LightingSpec(BaseModel):
 class SceneObject(BaseModel):
     name: str
     type: str = "Empty"
+    role: str = ""
     position: List[float] = Field(default_factory=lambda: [0, 0, 0])
     rotation: List[float] = Field(default_factory=lambda: [0, 0, 0])
     scale: List[float] = Field(default_factory=lambda: [1, 1, 1])

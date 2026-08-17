@@ -24,7 +24,7 @@ class GameDesignerAgent(BaseAgent):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(AgentType.GAME_DESIGNER, config)
-        self.llm = get_llm_client(config)
+        self.llm = get_llm_client(config, provider=self.provider, model=self.model)
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         self.log_action("game_designer_execute")
@@ -66,7 +66,7 @@ class GameDesignerAgent(BaseAgent):
             )
 
             gdm = self._extract_json(response)
-            if gdm and "game_title" in gdm:
+            if gdm and any(k in gdm for k in ("game_title", "genre", "core_loop", "entities")):
                 return self._normalize_gdm(gdm, requirements, engine)
 
             retry_response = await self.llm.chat(
@@ -82,7 +82,7 @@ class GameDesignerAgent(BaseAgent):
                 max_tokens=self.llm_config.get("max_tokens", 4096),
             )
             gdm = self._extract_json(retry_response)
-            if gdm and "game_title" in gdm:
+            if gdm and any(k in gdm for k in ("game_title", "genre", "core_loop", "entities")):
                 return self._normalize_gdm(gdm, requirements, engine)
 
             self.log_error("no_valid_gdm_in_response", {"preview": response[:300]})
@@ -204,31 +204,31 @@ class GameDesignerAgent(BaseAgent):
 
         # 基础实体
         entities = [
-            {"name": "Player", "role": "player", "components": ["Rigidbody2D", "BoxCollider2D", "SpriteRenderer"]},
+            {"name": "Player", "role": "player", "components": ["CharacterBody2D", "BoxCollision"]},
             {"name": "GameManager", "role": "manager", "components": []},
         ]
 
         if any(w in req_lower for w in ["敌人", "enemy", "怪物", "monster"]):
-            entities.append({"name": "Enemy", "role": "enemy", "components": ["Rigidbody2D", "BoxCollider2D", "SpriteRenderer"]})
+            entities.append({"name": "Enemy", "role": "enemy", "components": ["CharacterBody2D", "BoxCollision"]})
         if any(w in req_lower for w in ["金币", "coin", "道具", "item", "拾取", "pickup"]):
-            entities.append({"name": "Pickup", "role": "pickup", "components": ["BoxCollider2D", "SpriteRenderer"]})
+            entities.append({"name": "Pickup", "role": "pickup", "components": ["Area2D", "BoxCollision"]})
         if any(w in req_lower for w in ["npc", "村民", "商人"]):
-            entities.append({"name": "NPC", "role": "npc", "components": ["BoxCollider2D", "SpriteRenderer"]})
+            entities.append({"name": "NPC", "role": "npc", "components": ["CharacterBody2D", "BoxCollision"]})
 
         # 代码模块
         code_modules = [
             {
                 "module_name": "PlayerController",
                 "responsibility": "玩家移动、跳跃控制",
-                "output_files": ["Assets/Scripts/Player/PlayerController.cs"],
+                "output_files": ["scripts/player.gd"],
                 "dependencies": [],
                 "target_game_objects": ["Player"],
-                "required_components": ["Rigidbody2D", "BoxCollider2D"],
+                "required_components": ["CharacterBody2D"],
             },
             {
                 "module_name": "GameManager",
                 "responsibility": "游戏状态管理、计分",
-                "output_files": ["Assets/Scripts/Core/GameManager.cs"],
+                "output_files": ["scripts/score_manager.gd"],
                 "dependencies": [],
                 "target_game_objects": ["GameManager"],
                 "required_components": [],
@@ -239,20 +239,20 @@ class GameDesignerAgent(BaseAgent):
             code_modules.append({
                 "module_name": "EnemyController",
                 "responsibility": "敌人AI行为",
-                "output_files": ["Assets/Scripts/Enemy/EnemyController.cs"],
+                "output_files": ["scripts/enemy.gd"],
                 "dependencies": [],
                 "target_game_objects": ["Enemy"],
-                "required_components": ["Rigidbody2D", "BoxCollider2D"],
+                "required_components": ["CharacterBody2D"],
             })
 
         if any(w in req_lower for w in ["金币", "coin", "道具", "item", "拾取", "collectible"]):
             code_modules.append({
                 "module_name": "CoinController",
                 "responsibility": "金币/道具收集逻辑",
-                "output_files": ["Assets/Scripts/Collectibles/CoinController.cs"],
+                "output_files": ["scripts/collectible.gd"],
                 "dependencies": ["GameManager"],
                 "target_game_objects": ["Coin"],
-                "required_components": ["BoxCollider2D"],
+                "required_components": ["Area2D"],
             })
 
         return {

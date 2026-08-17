@@ -156,9 +156,12 @@ class GameDevWorkflow:
     async def _planner_node(self, state: GameDevState) -> Dict[str, Any]:
         """规划节点 — 解析需求并生成任务计划"""
         try:
-            task_plan = await self.planner.plan(state)
+            plan_result = await self.planner.plan(state)
+            task_plan = plan_result.get("tasks", []) if isinstance(plan_result, dict) else plan_result
+            asset_plan = plan_result.get("asset_plan", {}) if isinstance(plan_result, dict) else {}
             return {
                 "task_plan": task_plan,
+                "asset_plan": asset_plan,
                 "current_phase": "planning_complete",
             }
         except Exception as e:
@@ -664,7 +667,16 @@ class GameDevWorkflow:
                 self.log_error("headless_scene_build_failed", {"error": str(e)})
 
         # 3) 校验闭环
-        res_paths = ["res://" + k for k in gd_files.keys()]
+        import os as _os
+        _proj = self.config.get("godot", {}).get("project_path", "") or _os.getcwd()
+        res_paths = []
+        for k in gd_files.keys():
+            clean = k.removeprefix("res://").removeprefix("res:/")
+            disk = _os.path.join(_proj, clean)
+            if _os.path.isfile(disk):
+                res_paths.append("res://" + clean)
+            else:
+                self.log_action("check_scripts_skip_missing", {"path": clean})
         for round_num in range(max_rounds):
             await event_callback("phase_start", {
                 "phase": "compiling",
@@ -877,7 +889,16 @@ class GameDevWorkflow:
                 self.log_error("headless_scene_build_failed", {"error": str(e)})
 
         # 3) headless 一次性校验（不做自动修复闭环）
-        res_paths = ["res://" + k for k in gd_files.keys()]
+        import os as _os2
+        _proj2 = self.config.get("godot", {}).get("project_path", "") or _os2.getcwd()
+        res_paths = []
+        for k in gd_files.keys():
+            clean = k.removeprefix("res://").removeprefix("res:/")
+            disk = _os2.path.join(_proj2, clean)
+            if _os2.path.isfile(disk):
+                res_paths.append("res://" + clean)
+            else:
+                self.log_action("check_scripts_skip_missing", {"path": clean})
         await event_callback("phase_start", {
             "phase": "compiling",
             "message": "正在校验 GDScript...",

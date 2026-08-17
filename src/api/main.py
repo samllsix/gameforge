@@ -465,7 +465,8 @@ async def plan_tasks(request: TaskPlanRequest):
             "requires_human_input": False,
             "error_log": [],
         }
-        tasks = await planner.plan(state)
+        plan_result = await planner.plan(state)
+        tasks = plan_result.get("tasks", []) if isinstance(plan_result, dict) else plan_result
         return TaskPlanResponse(success=True, tasks=tasks)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

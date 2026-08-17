@@ -55,9 +55,19 @@ function ensureHljs(callback) {
         if (window.hljs) { clearInterval(check); callback(); }
     }, 50);
     const script = document.createElement('script');
-    script.src = '/static/lib/highlight.min.js';
+    script.src = 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/index.min.js';
+    script.crossOrigin = 'anonymous';
     script.onload = () => { clearInterval(check); callback(); };
-    script.onerror = () => { clearInterval(check); callback(); };
+    script.onerror = () => {
+        clearInterval(check);
+        try {
+            const fallback = document.createElement('script');
+            fallback.src = '/static/lib/highlight.min.js';
+            fallback.onload = () => callback();
+            fallback.onerror = () => callback();
+            document.head.appendChild(fallback);
+        } catch (_) { callback(); }
+    };
     document.head.appendChild(script);
 }
 
