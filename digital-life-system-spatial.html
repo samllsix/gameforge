@@ -36,8 +36,8 @@
   /* ===== 空间化：整景 perspective + 环绕倾斜 ===== */
   .scene{position:relative;z-index:3;height:100vh}
   .app{height:100%;display:grid;
-    grid-template-columns:208px minmax(0,1fr) 298px;
-    grid-template-rows:54px minmax(0,1fr) 156px 18px;
+    grid-template-columns:194px minmax(0,1fr) 280px;
+    grid-template-rows:50px minmax(0,1fr) 82px 14px;
     grid-template-areas:"header header header" "left center right" "bottom bottom bottom" "footer footer footer";
     gap:12px;padding:14px;}
   .app>*{min-height:0;min-width:0}
@@ -82,8 +82,6 @@
   .h-right{display:flex;align-items:center;gap:11px;z-index:2;font-size:10px;color:var(--muted);flex:0 0 auto}
   .h-right b{color:var(--white);font-weight:600}
   .h-right .lvl{color:var(--cyan)}.h-right .eng{color:#c9a6ff}
-  .avatar{width:28px;height:28px;clip-path:polygon(25% 5%,75% 5%,100% 50%,75% 95%,25% 95%,0 50%);
-    background:conic-gradient(from 0deg,var(--blue),var(--cyan),var(--purple),var(--blue));box-shadow:0 0 12px rgba(120,150,255,.6)}
 
   /* ===== LEFT ===== */
   aside.left{grid-area:left;padding:10px 9px;display:flex;flex-direction:column;gap:4px}
@@ -117,6 +115,7 @@
   .welcome p{font-size:9.5px;color:#a6dcff;letter-spacing:2px;margin-top:2px}
   .welcome p i{color:var(--cyan);font-style:normal;margin:0 5px}
   .galaxy-wrap{flex:1;position:relative;min-height:0;perspective:760px;perspective-origin:50% 45%}
+  #galaxyGL{position:absolute;inset:0;width:100%;height:100%}
   #galaxy{position:absolute;inset:0;width:100%;height:100%}
   .links{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none}
   .fcard{position:absolute;z-index:6;width:172px;padding:9px 11px;border-radius:11px;
@@ -159,16 +158,16 @@
   .qt .t .lb{position:relative;z-index:2;font-size:9px;color:#eaf5ff;font-weight:600;letter-spacing:.3px;padding:3px 5px;width:100%;background:linear-gradient(transparent,rgba(4,8,16,.88));text-shadow:0 1px 3px #000}
 
   /* ===== RIGHT ===== */
-  aside.right{grid-area:right;padding:10px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  aside.right{grid-area:right;padding:10px;display:flex;flex-direction:column;gap:8px;overflow:hidden;min-width:0}
   .proc{flex:0 0 auto}
   .proc-sub{font-size:8.5px;color:var(--muted);letter-spacing:1px;margin-bottom:3px}
   .proc-list{display:flex;flex-direction:column;gap:5px}
-  .proc-item{display:flex;align-items:center;gap:8px}
-  .proc-item .hex{width:22px;height:22px;flex:0 0 22px;font-size:11px}
-  .proc-item .in{flex:1;min-width:0}
-  .proc-item .in b{display:block;font-size:10.5px;color:#d9ecff;font-weight:600}
-  .proc-item .in small{display:block;font-size:7.5px;color:var(--muted);letter-spacing:.2px}
-  .proc-item .pc{font-family:var(--mono);font-size:10px;color:var(--cyan);width:30px;text-align:right;flex:0 0 auto}
+  .proc-item{display:flex;align-items:flex-start;gap:8px;min-width:0}
+  .proc-item .hex{width:22px;height:22px;flex:0 0 22px;font-size:11px;margin-top:1px}
+  .proc-item .in{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+  .proc-item .in b{display:block;font-size:10.5px;color:#d9ecff;font-weight:600;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .proc-item .in small{display:block;font-size:7.5px;color:var(--muted);letter-spacing:.2px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .proc-item .pc{font-family:var(--mono);font-size:10px;color:var(--cyan);width:30px;flex:0 0 30px;text-align:right;line-height:1.4;margin-top:1px}
   .proc-item .tr{height:3px;border-radius:2px;background:rgba(120,170,230,.15);overflow:hidden;margin-top:2px}
   .proc-item .tr i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple));box-shadow:0 0 5px var(--cyan);transition:width .6s}
   .proc-item .wait{font-size:8px;color:var(--muted);font-style:italic}
@@ -176,18 +175,39 @@
   .prev-box{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--edge);height:74px;margin-top:3px}
   #prevCanvas{position:absolute;inset:0;width:100%;height:100%}
   .prev-box .tag{position:absolute;left:5px;top:5px;font-size:8px;letter-spacing:1px;color:var(--cyan);border:1px solid rgba(96,200,255,.35);padding:1px 5px;border-radius:4px;background:rgba(4,8,16,.6);font-family:var(--mono);z-index:2}
-  .logbox{flex:1;min-height:0;display:flex;flex-direction:column}
-  #log{flex:1;overflow:hidden;font-family:var(--mono);font-size:8.5px;line-height:1.6;color:#9fc6e8;display:flex;flex-direction:column;justify-content:flex-end;min-height:0}
-  #log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #log .t{color:var(--cyan)}#log .ok{color:var(--good)}#log .wa{color:var(--warn)}
+  .logbox{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+  .logbox .ph{margin-bottom:4px}
+  #log{flex:1;overflow-y:auto;overflow-x:hidden;font-family:var(--mono);font-size:8.5px;line-height:1.55;color:#9fc6e8;display:flex;flex-direction:column;justify-content:flex-start;min-height:0;padding:2px 2px 2px 0;scrollbar-width:thin;scrollbar-color:rgba(67,230,255,.45) rgba(96,180,255,.08)}
+  #log::-webkit-scrollbar{width:3px;height:3px}
+  #log::-webkit-scrollbar-track{background:rgba(96,180,255,.06);border-radius:2px;margin:2px 0}
+  #log::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(67,230,255,.7),rgba(160,107,255,.7));border-radius:2px;border:1px solid rgba(67,230,255,.35);box-shadow:0 0 6px rgba(67,230,255,.35);transition:background .2s}
+  #log::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(67,230,255,.9),rgba(160,107,255,.9));box-shadow:0 0 10px rgba(67,230,255,.6)}
+  #log::-webkit-scrollbar-corner{background:transparent}
+
+  /* ===== 全局滚动条主题（适用于 .tips 等可滚动容器） ===== */
+  .tips{scrollbar-width:thin;scrollbar-color:rgba(67,230,255,.45) rgba(96,180,255,.08)}
+  .tips::-webkit-scrollbar{width:3px;height:3px}
+  .tips::-webkit-scrollbar-track{background:rgba(96,180,255,.06);border-radius:2px;margin:2px 0}
+  .tips::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(67,230,255,.7),rgba(160,107,255,.7));border-radius:2px;border:1px solid rgba(67,230,255,.35);box-shadow:0 0 6px rgba(67,230,255,.35);transition:background .2s}
+  .tips::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(67,230,255,.9),rgba(160,107,255,.9));box-shadow:0 0 10px rgba(67,230,255,.6)}
+  .tips::-webkit-scrollbar-corner{background:transparent}
+  html::-webkit-scrollbar{width:6px;height:6px}
+  html::-webkit-scrollbar-track{background:rgba(8,14,28,.5)}
+  html::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(67,230,255,.65),rgba(160,107,255,.65));border-radius:3px;border:1px solid rgba(67,230,255,.35);box-shadow:0 0 6px rgba(67,230,255,.3)}
+  html::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(67,230,255,.9),rgba(160,107,255,.9))}
+  *{scrollbar-width:thin;scrollbar-color:rgba(67,230,255,.45) rgba(96,180,255,.08)}
+  #log div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:2px 4px;border-bottom:1px solid rgba(96,140,200,.08);flex-shrink:0;width:100%;box-sizing:border-box}
+  #log div:last-child{border-bottom:none}
+  #log .t{color:var(--cyan);margin-right:4px}#log .ok{color:var(--good)}#log .wa{color:var(--warn)}
 
   /* ===== BOTTOM ===== */
   .bottom{grid-area:bottom;display:grid;grid-template-columns:1.15fr .85fr 1.2fr 1.1fr;gap:12px;min-height:0}
-  .bpanel{padding:9px 11px;display:flex;flex-direction:column;gap:5px;min-height:0}
-  .bp-body{flex:1;min-height:0;position:relative;display:flex;gap:9px}
+  .bpanel{padding:6px 10px;display:flex;flex-direction:column;gap:4px;min-height:0}
+  .bp-body{flex:1;min-height:0;position:relative;display:flex;gap:8px}
   .wd-net{flex:0 0 42%;position:relative;border-radius:7px;overflow:hidden;background:rgba(8,14,28,.5);border:1px solid rgba(120,150,255,.12)}
   #wdCanvas{position:absolute;inset:0;width:100%;height:100%}
-  .wd-ev{flex:1;display:flex;flex-direction:column;gap:5px;justify-content:center;font-size:9px;min-width:0}
+  .wd-ev{flex:1;display:flex;flex-direction:column;gap:3px;justify-content:center;font-size:9px;min-width:0}
+  .wd-ev .ev small{display:none}
   .wd-ev .ev{display:flex;gap:6px;align-items:flex-start}
   .wd-ev .ev i{width:6px;height:6px;border-radius:50%;margin-top:3px;flex:0 0 6px}
   .wd-ev .ev.v1 i{background:var(--purple);box-shadow:0 0 6px var(--purple)}
@@ -196,21 +216,22 @@
   .wd-ev .ev b{color:#d9ecff;font-weight:600;display:block;font-size:9.5px}
   .wd-ev .ev small{color:var(--muted);font-size:7.5px}
   .energy-c{flex:1;display:flex;align-items:center;gap:10px;position:relative;min-width:0}
-  #energyCanvas{width:78px;height:78px;flex:0 0 78px}
-  .energy-c .et b{font-family:var(--mono);font-size:21px;color:#cfe4ff}
-  .energy-c .et small{display:block;font-size:8.5px;color:var(--muted);letter-spacing:1px;margin-top:1px}
-  .energy-c .et .st{color:var(--cyan);font-size:9px;margin-top:3px}
+  #energyCanvas{width:44px;height:44px;flex:0 0 44px}
+  .energy-c .et b{font-family:var(--mono);font-size:14px;color:#cfe4ff}
+  .energy-c .et small{display:block;font-size:7.5px;color:var(--muted);letter-spacing:1px;margin-top:1px}
+  .energy-c .et .st{color:var(--cyan);font-size:8px;margin-top:2px}
   .flow-wrap{flex:1;position:relative;border-radius:7px;overflow:hidden;background:rgba(8,14,28,.5);border:1px solid rgba(120,150,255,.12)}
   #flowCanvas{position:absolute;inset:0;width:100%;height:100%}
-  .tips{display:flex;flex-direction:column;gap:5px;justify-content:center;font-size:9px}
-  .tip{display:flex;gap:7px;align-items:flex-start;padding:5px 7px;border-radius:7px;border:1px solid rgba(120,170,230,.12);background:rgba(8,15,30,.4)}
-  .tip i{width:15px;height:15px;flex:0 0 15px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-style:normal}
+  .tips{display:flex;flex-direction:column;gap:4px;justify-content:flex-start;font-size:9px;flex:1;min-height:0;overflow:auto}
+  .tip{display:flex;gap:6px;align-items:flex-start;padding:3px 6px;border-radius:6px;border:1px solid rgba(120,170,230,.12);background:rgba(8,15,30,.4);min-width:0}
+  .tip i{width:12px;height:12px;flex:0 0 12px;border-radius:50%;display:grid;place-items:center;font-size:8px;font-style:normal;margin-top:1px}
+  .tip .tt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
   .tip.ok i{background:rgba(54,224,170,.18);color:var(--good);border:1px solid rgba(54,224,170,.4)}
   .tip.info i{background:rgba(96,200,255,.15);color:var(--cyan);border:1px solid rgba(96,200,255,.4)}
   .tip.warn i{background:rgba(255,180,84,.15);color:var(--warn);border:1px solid rgba(255,180,84,.4)}
-  .tip .tt b{display:block;font-size:9.5px;font-weight:600}
+  .tip .tt b{display:block;font-size:9.5px;font-weight:600;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .tip.ok .tt b{color:var(--good)}.tip.info .tt b{color:var(--cyan)}.tip.warn .tt b{color:var(--warn)}
-  .tip .tt small{color:var(--muted);font-size:7.5px}
+  .tip .tt small{color:var(--muted);font-size:7.5px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;display:block}
 
   footer{grid-area:footer;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:8.5px;color:var(--muted);letter-spacing:1px}
   footer .c{color:#9db8d8}
@@ -231,12 +252,11 @@
   <!-- HEADER -->
   <header class="hud"><span class="grid"></span><span class="scanln"></span><span class="beam"></span>
     <div class="h-left"><div class="gf">GameForge</div><div class="gf-sub">AI游戏研发·全流程协作平台</div></div>
-    <div class="h-center"><h1>Gameforge<span>-数字生命系统</span></h1><p>构建属于你的小说世界</p></div>
+    <div class="h-center"><h1>Gameforge<span>-数字生命系统</span></h1></div>
     <div class="h-right">
       <span>Godot <b>4.2</b></span>
       <span class="lvl">系统等级 <b>Lv.7</b></span>
       <span class="eng">能量值 <b>1287/3000</b></span>
-      <div class="avatar"></div>
     </div>
   </header>
 
@@ -268,6 +288,7 @@
   <div class="center">
     <div class="welcome"><h2>欢迎回来，开发者</h2><p><i>◆</i>在数字世界中书写你的传奇<i>◆</i></p></div>
     <div class="galaxy-wrap">
+      <canvas id="galaxyGL"></canvas>
       <canvas id="galaxy"></canvas>
       <svg class="links" viewBox="0 0 100 100" preserveAspectRatio="none">
         <defs>
@@ -366,50 +387,200 @@ bgr();addEventListener('resize',bgr);
       if(d<130){bgx.beginPath();bgx.moveTo(p.x,p.y);bgx.lineTo(q.x,q.y);bgx.strokeStyle='rgba(120,150,255,'+(.10*(1-d/130))+')';bgx.lineWidth=.6;bgx.stroke();}}}
   requestAnimationFrame(dBG);})();
 
-/* 中央星系：蓝紫螺旋 + 核心数据光柱 */
+/* 中央星系：青蓝全息漩涡（连续流光臂 + 过曝核心 + 数据光柱，配色对齐参考图） */
 const gx=document.getElementById('galaxy'),gc=gx.getContext('2d');let gr=sizeC(gx);
-const ARMS=2,GN=2600,WIND=5.0,gp=[];
+const ARMS=2,GN=3200,WIND=4.8,gp=[];                    /* 减少粒子数 3800→3200，降低缠绕度 5.2→4.8 */
 for(let i=0;i<GN;i++){const arm=i%ARMS;
-  const r=0.04+Math.pow(Math.random(),1.35)*0.96;      // 沿旋臂从核到缘分布
-  const spread=0.09+r*0.30;                            // 垂直散布，越外越宽
-  gp.push({arm,r,jit:(Math.random()-0.5)*spread,sz:Math.random()*1.7+.5,tw:Math.random()*6.28,knot:Math.random()<0.035});}
+  const r=0.07+Math.pow(Math.random(),1.35)*0.85;       /* 增大起始半径 0.03→0.07，减少远端粒子 0.97→0.85 */
+  const spread=0.06+r*0.20;                             /* 调整垂直散布，越外越宽 */
+  gp.push({arm,r,jit:(Math.random()-0.5)*spread,sz:Math.random()*1.5+.4,tw:Math.random()*6.28,knot:Math.random()<0.025,spark:Math.random()<0.05});}
+/* 沿旋臂游动的亮弧（边界数量限制：最小半径 0.15） */
+const ARCS=[];for(let i=0;i<22;i++){ARCS.push({arm:i%ARMS,r:0.18+Math.random()*0.72,len:0.2+Math.random()*0.40,sp:0.5+Math.random()*0.8,w:0.8+Math.random()*1.4});}
+/* 光柱内上升的数据粒子 */
+const DUST=[];for(let i=0;i<160;i++){DUST.push({ox:(Math.random()-0.5)*0.75,y:Math.random(),sp:0.12+Math.random()*0.25,sz:Math.random()*1.5+0.5});}
+/* 臂色插值：核周青白 → 内臂亮青 → 外臂电蓝 → 外缘泛紫 */
+const CSTOPS=[[0,[245,253,255]],[0.18,[150,228,255]],[0.5,[95,180,255]],[0.78,[90,140,255]],[1,[168,108,250]]];
+function armColor(f){for(let i=1;i<CSTOPS.length;i++){if(f<=CSTOPS[i][0]){const p=CSTOPS[i-1],q=CSTOPS[i],k=(f-p[0])/(q[0]-p[0]);return p[1].map((v,j)=>Math.round(v+(q[1][j]-v)*k));}}return CSTOPS[CSTOPS.length-1][1];}
+let glOK=false;
 function drawGalaxy(t){const w=gx.width,h=gx.height;gc.clearRect(0,0,w,h);
-  const cx=w/2,cy=h/2,R=Math.min(w,h)*0.62,tilt=0.72;
-  /* 外层紫晕 */
-  let halo=gc.createRadialGradient(cx,cy,R*0.1,cx,cy,R*1.3);
-  halo.addColorStop(0,'rgba(150,90,255,.20)');halo.addColorStop(.55,'rgba(110,70,230,.10)');halo.addColorStop(1,'rgba(0,0,0,0)');
-  gc.fillStyle=halo;gc.beginPath();gc.arc(cx,cy,R*1.3,0,7);gc.fill();
+  const cx=w/2,cy=h/2,R=Math.min(w,h)*0.62,tilt=0.66;
+  if(!glOK){   /* WebGL 不可用时走 2D 兜底：完整绘制星系本体 */
+  /* 外层蓝紫晕（大面积青蓝底 + 外缘淡紫） */
+  let halo=gc.createRadialGradient(cx,cy,R*0.10,cx,cy,R*1.25);
+  halo.addColorStop(0,'rgba(70,150,255,.18)');halo.addColorStop(.5,'rgba(60,110,240,.11)');halo.addColorStop(.8,'rgba(120,70,230,.07)');halo.addColorStop(1,'rgba(0,0,0,0)');
+  gc.fillStyle=halo;gc.beginPath();gc.arc(cx,cy,R*1.25,0,7);gc.fill();
   gc.globalCompositeOperation='lighter';
-  const rot=t*0.16;
-  /* 中央核球（暖白亮斑） */
-  let bulge=gc.createRadialGradient(cx,cy,0,cx,cy,R*0.34);
-  bulge.addColorStop(0,'rgba(255,246,225,.95)');bulge.addColorStop(.4,'rgba(200,225,255,.55)');bulge.addColorStop(1,'rgba(0,0,0,0)');
-  gc.fillStyle=bulge;gc.beginPath();gc.arc(cx,cy,R*0.34,0,7);gc.fill();
-  /* 中央短棒（随星系旋转，构成棒旋结构） */
-  gc.save();gc.translate(cx,cy);gc.rotate(rot);gc.scale(1,tilt);
-  let bar=gc.createLinearGradient(-R*0.34,0,R*0.34,0);
-  bar.addColorStop(0,'rgba(255,240,210,0)');bar.addColorStop(.5,'rgba(255,242,214,.5)');bar.addColorStop(1,'rgba(255,240,210,0)');
-  gc.fillStyle=bar;gc.beginPath();gc.ellipse(0,0,R*0.34,R*0.12,0,0,7);gc.fill();gc.restore();
-  /* 两条清晰旋臂 + 恒星形成区亮结 */
+  const rot=t*0.14,SEG=48;                                /* 稍微增加段数使曲线更平滑 */
+  /* 绘制臂上的一小段连续曲线（f: 0核 → 1缘），增加最小半径防止中心过密 */
+  function seg(arm,f0,f1,jit,lw,style){
+    const fStart=Math.max(f0,0.08);                       /* 边界数量限制：不从 f=0 开始，跳过中心密集区 */
+    if(f1<0.08) return;
+    const a0=arm*Math.PI+fStart*WIND+rot+jit,a1=arm*Math.PI+f1*WIND+rot+jit;
+    const r0=fStart*R,r1=f1*R;
+    gc.beginPath();
+    gc.moveTo(cx+Math.cos(a0)*r0,cy+Math.sin(a0)*r0*tilt);
+    gc.lineTo(cx+Math.cos(a1)*r1,cy+Math.sin(a1)*r1*tilt);
+    gc.lineWidth=Math.max(lw,0.4);gc.lineCap='round';gc.strokeStyle=style;gc.stroke();}
+  for(let arm=0;arm<ARMS;arm++){
+    /* ① 臂底体积光带（宽而淡）- 中心区域更淡 */
+    for(let i=0;i<SEG;i++){const f0=i/SEG,f1=(i+1)/SEG;
+      const centerFade=Math.max(0,Math.min(1,(f0-0.06)/0.10));
+      seg(arm,f0,f1,0,R*0.085*(1-f0*0.55),'rgba(85,150,255,'+(0.085*(1-f0*0.5))*centerFade+')');}
+    /* ② 三条辫状主流光带（连续曲线，相位错开、越外越散、轻微波动） */
+    for(let s=0;s<3;s++){for(let i=0;i<SEG;i++){const f0=i/SEG,f1=(i+1)/SEG;
+      if(f0<0.10) continue;                              /* 边界数量限制：辫状光带从 f=0.10 开始 */
+      const jit=(s-1)*(0.09+f0*0.4)+Math.sin(f0*5+s*2.1+t*0.7)*0.02;
+      const c=armColor(f0),a=(0.38+0.50*(1-f0))*(0.82+0.18*Math.sin(t*1.6+s*2+f0*6));
+      seg(arm,f0,f1,jit,R*0.036*(1-f0*0.72)*(s===1?1.2:0.85),'rgba('+c+','+a+')');}}
+    /* ③ 中央亮脊（最亮最细的脊线） */
+    for(let i=0;i<SEG;i++){const f0=i/SEG,f1=(i+1)/SEG;
+      if(f0<0.12) continue;                              /* 边界数量限制：亮脊从 f=0.12 开始 */
+      const c=armColor(Math.min(f0*1.15,1));
+      seg(arm,f0,f1,0,R*0.012*(1-f0*0.55),'rgba('+c+','+(0.68*(1-f0*0.5))+')');}}
+  /* 臂上星尘颗粒（叠加在连续光带之上：亮结带光晕、闪星带衍射光斑、普通颗粒闪烁） */
   for(const p of gp){const ang=p.arm*Math.PI+p.r*WIND+rot+p.jit;
-    const rad=p.r*R;
-    const x=Math.cos(ang)*rad,y=Math.sin(ang)*rad*tilt;
-    const px=cx+x,py=cy+y;
-    const d=p.r;let col,a;
-    if(d<0.14){col='255,244,220';a=.95}        /* 核球暖白 */
-    else if(d<0.4){col='160,215,255';a=.85}    /* 内臂蓝 */
-    else if(d<0.72){col='150,120,255';a=.78}   /* 中臂紫罗兰 */
-    else{col='190,110,252';a=.62}              /* 外缘品紫 */
-    let sz=p.sz*(1.35-d*0.5);
-    if(p.knot){col=(d<0.5)?'255,150,220':'255,190,235';a=.95;sz*=2.2;}  /* 亮结 */
-    a*=(0.5+0.5*Math.sin(t*2+p.tw));
-    gc.beginPath();gc.arc(px,py,sz*devicePixelRatio*0.72,0,7);gc.fillStyle='rgba('+col+','+a+')';gc.fill();}
-  /* 核心升起的数据光柱 */
-  for(let i=0;i<4;i++){const bx=cx+(i-1.5)*R*0.12,bw=R*0.05,fl=0.5+0.5*Math.sin(t*2.2+i*1.7);
-    let bg2=gc.createLinearGradient(0,cy,0,cy-R*0.95);
-    bg2.addColorStop(0,'rgba(150,220,255,'+(0.28*fl)+')');bg2.addColorStop(1,'rgba(150,220,255,0)');
-    gc.fillStyle=bg2;gc.fillRect(bx-bw/2,cy-R*0.95,bw,R*0.95);}
+    const rad=p.r*R,px=cx+Math.cos(ang)*rad,py=cy+Math.sin(ang)*rad*tilt;
+    const d=p.r,c=armColor(d);let a=d<0.15?0:d<0.45?.95:d<0.75?.8:.62;  /* 中心 r<0.15 无颗粒 */
+    let sz=p.sz*(1.3-d*0.5);
+    if(p.knot){const c2=armColor(Math.max(0.08,d-0.15));sz*=2.4;
+      gc.beginPath();gc.arc(px,py,sz*2.6*devicePixelRatio*0.7,0,7);gc.fillStyle='rgba('+c2+',.22)';gc.fill();   /* 亮结光晕 */
+      gc.beginPath();gc.arc(px,py,sz*devicePixelRatio*0.7,0,7);gc.fillStyle='rgba('+c2+',1)';gc.fill();continue;}
+    a*=(0.68+0.32*Math.sin(t*2.4+p.tw));
+    gc.beginPath();gc.arc(px,py,sz*devicePixelRatio*0.7,0,7);gc.fillStyle='rgba('+c+','+a+')';gc.fill();
+    if(p.spark&&d>0.15){gc.beginPath();gc.arc(px,py,sz*2.2*devicePixelRatio*0.7,0,7);gc.fillStyle='rgba(220,245,255,'+(0.28*a)+')';gc.fill();}}  /* 闪星衍射光斑（中心无） */
+  /* 沿旋臂游动的亮弧（ elongated 光痕，随旋转流动）- 限制最小半径 */
+  for(const s of ARCS){if(s.r<0.12) continue;
+    const base=s.arm*Math.PI+s.r*WIND+rot*(0.8+s.sp*0.4);
+    const rad=s.r*R,c=armColor(s.r);
+    for(let k=0;k<12;k++){const f=k/12,ang=base+f*s.len;
+      const x=cx+Math.cos(ang)*rad,y=cy+Math.sin(ang)*rad*tilt;
+      const fade=Math.sin(f*Math.PI);
+      gc.beginPath();gc.arc(x,y,s.w*fade*devicePixelRatio*0.8,0,7);
+      gc.fillStyle='rgba('+c+','+(0.6*fade)+')';gc.fill();}}
+  /* 中央短棒（青白色，随星系旋转）- 略微增大 */
+  gc.save();gc.translate(cx,cy);gc.rotate(rot);gc.scale(1,tilt);
+  let bar=gc.createLinearGradient(-R*0.32,0,R*0.32,0);
+  bar.addColorStop(0,'rgba(180,235,255,0)');bar.addColorStop(.5,'rgba(200,242,255,.55)');bar.addColorStop(1,'rgba(180,235,255,0)');
+  gc.fillStyle=bar;gc.beginPath();gc.ellipse(0,0,R*0.32,R*0.11,0,0,7);gc.fill();gc.restore();
+  /* 核心爆点：扩大过曝范围，完全覆盖中心密集环纹区域 */
+  let c1=gc.createRadialGradient(cx,cy,0,cx,cy,R*0.16);
+  c1.addColorStop(0,'rgba(255,255,255,1)');c1.addColorStop(0.6,'rgba(230,248,255,.95)');c1.addColorStop(1,'rgba(255,255,255,0)');
+  gc.fillStyle=c1;gc.beginPath();gc.arc(cx,cy,R*0.16,0,7);gc.fill();
+  let c2=gc.createRadialGradient(cx,cy,0,cx,cy,R*0.32);
+  c2.addColorStop(0,'rgba(215,245,255,.85)');c2.addColorStop(.5,'rgba(140,220,255,.35)');c2.addColorStop(1,'rgba(0,0,0,0)');
+  gc.fillStyle=c2;gc.beginPath();gc.arc(cx,cy,R*0.32,0,7);gc.fill();
+  let c3=gc.createRadialGradient(cx,cy,0,cx,cy,R*0.55);
+  c3.addColorStop(0,'rgba(90,180,255,.28)');c3.addColorStop(1,'rgba(0,0,0,0)');
+  gc.fillStyle=c3;gc.beginPath();gc.arc(cx,cy,R*0.55,0,7);gc.fill();
+  }   /* end if(!glOK) —— 星系本体绘制结束 */
+  gc.globalCompositeOperation='lighter';
+  /* 核心升起的数据光柱：多束高低不一 + 柱内上升粒子（2D 叠加层，始终绘制） */
+  for(let i=0;i<7;i++){const bx=cx+(i-3)*R*0.085,bw=R*(0.028+((i%3)*0.012));
+    const hh=R*(0.55+0.4*Math.abs(Math.sin(i*1.3+t*0.3)));
+    const fl=0.55+0.45*Math.sin(t*2.2+i*1.7);
+    let bg2=gc.createLinearGradient(0,cy,0,cy-hh);
+    bg2.addColorStop(0,'rgba(170,230,255,'+(0.42*fl)+')');bg2.addColorStop(.7,'rgba(120,200,255,'+(0.15*fl)+')');bg2.addColorStop(1,'rgba(120,200,255,0)');
+    gc.fillStyle=bg2;gc.fillRect(bx-bw/2,cy-hh,bw,hh);}
+  for(const d2 of DUST){d2.y-=d2.sp*0.008;if(d2.y<0)d2.y=1;
+    const dx=cx+d2.ox*R*0.32,dy=cy-d2.y*R*0.95;
+    gc.beginPath();gc.arc(dx,dy,d2.sz*devicePixelRatio*0.6,0,7);
+    gc.fillStyle='rgba(190,240,255,'+(1.0*(1-d2.y))+')';gc.fill();}
   gc.globalCompositeOperation='source-over';}
+
+/* ── WebGL 着色器星系（主渲染）：对数螺旋臂 + fbm 噪声破碎 + 较差自转 + 程序化闪星 ── */
+(function initGalaxyGL(){
+  const cv=document.getElementById('galaxyGL');
+  let gl;try{gl=cv.getContext('webgl',{alpha:true,premultipliedAlpha:true,antialias:false});}catch(e){}
+  if(!gl){cv.remove();return;}
+  const VS='attribute vec2 aP;void main(){gl_Position=vec4(aP,0.,1.);}';
+  const FS=`
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+uniform vec2 uR;uniform float uT;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);}
+float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<6;i++){v+=a*noise(p);p=p*2.02+vec2(13.7);a*=.52;}return v;}
+void main(){
+  vec2 uv=(gl_FragCoord.xy-.5*uR)/min(uR.x,uR.y);
+  vec2 p=vec2(uv.x,uv.y/0.66)*0.82;                  /* 俯角压扁 + 整体放大占比 */
+  float r=length(p);
+  /* === 边界数量限制：硬裁剪最大半径，防止星系无限延伸 === */
+  float rMax=0.78;
+  if(r>rMax){gl_FragColor=vec4(0.0);return;}
+  float ang=atan(p.y,p.x);
+  /* === 中心区域软化：抑制 r<0.12 区域的螺旋对比度，消除细密同心环纹 === */
+  float centerSoften=smoothstep(0.06,0.18,r);        /* 0→1 过渡，中心区域 arms 被柔化 */
+  float a=ang+uT*0.10*(0.55+1.5*exp(-r*2.6));        /* 较差自转：内快外慢 */
+  float sp=2.0*a-5.2*log(r+0.055);                   /* 对数螺旋相位（增大 offset 从 0.045→0.055，降低中心频率） */
+  float arms=pow(smoothstep(0.0,0.95,cos(sp)),1.4);  /* 双臂 */
+  arms=mix(0.55,arms,centerSoften);                  /* 中心区域 arms 收敛到中性灰，避免密集环纹 */
+  /* 域扭曲 fbm：絮状星云质感（画质核心） */
+  vec2 q=vec2(fbm(p*7.+vec2(0.,uT*0.02)),fbm(p*7.+vec2(5.2,uT*0.017)));
+  float n=fbm(p*13.+q*2.6+vec2(uT*0.025,0.));
+  float n2=fbm(p*30.-vec2(0.,uT*0.04)+q*1.5);
+  /* === 增加高频噪声专门打散中心细密环纹 === */
+  float nHigh=fbm(p*45.+q*4.0+vec2(uT*0.05,uT*0.03));
+  float fall=exp(-r*2.1)*smoothstep(0.04,0.10,r);    /* 衰减 + 中心 0.04 内无盘结构（由 core 覆盖） */
+  float disk=arms*fall*(0.25+1.5*n)*(0.6+0.65*n2);
+  disk*=0.7+0.6*nHigh;                               /* 高频噪声调制，打破中心完美同心环 */
+  /* 旋臂尘埃暗纹（真实星系特征，明暗对比大幅提升） */
+  float lane=pow(smoothstep(0.25,1.0,cos(sp+0.85)),2.2)*fbm(p*19.+7.31);
+  lane*=smoothstep(0.55,0.12,r)*smoothstep(0.08,0.15,r); /* 增大内边界从 0.015→0.08，尘埃带不进入核心 */
+  disk*=1.0-lane*0.8;
+  float base=exp(-r*3.0)*0.22*(0.55+0.65*n);         /* 银盘底光（略微增亮、扩大范围） */
+  float amb=exp(-r*1.5)*0.12;                        /* 环境晕（略微扩大范围） */
+  /* === 扩大核心过曝范围，完全覆盖中心细密环纹区域 === */
+  float core=exp(-r*6.0)*1.8+exp(-r*16.)*2.5+exp(-r*40.)*3.5+exp(-r*80.)*2.0;
+  vec3 cIn=vec3(0.60,0.90,1.0),cMid=vec3(0.30,0.60,1.0),cOut=vec3(0.63,0.42,0.98);
+  vec3 armCol=mix(cIn,cMid,smoothstep(0.10,0.42,r));
+  armCol=mix(armCol,cOut,smoothstep(0.38,0.74,r));
+  vec3 col=armCol*disk*2.2+vec3(0.35,0.56,1.0)*(base+amb)+vec3(0.98,1.0,1.0)*core;
+  col+=armCol*disk*disk*0.9;                         /* 亮部泛光（伪 bloom） */
+  /* 星层1：密集小星（中心区域减少星星数量，避免增强环纹感） */
+  vec2 sg=p*150.;vec2 cell=floor(sg);float h=hash(cell);
+  if(h>0.970){vec2 sp2=fract(sg)-.5;
+    float s=exp(-dot(sp2,sp2)*20.);
+    float tw=0.4+0.6*sin(uT*3.+h*80.);
+    col+=vec3(0.88,0.96,1.0)*s*tw*1.4*smoothstep(0.82,0.18,r)*centerSoften;}
+  /* 星层2：稀疏亮星（本体+光晕双层高斯） */
+  vec2 bg=p*46.;vec2 bc=floor(bg);float h2=hash(bc);
+  if(h2>0.991){vec2 bp=fract(bg)-.5;
+    float dd=dot(bp,bp);
+    float tw2=0.5+0.5*sin(uT*2.2+h2*60.);
+    col+=vec3(0.95,0.99,1.0)*(exp(-dd*40.)*2.6+exp(-dd*8.)*0.5)*tw2*smoothstep(0.88,0.15,r);}
+  col=1.-exp(-col*1.5);                              /* filmic tonemap */
+  col=pow(col,vec3(0.82));
+  col*=vec3(0.96,0.99,1.04);                         /* 冷调电影调色 */
+  /* === 边缘渐隐：椭圆边界匹配星系压扁形状，替代原来的圆形边界 === */
+  float rEllipse=length(vec2(p.x,p.y*0.66)/0.82);    /* 还原 uv 空间的椭圆距离 */
+  float fade=smoothstep(0.92,0.58,rEllipse);         /* 椭圆边缘渐隐，与星系形状一致 */
+  gl_FragColor=vec4(col*fade,fade);
+}`;
+  function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+    if(!gl.getShaderParameter(o,gl.COMPILE_STATUS)){console.warn('GLSL:',gl.getShaderInfoLog(o));return null;}return o;}
+  const vs=sh(gl.VERTEX_SHADER,VS),fs=sh(gl.FRAGMENT_SHADER,FS);
+  if(!vs||!fs){cv.remove();return;}
+  const pr=gl.createProgram();gl.attachShader(pr,vs);gl.attachShader(pr,fs);gl.linkProgram(pr);
+  if(!gl.getProgramParameter(pr,gl.LINK_STATUS)){cv.remove();return;}
+  gl.useProgram(pr);
+  const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const loc=gl.getAttribLocation(pr,'aP');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  const uR=gl.getUniformLocation(pr,'uR'),uT=gl.getUniformLocation(pr,'uT');
+  gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+  glOK=true;   /* 通知 2D 层跳过星系本体，只画光柱与粒子 */
+  const t0=performance.now();
+  (function frame(){const w=Math.max(2,cv.clientWidth*devicePixelRatio|0),h=Math.max(2,cv.clientHeight*devicePixelRatio|0);
+    if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;gl.viewport(0,0,w,h);}
+    gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform2f(uR,w,h);gl.uniform1f(uT,(performance.now()-t0)/1000);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    requestAnimationFrame(frame);})();
+})();
 
 /* 卡片全息小可视化 */
 const holos=[];
@@ -482,7 +653,7 @@ const log=document.getElementById('log');
 function ts(){const d=new Date();return '['+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0')+']';}
 [['t','系统启动完成'],['t','连接多智能体网络... <span class="ok">成功</span>'],['t','世界模型初始化... <span class="ok">完成</span>'],['t','等待开发者指令...']].forEach(s=>{const d=document.createElement('div');d.innerHTML='<span class="t">'+ts()+'</span> '+s[1];log.appendChild(d);});
 const pool=['世界设计师：板块生成 <span class="ok">完成</span>','任务规划师：任务链更新','代码工程师：模块编译 <span class="ok">通过</span>','生态模拟：种群平衡 <span class="ok">稳定</span>','记忆网络：节点同步','代码审查员：质量扫描 <span class="wa">1 处建议</span>','数据流：吞吐量 +4.2%'];
-function pushLog(msg){const d=document.createElement('div');d.innerHTML='<span class="t">'+ts()+'</span> '+msg;log.appendChild(d);while(log.children.length>7)log.removeChild(log.firstChild);}
+function pushLog(msg){const d=document.createElement('div');d.innerHTML='<span class="t">'+ts()+'</span> '+msg;log.appendChild(d);const max=Math.max(8,Math.floor(log.clientHeight/Math.max(1,parseFloat(getComputedStyle(d).lineHeight)||13)));while(log.children.length>max)log.removeChild(log.firstChild);}
 setInterval(()=>pushLog(pool[Math.floor(Math.random()*pool.length)]),3000);
 
 /* 快速模板缩略图 */

@@ -126,13 +126,13 @@ agents:
   # 设为 true 后，code_reviewer 与 refactor 将通过 DialogueSession 多轮协商。
   # 需同时关闭 code_reviewer/refactor 的 fast_review/fast_refactor 才能看到真实 LLM 协商。
   review_refactor:
-    dialogue_enabled: false
+    dialogue_enabled: true
     max_rounds: 3
   # 多智能体改造第二步：反思回环。默认关闭。
   # 开启后，main_reviewer 之后插入 reflector，若判定需重规划则回到 planner。
   reflector:
-    enabled: false
-    fast_reflect: true      # true=启发式(离线可用)；false=调用 LLM 做复盘
+    enabled: true
+    fast_reflect: false      # true=启发式(离线可用)；false=调用 LLM 做复盘
     max_reflections: 1       # 最大重规划次数，防止无限回环
   # 多智能体改造第四步：debugger 动态委派查知识库（默认开启）。
   debugger_delegation:
