@@ -453,7 +453,7 @@ function updateFileTree(files) {
         for (const f of dirFiles) {
             const name = f.split('/').pop();
             const ext = name.split('.').pop();
-            const icon = ext === 'cs' ? 'C#' : ext === 'json' ? '{}' : ext === 'md' ? 'M' : '?';
+            const icon = EXT_ICONS[ext] || '?';
             const fileEl = el('div', { className: 'tree-file', dataset: { file: f } },
                 el('span', { className: 'tree-file-icon' }, icon),
                 document.createTextNode(escapeHtml(name)),
@@ -462,6 +462,29 @@ function updateFileTree(files) {
         }
     }
 }
+
+// Godot 文件扩展名 → 图标
+const EXT_ICONS = {
+    gd: 'G',
+    gdshader: 'S',
+    tscn: '🎬',
+    tres: 'R',
+    gdns: 'N',
+    json: '{}',
+    md: 'M',
+    txt: 'T',
+};
+
+// Godot 文件扩展名 → 预览高亮语言
+const EXT_PREVIEW_LANG = {
+    gd: 'gdscript',
+    tscn: 'xml',
+    tres: 'xml',
+    gdshader: 'glsl',
+    json: 'json',
+    md: 'markdown',
+    txt: 'plaintext',
+};
 
 function previewFile(filePath) {
     const code = appState.files[filePath];
@@ -473,9 +496,7 @@ function previewFile(filePath) {
     codeEl.textContent = code;
 
     const ext = filePath.split('.').pop();
-    if (ext === 'cs') codeEl.className = 'language-csharp';
-    else if (ext === 'json') codeEl.className = 'language-json';
-    else if (ext === 'md') codeEl.className = 'language-markdown';
+    codeEl.className = 'language-' + (EXT_PREVIEW_LANG[ext] || 'plaintext');
 
     ensureHljs(() => {
         if (window.hljs) {
@@ -804,7 +825,7 @@ function handleStreamEvent(data) {
 
             // 分类 badge
             const badges = el('div', { className: 'file-categories' });
-            const catMap = { source: '源码', test: '测试', doc: '文档', scene: '场景', config: '配置' };
+            const catMap = { source: '源码', test: '测试', doc: '文档', scene: '场景', config: '配置', asset: '资源' };
             for (const [key, label] of Object.entries(catMap)) {
                 if (categories[key] && categories[key].length) {
                     badges.appendChild(el('span', { className: 'cat-badge cat-' + key },
@@ -834,22 +855,37 @@ function handleStreamEvent(data) {
             const codeTabs = renderCodeTabs(files);
             if (codeTabs) resultCard.appendChild(codeTabs);
 
-            // 🎮 试玩按钮
+            // 🎮 试玩按钮 — 从后端 complete 事件的 scene_path 读取（不再是 Unity 硬编码路径）
             {
-                const sceneJson = files['Assets/Scenes/scene_description.json'];
-                if (sceneJson) {
+                const scenePath = data.scene_path || '';
+                // scene_path 是 res://scenes/X.tscn 形式，去掉 res:// 前缀以匹配 files key
+                const fileKey = scenePath.replace(/^res:\/\//, '');
+                const sceneFile = scenePath.split('/').pop();
+                const tscnContent = files[fileKey] || files[scenePath] || '';
+                const sceneDesc = files['scenes/scene_description.json'];
+                let sceneData = null;
+                if (tscnContent) {
+                    sceneData = {
+                        scene_name: sceneFile.replace(/\.tscn$/, ''),
+                        scene_path: scenePath,
+                        tscn: tscnContent,
+                    };
+                } else if (sceneDesc) {
                     try {
-                        const sceneData = JSON.parse(sceneJson);
-                        sessionStorage.setItem('gameforge_demo_scene', sceneJson);
-                        sessionStorage.setItem('gameforge_demo_files', JSON.stringify(files));
-                        const demoBtn = el('button', { className: 'demo-play-btn' });
-                        demoBtn.innerHTML = '🎮 立即试玩';
-                        demoBtn.addEventListener('click', () => {
-                            window.open('/demo', '_blank');
-                        });
-                        const demoWrap = el('div', { className: 'demo-play-area' }, demoBtn);
-                        resultCard.appendChild(demoWrap);
+                        const parsed = JSON.parse(sceneDesc);
+                        sceneData = { ...parsed, scene_path: scenePath || parsed.scene_path };
                     } catch (e) {}
+                }
+                if (sceneData && sceneData.scene_name) {
+                    sessionStorage.setItem('gameforge_demo_scene', JSON.stringify(sceneData));
+                    sessionStorage.setItem('gameforge_demo_files', JSON.stringify(files));
+                    const demoBtn = el('button', { className: 'demo-play-btn' });
+                    demoBtn.innerHTML = '🎮 立即试玩';
+                    demoBtn.addEventListener('click', () => {
+                        window.open('/demo', '_blank');
+                    });
+                    const demoWrap = el('div', { className: 'demo-play-area' }, demoBtn);
+                    resultCard.appendChild(demoWrap);
                 }
             }
 
@@ -929,19 +965,22 @@ function handleCompileResult(data) {
 }
 
 function categorizeFiles(files) {
-    const categories = { source: [], test: [], doc: [], scene: [], config: [] };
+    // Godot 工程文件分类 — 与后端 scene_builder / GodotSupervisor 实际产出对齐
+    const categories = { source: [], test: [], doc: [], scene: [], config: [], asset: [] };
     for (const path of Object.keys(files)) {
-        if (path.includes('Test') || path.includes('test_') || path.endsWith('Tests.cs')) {
+        const ext = path.split('.').pop();
+        if (path.endsWith('.gd') && /Test|Tests/i.test(path)) {
             categories.test.push(path);
-        } else if (path.includes('/Editor/') || path.includes('\\Editor\\')) {
-            categories.config.push(path);
-        } else if (path.endsWith('.cs')) {
+        } else if (ext === 'gd') {
             categories.source.push(path);
-        } else if (path.endsWith('.md') || path.endsWith('.txt')) {
-            categories.doc.push(path);
-        } else if (path.includes('scene') || path.includes('Scene') || path.includes('scene_description')) {
+        } else if (ext === 'tscn' || ext === 'tres' || ext === 'gdns' ||
+                   (path.includes('scene_description') && ext === 'json')) {
             categories.scene.push(path);
-        } else if (path.endsWith('.json')) {
+        } else if (ext === 'md' || ext === 'txt') {
+            categories.doc.push(path);
+        } else if (ext === 'png' || ext === 'jpg' || ext === 'svg' || ext === 'tres') {
+            categories.asset.push(path);
+        } else if (ext === 'json' || ext === 'cfg' || ext === 'godot' || ext === 'import') {
             categories.config.push(path);
         } else {
             categories.config.push(path);

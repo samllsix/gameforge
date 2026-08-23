@@ -130,8 +130,9 @@ class GodotSceneBuilder:
         # 背景色
         camera = scene_desc.get("camera", {})
         bg_color = camera.get("background_color")
+        bg_size = camera.get("viewport_size") or [640, 360]
         if bg_color and is_2d:
-            node_lines.extend(self._build_background(bg_color))
+            node_lines.extend(self._build_background(bg_color, bg_size))
             node_lines.append('')
 
         # 相机
@@ -252,20 +253,36 @@ class GodotSceneBuilder:
 
         return False
 
-    def _build_background(self, bg_color: List[float]) -> List[str]:
-        """构建2D背景色节点 — 大面积 QuadMesh + 无光照材质"""
-        mat_ref = self._add_sub_resource("StandardMaterial3D", {
-            "albedo_color": f"Color({bg_color[0]}, {bg_color[1]}, {bg_color[2]}, {bg_color[3] if len(bg_color) > 3 else 1.0})",
-            "shading_mode": 0,
-        })
-        mesh_ref = self._add_sub_resource("QuadMesh", {
-            "size": "Vector2(200, 200)",
-            "material": mat_ref,
-        })
+    def _build_background(self, bg_color: List[float], viewport_size: List[float] = None) -> List[str]:
+        """构建 2D 背景色节点 — ColorRect（2D 原生 CanvasItem）。
+
+        之前的实现使用 MeshInstance2D + StandardMaterial3D + QuadMesh，
+        是 Godot 4 渲染管线的非法组合，会导致场景加载失败。
+        这里改用 ColorRect：纯 CanvasItem，无 3D 材质依赖。
+
+        注意：ColorRect 的 anchor_* 属性只在父节点是 Control 时生效；
+        我们的父是 Node2D，所以 anchor_* 被忽略。
+        必须显式给 size：把 viewport 整个铺满。
+        """
+        r, g, b = bg_color[0], bg_color[1], bg_color[2]
+        a = bg_color[3] if len(bg_color) > 3 else 1.0
+        w = float(viewport_size[0]) if viewport_size and len(viewport_size) > 0 else 640.0
+        h = float(viewport_size[1]) if viewport_size and len(viewport_size) > 1 else 360.0
+        # 默认 anchor_*=0 让 offset_* 决定矩形位置；
+        # 负的 offset_left/top 让矩形覆盖 (0,0)..(w,h)，中心对齐
         return [
-            '[node name="Background" type="MeshInstance2D" parent="."]',
-            f'mesh = {mesh_ref}',
+            '[node name="Background" type="ColorRect" parent="."]',
+            'anchor_left = 0.0',
+            'anchor_top = 0.0',
+            'anchor_right = 0.0',
+            'anchor_bottom = 0.0',
+            f'offset_left = {0 - w / 2}',
+            f'offset_top = {0 - h / 2}',
+            f'offset_right = {w / 2}',
+            f'offset_bottom = {h / 2}',
+            f'color = Color({r}, {g}, {b}, {a})',
             'z_index = -100',
+            'mouse_filter = 2',
         ]
 
     def _build_camera(self, camera: Dict[str, Any], is_2d: bool) -> List[str]:
@@ -383,7 +400,13 @@ class GodotSceneBuilder:
 
     def _build_visual_node(self, parent_name: str, color: List[float],
                            scale: List[float], is_2d: bool) -> List[str]:
-        """构建可视化子节点 — 2D 用 MeshInstance2D + QuadMesh，3D 用 MeshInstance3D + BoxMesh。"""
+        """构建可视化子节点。
+
+        - 2D：用 ColorRect（CanvasItem，纯 2D 原生节点，无 3D 材质依赖）。
+          之前的 MeshInstance2D + StandardMaterial3D + QuadMesh 是 Godot 4 渲染管线的
+          非法组合，会导致场景加载/渲染异常（详见 P0-1）。
+        - 3D：用 MeshInstance3D + BoxMesh（合法 3D 用法，保持不变）。
+        """
         if is_2d:
             w = abs(float(scale[0])) if len(scale) > 0 else 1.0
             h = abs(float(scale[1])) if len(scale) > 1 else 1.0
@@ -392,18 +415,20 @@ class GodotSceneBuilder:
             if h < 0.05:
                 h = 0.05
 
-            mat_ref = self._add_sub_resource("StandardMaterial3D", {
-                "albedo_color": f"Color({color[0]}, {color[1]}, {color[2]}, {color[3] if len(color) > 3 else 1.0})",
-                "shading_mode": 0,
-            })
-            mesh_props = {
-                "size": f"Vector2({w}, {h})",
-                "material": mat_ref,
-            }
-            mesh_ref = self._add_sub_resource("QuadMesh", mesh_props)
+            r, g, b = color[0], color[1], color[2]
+            a = color[3] if len(color) > 3 else 1.0
             return [
-                f'[node name="Mesh" type="MeshInstance2D" parent="{parent_name}"]',
-                f'mesh = {mesh_ref}',
+                f'[node name="Mesh" type="ColorRect" parent="{parent_name}"]',
+                'anchor_left = 0.0',
+                'anchor_top = 0.0',
+                'anchor_right = 0.0',
+                'anchor_bottom = 0.0',
+                f'offset_left = -{w / 2}',
+                f'offset_top = -{h / 2}',
+                f'offset_right = {w / 2}',
+                f'offset_bottom = {h / 2}',
+                f'color = Color({r}, {g}, {b}, {a})',
+                'mouse_filter = 2',
             ]
         else:
             sx = abs(float(scale[0])) if len(scale) > 0 else 1.0

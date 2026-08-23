@@ -3,7 +3,9 @@
 使用SQLAlchemy 2.0 DeclarativeBase定义ORM模型。
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+UTC = timezone.utc
 
 from sqlalchemy import JSON, Column, DateTime, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase

@@ -731,6 +731,102 @@ class GameDevWorkflow:
             "message": f"经过 {max_rounds} 轮修复仍有编译错误，可能需要人工介入",
         })
 
+    async def _runtime_smoke_test(
+        self,
+        state: GameDevState,
+        event_callback,
+        max_fix_attempts: int = 2,
+    ) -> Dict[str, Any]:
+        """P0-2 运行时冒烟测试。
+
+        在语法编译（check_scripts）后，捕获运行时能否真正跑通。
+        失败时把 errors 喂给 debugger（最多 max_fix_attempts 轮），
+        成功时把 ``runnable=True`` 写回 state。
+        """
+        scene_path = state.get("scene_path", "")
+        # 必须有场景文件才值得冒烟；否则保持原状跳过
+        if not scene_path:
+            return {
+                "runnable": None,
+                "runtime_smoke_errors": [],
+                "runtime_smoke_skipped": True,
+            }
+
+        from src.engine.godot.runtime_smoke import GodotRuntimeSmoke
+        smoke = GodotRuntimeSmoke(self.config)
+        for attempt in range(max_fix_attempts + 1):
+            await event_callback("phase_start", {
+                "phase": "runtime_smoke",
+                "message": f"运行时冒烟测试（第{attempt + 1}次）...",
+            })
+            # 落盘的 res:// 路径直接交给 Godot 4 CLI
+            raw = await asyncio.to_thread(smoke.run_scene, scene_path)
+            # 兼容 RuntimeSmokeResult 与 dict（测试 mock 用 dict）
+            if hasattr(raw, "to_dict"):
+                result = raw
+                result_dict = raw.to_dict()
+            else:
+                result_dict = dict(raw)
+                from src.engine.godot.runtime_smoke import RuntimeSmokeResult
+                result = RuntimeSmokeResult(**{
+                    k: v for k, v in result_dict.items()
+                    if k in RuntimeSmokeResult.__dataclass_fields__
+                })
+
+            await event_callback("runtime_smoke_result", {
+                "runnable": result.runnable,
+                "errors": result.errors[:5],
+                "scene_path": scene_path,
+                "elapsed_seconds": result.elapsed_seconds,
+                "attempt": attempt + 1,
+            })
+
+            if result.runnable:
+                return {
+                    "runnable": True,
+                    "runtime_smoke_errors": [],
+                    "runtime_smoke_result": result_dict,
+                    "runtime_smoke_attempts": attempt + 1,
+                }
+
+            # 尝试喂给 debugger 修复
+            if attempt >= max_fix_attempts:
+                break
+
+            # 构造 error_log 格式给 debugger
+            error_log = []
+            for err in result.errors[:5]:
+                snippet = err.get("snippet", "")
+                error_log.append(f"{scene_path}: error: {snippet[:200]}")
+            if not error_log:
+                break
+            state["error_log"] = error_log
+            state.setdefault("warnings", []).append(
+                f"运行时冒烟失败（第{attempt + 1}次），进入 debugger 修复"
+            )
+            debug_result = await self._debugger_node(state)
+            state.update(debug_result)
+            # 重新落盘 debugger 修改的脚本
+            try:
+                from src.engine.godot import GodotEditor
+                editor = GodotEditor(self.config)
+                updated_gd = {
+                    k: v for k, v in state.get("code_generated", {}).items()
+                    if k.endswith(".gd")
+                }
+                if updated_gd:
+                    editor.import_files(updated_gd)
+            except Exception as e:
+                self.log_error("runtime_smoke_reimport_failed", {"error": str(e)})
+
+        # 达到 max_fix_attempts 仍跑不通
+        return {
+            "runnable": False,
+            "runtime_smoke_errors": result_dict.get("errors", []),
+            "runtime_smoke_result": result_dict,
+            "runtime_smoke_attempts": max_fix_attempts + 1,
+        }
+
     async def _try_godot_pipeline(self, state: GameDevState, event_callback) -> None:
         """Godot 一键构建：导入代码 → 编译 → 构建场景
 
@@ -1227,6 +1323,23 @@ class GameDevWorkflow:
                 elif kind == "on_chain_end" and node_name not in ("__start__", "__end__", "LangGraph", "_route_next"):
                     output = event.get("data", {}).get("output", {})
                     if output and isinstance(output, dict):
+                        # P1-3 契约：补发前端 handler 期待但后端从未发的事件
+                        gdm = output.get("game_design_model")
+                        if gdm and isinstance(gdm, dict) and node_name == "game_designer":
+                            await event_callback("game_design", {
+                                "game_title": gdm.get("game_title") or gdm.get("title") or "",
+                                "genre": gdm.get("genre", ""),
+                                "camera_mode": gdm.get("camera_mode") or gdm.get("camera", {}).get("type", ""),
+                                "objectives": gdm.get("objectives", []),
+                                "mechanics": gdm.get("mechanics", []),
+                            })
+                        new_plan = output.get("task_plan")
+                        if new_plan and node_name == "planner":
+                            await event_callback("task_plan", {
+                                "tasks": new_plan,
+                                "message": f"任务计划生成完成，共 {len(new_plan)} 项",
+                            })
+
                         new_code = output.get("code_generated", {})
                         if new_code:
                             for file_path, content in new_code.items():
@@ -1271,6 +1384,10 @@ class GameDevWorkflow:
         if state.get("scene_status") in (None, "pending", "skipped"):
             await self._try_godot_pipeline(state, event_callback)
 
+        # P0-2 运行时冒烟测试（"可运行"闭环）
+        smoke_summary = await self._runtime_smoke_test(state, event_callback)
+        state["runnable"] = smoke_summary.get("runnable")
+
         await event_callback("complete", {
             "phase": "complete",
             "message": "代码生成完成！",
@@ -1279,6 +1396,9 @@ class GameDevWorkflow:
             "fix_count": len(state.get("fix_history", [])),
             "scene_status": state.get("scene_status", "pending"),
             "scene_path": state.get("scene_path", ""),
+            "runnable": state.get("runnable"),
+            "runtime_smoke_errors": smoke_summary.get("runtime_smoke_errors", [])[:5],
+            "runtime_smoke_skipped": smoke_summary.get("runtime_smoke_skipped", False),
             "warnings": state.get("warnings", []),
         })
 

@@ -19,8 +19,11 @@ uvicorn>=0.30.0
 pydantic>=2.8.0
 pydantic-settings>=2.5.0
 
-# Database (SQLite by default, no external service needed)
+# Database（默认走本地 MySQL；PyMySQL 是纯 Python 驱动，无需编译）
+# 也支持 SQLite / PostgreSQL，通过 DATABASE_URL 切换
 sqlalchemy>=2.0.0
+pymysql>=1.1.0
+cryptography>=42.0.0      # PyMySQL 8.0+ caching_sha2_password 鉴权需要
 
 # Monitoring & Logging
 langsmith>=0.1.0

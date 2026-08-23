@@ -418,3 +418,132 @@ class GodotEditor:
             return major, version_str
         except Exception:
             return self.godot_version, f"Godot {self.godot_version}.x (检测失败)"
+
+    def render_screenshot_frame(
+        self,
+        project_path: str,
+        scene_path: str = "res://scenes/main.tscn",
+        output_path: Optional[str] = None,
+        width: int = 640,
+        height: int = 360,
+        warmup_frames: int = 12,
+        frame_index: int = 0,
+        timeout: int = 30,
+    ) -> Dict[str, Any]:
+        """用 Godot headless 渲染一个场景并保存为 PNG。
+
+        实现：通过 ``godot --headless --script res://addons/gameforge/screenshot_scene.gd`` 启动
+        Godot 一次性脚本，脚本会读取项目根的 _gf_screenshot_manifest.json，加载目标场景、推进
+        warmup_frames 帧、最后把 SubViewport 内容写入 output_path。
+
+        Args:
+            project_path: 项目根目录（绝对路径，含 project.godot）
+            scene_path: res:// 形式的场景文件路径
+            output_path: PNG 输出绝对路径；默认写到项目根的 _gf_screenshot_output.png
+            width: 渲染宽度
+            height: 渲染高度
+            warmup_frames: 预热帧数（让 _ready / _process 跑出稳定画面）
+            frame_index: 透传给脚本的帧序号（用于按帧区分序列截图）
+            timeout: 子进程超时秒数
+
+        Returns:
+            {"ok": True, "output_path": "..."} 或 {"ok": False, "error": "..."}
+        """
+        if not self.editor_path or not os.path.isfile(self.editor_path):
+            return {"ok": False, "error": f"Godot 编辑器未配置或不存在: {self.editor_path}"}
+        if not project_path or not os.path.isdir(project_path):
+            return {"ok": False, "error": f"项目目录不存在: {project_path}"}
+        if not os.path.isfile(os.path.join(project_path, "project.godot")):
+            return {"ok": False, "error": f"项目目录中找不到 project.godot: {project_path}"}
+        if not scene_path:
+            return {"ok": False, "error": "scene_path 不能为空"}
+
+        if not output_path:
+            output_path = os.path.join(project_path, "_gf_screenshot_output.png")
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
+        manifest = {
+            "scene_path": scene_path,
+            "output_path": output_path,
+            "width": int(width),
+            "height": int(height),
+            "warmup_frames": int(warmup_frames),
+            "frame_index": int(frame_index),
+        }
+        manifest_path = os.path.join(project_path, "_gf_screenshot_manifest.json")
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False)
+        except Exception as e:
+            return {"ok": False, "error": f"写入 manifest 失败: {e}"}
+
+        # 把一次性截图脚本拷贝到目标项目的 addons/gameforge/ 下。
+        # 由于每个项目独立，插件 addons 不一定已挂载到当前工程；脚本用 res:// 寻址
+        # 时必须存在。
+        script_rel = "addons/gameforge/screenshot_scene.gd"
+        script_abs = os.path.join(project_path, script_rel.replace("/", os.sep))
+        try:
+            os.makedirs(os.path.dirname(script_abs), exist_ok=True)
+            # 优先用源 addons 中的权威脚本（仓库根 = src/engine/godot/__init__.py 向上 4 层）
+            source_script = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+                "addons", "gameforge", "screenshot_scene.gd",
+            )
+            if os.path.isfile(source_script):
+                with open(source_script, "r", encoding="utf-8") as sf, \
+                        open(script_abs, "w", encoding="utf-8") as df:
+                    df.write(sf.read())
+            elif not os.path.isfile(script_abs):
+                return {"ok": False, "error": "找不到 screenshot_scene.gd 源脚本"}
+        except Exception as e:
+            return {"ok": False, "error": f"准备截图脚本失败: {e}"}
+
+        script_path = "res://" + script_rel
+        cmd = [
+            self.editor_path, "--headless", "--script", script_path,
+            "--path", project_path,
+        ]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout,
+                cwd=project_path,
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"Godot 渲染超时（{timeout}s）"}
+        except FileNotFoundError:
+            return {"ok": False, "error": f"找不到 Godot 引擎: {self.editor_path}"}
+        except Exception as e:
+            return {"ok": False, "error": f"调用 Godot 失败: {e}"}
+
+        if not os.path.isfile(output_path):
+            return {
+                "ok": False,
+                "error": "Godot 退出但未生成截图",
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+                "exit_code": proc.returncode,
+            }
+        if proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": f"Godot 退出码非零: {proc.returncode}",
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            }
+        return {
+            "ok": True,
+            "output_path": output_path,
+            "width": width,
+            "height": height,
+            "frame_index": frame_index,
+            "stdout": proc.stdout,
+        }
+
+
+# 重新导出 Supervisor（避免循环导入）
+from src.engine.godot.supervisor import (
+    GodotSupervisor,
+    GodotTimeout,
+    GodotCrashed,
+    supervisor_lifespan,
+)  # noqa: E402

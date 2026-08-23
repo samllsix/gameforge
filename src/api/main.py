@@ -101,7 +101,45 @@ async def lifespan(app: FastAPI):
         method="SYSTEM",
         details={"version": API_VERSION},
     )
+
+    # 初始化 GodotSupervisor（按需启动）
+    try:
+        from src.engine.godot import GodotSupervisor
+        supervisor = await GodotSupervisor.get_instance(config)
+        logger.info("preview.supervisor_ready", enabled=supervisor.enabled)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("preview.supervisor_init_failed", error=str(e))
+
+    # P2-5 LLM 启动探活 — 一次 ping，结果写到 app.state
+    try:
+        from src.utils.llm_health import ping as llm_ping
+        llm_status = await llm_ping(config, timeout=5.0)
+        app.state.llm_status = llm_status.to_dict()
+        logger.info(
+            "llm.startup_check",
+            llm_configured=llm_status.llm_configured,
+            ping_ok=llm_status.ping_ok,
+            ping_error=llm_status.ping_error or None,
+        )
+    except Exception as e:  # noqa: BLE001
+        app.state.llm_status = {
+            "llm_configured": False,
+            "ping_ok": None,
+            "ping_error": f"health_check_crashed: {type(e).__name__}",
+            "ping_latency_ms": 0.0,
+        }
+        logger.warning("llm.startup_check_crashed", error=str(e))
+
     yield
+
+    # 退出时关闭所有 Godot 进程
+    try:
+        from src.engine.godot import GodotSupervisor
+        if GodotSupervisor._instance is not None:
+            await GodotSupervisor._instance.stop_all()
+            logger.info("preview.supervisor_stopped")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("preview.supervisor_stop_failed", error=str(e))
 
 
 # 创建FastAPI应用
@@ -230,6 +268,9 @@ app.include_router(routes_router, prefix="/api/v1/ext", tags=["extended"])
 @app.get("/")
 async def root():
     """根路径"""
+    llm = getattr(app.state, "llm_status", None) or {
+        "llm_configured": False, "ping_ok": None, "ping_error": "not_checked",
+    }
     return {
         "name": "GameForge API",
         "version": API_VERSION,
@@ -241,6 +282,9 @@ async def root():
             "security_headers": "enabled",
             "api_key_auth": "enabled" if API_KEYS else "disabled",
         },
+        "llm_configured": llm.get("llm_configured", False),
+        "llm_ping_ok": llm.get("ping_ok"),
+        "llm_ping_error": llm.get("ping_error") or "",
     }
 
 
@@ -249,9 +293,13 @@ async def health_check():
     """健康检查"""
     manager = await ConcurrencyManager.get_instance()
     stats = manager.get_stats()
+    llm = getattr(app.state, "llm_status", None) or {}
     return {
         "status": "healthy",
         "concurrency": stats,
+        "llm_configured": llm.get("llm_configured", False),
+        "llm_ping_ok": llm.get("ping_ok"),
+        "llm_ping_error": llm.get("ping_error") or "",
     }
 
 
@@ -704,6 +752,192 @@ async def get_history_by_task_id(task_id: str):
     if not record:
         raise HTTPException(status_code=404, detail=f"任务 {task_id} 的历史记录不存在")
     return record.to_detail_dict()
+
+
+# ========== 实时预览：让前端轮询拿到 Godot 渲染出的游戏画面 ==========
+
+import os as _os_preview
+import re as _re_preview
+import time as _time_preview
+import mimetypes as _mimetypes_preview
+from pathlib import Path as _Path_preview
+
+_PREVIEW_PROJECT_RE = _re_preview.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
+
+
+def _resolve_preview_project(project_id: str) -> str:
+    """把 project_id 解析为 projects/<project_id> 绝对路径，校验防路径穿越。"""
+    if not project_id or not _PREVIEW_PROJECT_RE.match(project_id):
+        raise HTTPException(status_code=400, detail="project_id 非法（仅允许字母数字_-.)")
+    projects_root = _projects_root().resolve()
+    abs_root = (projects_root / project_id).resolve()
+    # 防止 project_id 含 ".." 越界：resolved 必须仍在 projects 根下
+    try:
+        abs_root.relative_to(projects_root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="project_id 越出 projects 目录")
+    return str(abs_root)
+
+
+def _projects_root() -> _Path_preview:
+    """返回仓库内 projects/ 目录的绝对路径。"""
+    return _Path_preview(_os_preview.path.dirname(_os_preview.path.dirname(_os_preview.path.dirname(__file__)))) / "projects"
+
+
+@app.get("/api/v1/preview/frame")
+async def preview_frame(
+    project_id: str,
+    scene: Optional[str] = None,
+    width: int = 640,
+    height: int = 360,
+    frame: int = 0,
+):
+    """用 Godot 长驻进程渲染指定项目指定场景，返回 PNG 字节流。
+
+    2.0 流程：前端每 ~250ms 轮询一次
+      1) 校验 project_id → 解析到 projects/<id> 绝对路径
+      2) 通过 GodotSupervisor 确保 Godot 进程在跑（端口 8769 上常驻）
+      3) HTTP GET http://127.0.0.1:8769/screenshot?frame=N 拿 PNG
+      4) 加上 X-Preview-Source=godot-live 头返回浏览器
+    1.0 fallback：通过 GODOT_PREVIEW_LEGACY_ONLY=1 仍可走一次性脚本。
+    """
+    project_path = _resolve_preview_project(project_id)
+
+    preview_cfg = (config or {}).get("preview", {}) or {}
+    legacy_only = _os_preview.environ.get("GAMEFORGE_PREVIEW_LEGACY_ONLY", "").lower() in {"1", "true", "yes"}
+    legacy_only = legacy_only or bool(preview_cfg.get("legacy_only", False))
+
+    # 2.0 自动建场景：如果项目下没有 project.godot + scenes/main.tscn，
+    # 用 scene_to_godot 自动写一份富画面模板（含视差背景、玩家、敌人、金币、HUD、粒子）
+    if not legacy_only:
+        try:
+            main_tscn = _os_preview.path.join(project_path, "scenes", "main.tscn")
+            if not _os_preview.path.isfile(main_tscn):
+                from src.engine.godot.scene_to_godot import (
+                    default_scene_ir, write_project,
+                )
+                scene_ir = default_scene_ir(theme="sky_blue", genre="platformer")
+                write_project(project_path, scene_ir, width=width, height=height)
+                logger.info("preview.scene_auto_generated", project_id=project_id)
+        except Exception as e:
+            logger.warning("preview.scene_auto_gen_failed", error=str(e))
+
+    if not _os_preview.path.isfile(_os_preview.path.join(project_path, "project.godot")):
+        raise HTTPException(status_code=404, detail=f"项目 {project_id} 缺少 project.godot")
+
+    width = max(160, min(width, 1920))
+    height = max(90, min(height, 1080))
+
+    if not legacy_only:
+        # 2.0 长驻进程路径：真窗口 + mss 截图
+        from src.engine.godot import GodotSupervisor, GodotTimeout, GodotCrashed
+        supervisor = await GodotSupervisor.get_instance(config)
+        if not await supervisor.is_alive(project_id):
+            try:
+                await supervisor.start(project_id, project_path, scene_path=scene)
+            except Exception as e:
+                logger.warning("preview.supervisor_start_failed", project_id=project_id, error=str(e))
+                raise HTTPException(status_code=502, detail=f"Godot 进程拉起起失败: {e}")
+
+        try:
+            png_bytes = await supervisor.get_frame(
+                project_id, frame_index=frame, width=width, height=height,
+            )
+        except GodotTimeout as e:
+            await supervisor.stop(project_id)
+            raise HTTPException(status_code=504, detail=f"Godot 截图超时: {e}")
+        except GodotCrashed as e:
+            await supervisor.stop(project_id)
+            raise HTTPException(status_code=502, detail=f"Godot 进程不可达: {e}")
+
+        ts = int(_time_preview.time())
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "X-Preview-Frame": str(frame),
+                "X-Preview-Width": str(width),
+                "X-Preview-Height": str(height),
+                "X-Preview-Timestamp": str(ts),
+                "X-Preview-Source": "godot-mss",
+            },
+        )
+
+    # ===== 1.0 兼容路径（一次性脚本） =====
+    from src.engine.godot import GodotEditor
+
+    # 默认场景：main.tscn -> GameScene.tscn -> 第一个 .tscn
+    if not scene:
+        candidates = ["res://scenes/main.tscn", "res://main.tscn", "res://scenes/GameScene.tscn"]
+        for c in candidates:
+            full = _os_preview.path.join(project_path, c.replace("res://", "").replace("/", _os_preview.sep))
+            if _os_preview.path.isfile(full):
+                scene = c
+                break
+        if not scene:
+            scenes_dir = _os_preview.path.join(project_path, "scenes")
+            if _os_preview.path.isdir(scenes_dir):
+                for fn in _os_preview.listdir(scenes_dir):
+                    if fn.lower().endswith(".tscn"):
+                        scene = "res://scenes/" + fn
+                        break
+        if not scene:
+            raise HTTPException(status_code=404, detail="项目中找不到 .tscn 场景文件")
+
+    editor = GodotEditor(config)
+    out_dir = _os_preview.path.join(project_path, "_preview_cache")
+    _os_preview.makedirs(out_dir, exist_ok=True)
+    out_path = _os_preview.path.join(out_dir, f"frame_{frame % 16:02d}.png")
+
+    import asyncio as _asyncio
+    loop = _asyncio.get_event_loop()
+
+    def _render():
+        return editor.render_screenshot_frame(
+            project_path=project_path,
+            scene_path=scene,
+            output_path=out_path,
+            width=width,
+            height=height,
+            warmup_frames=8,
+            frame_index=frame,
+            timeout=30,
+        )
+
+    result = await loop.run_in_executor(None, _render)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=500,
+            detail={"error": result.get("error", "渲染失败"), "stderr": (result.get("stderr") or "")[-400:]},
+        )
+
+    png_path = result["output_path"]
+    if not _os_preview.path.isfile(png_path):
+        raise HTTPException(status_code=500, detail="截图已声明成功但文件不存在")
+
+    data = _Path_preview(png_path).read_bytes()
+    ts = int(_time_preview.time())
+    return Response(
+        content=data,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "X-Preview-Frame": str(frame),
+            "X-Preview-Width": str(width),
+            "X-Preview-Height": str(height),
+            "X-Preview-Timestamp": str(ts),
+            "X-Preview-Source": "godot-legacy",
+        },
+    )
+
+
+@app.get("/api/v1/preview/stats")
+async def preview_stats():
+    """查看 supervisor 当前所有 Godot 进程状态"""
+    from src.engine.godot import GodotSupervisor
+    sup = await GodotSupervisor.get_instance(config)
+    return sup.stats()
 
 
 def start_server(host: Optional[str] = None, port: Optional[int] = None, workers: int = 1):
