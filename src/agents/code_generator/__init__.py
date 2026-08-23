@@ -153,13 +153,48 @@ class CodeGeneratorAgent(BaseAgent):
             self.log_error("unsupported_task_type", {"type": task_type})
             return []
 
-        # 尝试从模板匹配（确定性快速路径）
+        # 尝试从整机模板匹配（确定性快速路径）
         template_artifacts = self._try_template_code(state, task, engine)
         if template_artifacts:
             self.log_action("template_code_used", {"task_id": task.get("id"), "file_count": len(template_artifacts)})
             return template_artifacts
 
+        # P0 组件参数化快路径：命中已知标准组件则填参返回，跳过一次全量 LLM 生成
+        if self._component_template_enabled():
+            component_artifacts = self._try_component_template(state, task, engine)
+            if component_artifacts:
+                self.log_action(
+                    "component_template_used",
+                    {"task_id": task.get("id"), "kind": component_artifacts[0]["metadata"].get("from_template")},
+                )
+                return component_artifacts
+
         return await self._generate_game_code(task, engine, project_name, state)
+
+    def _component_template_enabled(self) -> bool:
+        """是否启用 P0 组件参数化快路径（默认开启，可经 config 关闭回退到 LLM 全文路径）。"""
+        return self.agent_config.get("template_first", True)
+
+    def _try_component_template(
+        self, state: GameDevState, task: Dict[str, Any], engine: str
+    ) -> List[Dict[str, Any]]:
+        """P0 组件参数化快路径：识别标准组件 -> 从 GDM/task 提取参数 -> 填参渲染。
+
+        命中返回单个 artifact；未命中返回空列表，交由上层继续走 LLM 全文路径。
+        """
+        if engine != "godot":
+            return []
+        from src.agents.code_generator.godot_templates import build_artifact, match_component
+
+        requirements = state.get("project_context", {}).get("requirements", "")
+        kind = match_component(task, requirements)
+        if not kind:
+            return []
+
+        artifact = build_artifact(kind, state.get("game_design_model") or {}, task, engine)
+        if not artifact:
+            return []
+        return [artifact]
 
     def _try_template_code(self, state: GameDevState, task: Dict[str, Any], engine: str) -> List[Dict[str, Any]]:
         """检查是否可以使用模板代码"""

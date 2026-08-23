@@ -28,6 +28,7 @@ from src.agents.refactor import RefactorAgent
 from src.agents.main_reviewer import MainReviewerAgent
 from src.agents.reflector import ReflectorAgent
 from src.core.memory import MemoryManager
+from src.core.recipes import RecipeStore
 from src.core.dialogue.review_refactor_negotiation import run_review_refactor_dialogue
 
 
@@ -57,6 +58,10 @@ class GameDevWorkflow:
 
         # 记忆系统 — 让 Agent 有上下文记忆
         self.memory = MemoryManager()
+
+        # P1 语义级复用：已验证配方库。命中则整体复用，绕过 LLM 主流水线。
+        self.recipe_store = RecipeStore()
+        self.recipe_enabled = config.get("recipes", {}).get("enabled", True)
 
         # 多智能体改造第一步：审查↔重构对话协商开关（默认关闭，保持原流水线行为）
         self.dialogue_enabled = (
@@ -1215,6 +1220,73 @@ class GameDevWorkflow:
         except Exception as e:
             logger.warning("memory_save_failed", error=str(e))
 
+    # ========== P1 语义级复用（Recipe） ==========
+
+    async def _run_recipe(self, state: GameDevState, event_callback) -> Optional[Dict[str, Any]]:
+        """命中已验证配方时的快速路径。
+
+        直接复用配方内容（GDM/任务/代码/场景），跳过整个 LLM 主流水线，
+        只做后处理 + Godot 一键构建。返回 final state；未命中返回 None。
+        """
+        if not self.recipe_enabled:
+            return None
+        requirements = state.get("project_context", {}).get("requirements", "")
+        recipe = self.recipe_store.search(requirements)
+        if not recipe:
+            return None
+
+        RecipeStore.apply_recipe(state, recipe)
+
+        async def _noop(event_type, data):
+            pass
+
+        cb = event_callback or _noop
+        await cb("recipe_hit", {
+            "message": "命中已验证配方，跳过 LLM 主流水线直接复用",
+            "title": state.get("recipe_title", ""),
+            "task_count": len(state.get("task_plan", [])),
+            "file_count": len(state.get("code_generated", {})),
+        })
+
+        from src.utils.metrics import record_workflow_run, set_active_workflows
+        _start = _time.time()
+        set_active_workflows(1)
+        try:
+            scene_task = asyncio.create_task(asyncio.sleep(0))
+            await self._post_process(state, scene_task, cb)
+            if state.get("scene_status") in (None, "pending", "skipped"):
+                await self._try_godot_pipeline(state, cb)
+        except Exception as e:
+            record_workflow_run(False, _time.time() - _start)
+            set_active_workflows(0)
+            state.setdefault("warnings", []).append(f"配方复用后处理失败: {e}")
+        finally:
+            record_workflow_run(True, _time.time() - _start)
+            set_active_workflows(0)
+
+        await cb("complete", {
+            "phase": "complete",
+            "message": "已复用已验证配方",
+            "files": state.get("code_generated", {}),
+            "task_count": len(state.get("task_plan", [])),
+            "scene_status": state.get("scene_status", "success"),
+            "scene_path": state.get("scene_path", ""),
+            "runnable": True,
+            "recipe_reused": True,
+            "warnings": state.get("warnings", []),
+        })
+        return state
+
+    def _bake_if_verified(self, state: GameDevState) -> None:
+        """真机冒烟通过后，把成功方案沉淀为配方（供后续复用）。"""
+        if not self.recipe_enabled:
+            return
+        try:
+            if self.recipe_store.save_recipe(state):
+                self.logger.info("recipe_baked", title=state.get("recipe_title", ""))
+        except Exception as e:
+            self.logger.warning("recipe_bake_failed", error=str(e))
+
     # ========== 运行入口 ==========
 
     async def run(self, input_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -1227,6 +1299,11 @@ class GameDevWorkflow:
         state = self._make_initial_state(input_state)
         _start = _time.time()
         set_active_workflows(1)
+
+        # P1 语义级复用：命中已验证配方 → 快速路径直接返回
+        recipe_state = await self._run_recipe(state, None)
+        if recipe_state is not None:
+            return recipe_state
 
         # 加载项目记忆
         project_name = state.get("project_context", {}).get("project_name", "default")
@@ -1287,6 +1364,11 @@ class GameDevWorkflow:
         _start = _time.time()
         _success = True
         set_active_workflows(1)
+
+        # P1 语义级复用：命中已验证配方 → 快速路径直接返回
+        recipe_state = await self._run_recipe(state, event_callback)
+        if recipe_state is not None:
+            return recipe_state
 
         project_name = state.get("project_context", {}).get("project_name", "default")
         self.memory.project_memory.load(project_name)
@@ -1387,6 +1469,10 @@ class GameDevWorkflow:
         # P0-2 运行时冒烟测试（"可运行"闭环）
         smoke_summary = await self._runtime_smoke_test(state, event_callback)
         state["runnable"] = smoke_summary.get("runnable")
+
+        # P1 语义级复用：真机冒烟通过 → 沉淀为已验证配方，供后续同类需求复用
+        if state.get("runnable") is True:
+            self._bake_if_verified(state)
 
         await event_callback("complete", {
             "phase": "complete",
