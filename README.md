@@ -156,7 +156,7 @@ MainReviewer ──▶ 终审 + 反思回环 (可选)
 | LLM (多 Provider) | Mimo / DeepSeek / GLM / Kimi / SenseNova | 按 Agent 角色分配模型 |
 | Web 框架 | FastAPI + Uvicorn | 异步 API + SSE 流式 |
 | 游戏引擎 | **Godot 4.6** | GDScript + .tscn 场景 |
-| 数据库 | SQLite (SQLAlchemy) | 任务记录与生成历史 |
+| 数据库 | MySQL | 任务记录与生成历史 |
 | 向量库 | Qdrant (可选) | 代码检索与知识库 |
 | 缓存 | Redis (可选) | LLM 结果缓存 |
 | 监控 | LangSmith + Prometheus + structlog | 链路追踪与指标 |
