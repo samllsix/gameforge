@@ -17,6 +17,52 @@ import structlog
 logger = structlog.get_logger()
 
 
+# GDM 的 input_map 里 key 常是 "Space" 这类名字（repo 自带的 GDM 示例就是如此），
+# 而 project.godot 的 physical_keycode 需要 Godot 4 Key 枚举整数值；
+# 直接写字符串会让 project.godot 整个文件解析失败。
+_GODOT_KEY_ALIASES: Dict[str, int] = {
+    "space": 32,
+    "enter": 4194309, "kp_enter": 4194310,
+    "escape": 4194305, "esc": 4194305,
+    "tab": 4194306, "backspace": 4194308,
+    "insert": 4194311, "delete": 4194312,
+    "home": 4194317, "end": 4194318,
+    "pageup": 4194323, "pagedown": 4194324,
+    "left": 4194319, "up": 4194320, "right": 4194321, "down": 4194322,
+    "shift": 4194325, "ctrl": 4194326, "control": 4194326,
+    "alt": 4194328, "meta": 4194327, "capslock": 4194329,
+}
+
+
+def _godot_keycode(key: Any) -> Optional[int]:
+    """把 GDM 的 key 字段转成 Godot 4 Key 枚举值；无法识别时返回 None（跳过该事件）。
+
+    支持：int / 数字字符串 / 常见按键名（Space、Enter、方向键等）/
+    单个字母或数字（ASCII 值即 Key 值）/ F1-F12。
+    """
+    if isinstance(key, bool):
+        return None
+    if isinstance(key, int):
+        return key
+    if not isinstance(key, str):
+        return None
+    s = key.strip()
+    if s.isdigit():
+        return int(s)
+    lowered = s.lower()
+    if lowered in _GODOT_KEY_ALIASES:
+        return _GODOT_KEY_ALIASES[lowered]
+    if len(lowered) >= 2 and lowered[0] == "f" and lowered[1:].isdigit():
+        n = int(lowered[1:])
+        if 1 <= n <= 12:
+            return 4194331 + n
+    if len(s) == 1:
+        ch = s.upper()
+        if "A" <= ch <= "Z" or "0" <= ch <= "9":
+            return ord(ch)
+    return None
+
+
 class GodotProjectGenerator:
     """Godot 项目生成器
 
@@ -116,19 +162,25 @@ class GodotProjectGenerator:
                 if not isinstance(action_config, dict):
                     action_config = {}
                 deadzone = action_config.get("deadzone", 0.5)
-                lines.append(f'{action_name}={{')
-                lines.append(f'  "deadzone": {deadzone},')
-                lines.append(f'  "events": [')
+                event_lines: List[str] = []
                 events = action_config.get("events", [])
                 if isinstance(events, list):
                     for event in events:
-                        if isinstance(event, dict) and event.get("key"):
-                            key = event.get("key")
-                            lines.append(f'    Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":{key},"key_label":0,"unicode":0,"echo":false,"script":null)')
+                        if isinstance(event, dict):
+                            keycode = _godot_keycode(event.get("key"))
+                            if keycode is None:
+                                continue  # 无法识别的 key 不写入，避免 project.godot 解析失败
+                            event_lines.append(f'    Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":{keycode},"key_label":0,"unicode":0,"echo":false,"script":null)')
                 # 列表形态也可能直接把 key 放在 action 顶层
-                elif action_config.get("key"):
-                    key = action_config.get("key")
-                    lines.append(f'    Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":{key},"key_label":0,"unicode":0,"echo":false,"script":null)')
+                # （注意：events 缺省是空 list，原来写在 elif 里的顶层 key 分支永远走不到）
+                if not event_lines and action_config.get("key") is not None:
+                    keycode = _godot_keycode(action_config.get("key"))
+                    if keycode is not None:
+                        event_lines.append(f'    Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":{keycode},"key_label":0,"unicode":0,"echo":false,"script":null)')
+                lines.append(f'{action_name}={{')
+                lines.append(f'  "deadzone": {deadzone},')
+                lines.append(f'  "events": [')
+                lines.extend(event_lines)
                 lines.append(f'  ]')
                 lines.append(f'}}')
             lines.append("")

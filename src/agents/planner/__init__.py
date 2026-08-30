@@ -3,6 +3,7 @@
 负责将游戏策划文档解析为开发任务。
 """
 
+import copy
 import json
 import os
 from typing import Any, Dict, List, Optional
@@ -99,6 +100,36 @@ class PlannerAgent(BaseAgent):
 
         self.log_action("generate_task_plan", {"requirements": requirements[:100]})
 
+        # 智能品类匹配：需求文本 → 市场品类规格（代表作基款），零 LLM、确定性
+        # 难度分级：easy 直接出简易成品（MVP），hard 分期生成（间接增强）
+        # 未命中任何品类 → 组合引擎摇一个「基款×基款+变体牌+主题包」的概念（同一需求稳定复现）
+        from src.agents.genre_fusion import build_concept_prompt_hint, roll_concept
+        from src.agents.genre_specs import build_genre_prompt_hint, infer_difficulty, match_genre
+        matched = match_genre(requirements)
+        difficulty = infer_difficulty(requirements)
+        if matched:
+            genre_hint = {
+                "genre": matched.id,
+                "representative": matched.representative,
+                "difficulty": difficulty,
+            }
+            hint_text = build_genre_prompt_hint(requirements, difficulty=difficulty)
+            self.log_action("genre_matched", genre_hint)
+        else:
+            concept = roll_concept(seed=abs(hash(requirements)) % (2 ** 31))
+            genre_hint = {
+                "genre": concept.genre_id,
+                "representative": concept.pitch,
+                "difficulty": difficulty,
+            }
+            hint_text = build_concept_prompt_hint(concept, difficulty=difficulty)
+            self.log_action("concept_rolled", {
+                "pitch": concept.pitch[:80],
+                "primary": concept.primary_id,
+                "secondary": concept.secondary_id,
+                "twist": concept.twist["name_zh"],
+            })
+
         # 优先使用 Game Design Model 生成任务
         gdm = state.get("game_design_model")
         if gdm:
@@ -106,20 +137,28 @@ class PlannerAgent(BaseAgent):
             tasks = self._plan_from_gdm(gdm)
             if tasks:
                 self.log_action("task_plan_generated_from_gdm", {"task_count": len(tasks)})
-                return {"tasks": tasks, "asset_plan": self._derive_asset_plan(gdm)}
+                result = {"tasks": tasks, "asset_plan": self._derive_asset_plan(gdm)}
+                result.update(genre_hint)
+                return result
 
         # 次优：尝试匹配模板（确定性快速路径）
         tpl = match_template(requirements)
         if tpl:
             self.log_action("template_matched", {"template": tpl["name"]})
-            tasks = tpl.get("task_plan", [])
+            # 模板在模块级缓存中共享：必须深拷贝，避免 setdefault 与后续
+            # 对任务的修改直接写回缓存（同一模板多次运行会互相污染状态）。
+            tasks = copy.deepcopy(tpl.get("task_plan", []))
             for t in tasks:
                 t.setdefault("status", "pending")
-            return {"tasks": tasks, "asset_plan": {}}
+            result = {"tasks": tasks, "asset_plan": {}}
+            result.update(genre_hint)
+            return result
 
-        # 兜底：LLM生成
+        # 兜底：LLM生成（携带品类规格/融合概念的提示）
         engine = state.get("project_context", {}).get("engine", "godot")
-        return await self._plan_with_llm(requirements, engine)
+        result = await self._plan_with_llm(requirements, engine, genre_hint_text=hint_text)
+        result.update(genre_hint)
+        return result
 
     def _derive_asset_plan(self, gdm: Dict[str, Any]) -> Dict[str, Any]:
         """从 GameSpec/GDM 派生初步资源规划（asset_id 留待资源规划智能体补全）"""
@@ -167,7 +206,10 @@ class PlannerAgent(BaseAgent):
         for i, module in enumerate(code_modules):
             module_name = module.get("module_name", f"Module_{i+1}")
             dependencies = module.get("dependencies", [])
-            dep_ids = [f"task_{self._module_index(code_modules, d):03d}" for d in dependencies if self._module_index(code_modules, d) >= 0]
+            # 任务 id 是 1-based（task_001 起），_module_index 返回 0-based 下标，
+            # 必须加 1；否则依赖会指向不存在的 task_000，任务永远无法就绪，
+            # 编排器会误判所有任务完成而提前结束工作流。
+            dep_ids = [f"task_{self._module_index(code_modules, d) + 1:03d}" for d in dependencies if self._module_index(code_modules, d) >= 0]
 
             # 确定任务类型
             target_objects = module.get("target_game_objects", [])
@@ -236,18 +278,24 @@ class PlannerAgent(BaseAgent):
                 return i
         return -1
 
-    async def _plan_with_llm(self, requirements: str, engine: str) -> List[Dict[str, Any]]:
+    async def _plan_with_llm(
+        self, requirements: str, engine: str, genre_hint_text: str = ""
+    ) -> Dict[str, Any]:
         """使用LLM生成任务计划（兜底）"""
+
         system_prompt = self.get_prompt_template("planner_system")
+        # 规格注入：品类规格或融合概念（含基线/难度/拓展），由 plan() 决定
+        genre_hint_text = genre_hint_text or ""
+        genre_block = f"\n品类规格（规划必须遵守）：\n{genre_hint_text}\n" if genre_hint_text else ""
         user_prompt = f"""请根据以下游戏需求，生成开发计划（包含资源规划与任务拆解两部分）。
 
 游戏引擎: {engine}
 需求描述:
 {requirements}
-
+{genre_block}
 要求：
 1. 资源规划（asset_plan）：根据需求中的实体与资源角色，从项目 AssetManifest（data/asset_manifest.json）中为每个角色选择真实存在的 asset_id；找不到时填写 fallback_asset_id。
-2. 任务拆解（tasks）：生成 3-6 个开发任务。
+2. 任务拆解（tasks）：生成 3-6 个开发任务；若提供了品类规格，任务必须覆盖其全部"核心机制"与"基本功能基线"，并落实至少一条"拓展方向"。
 3. 每个任务必须包含 id, name, description, type, priority, dependencies, assigned_agent 字段
 4. type 为 "code"/"ui"/"scene"/"config"
 5. assigned_agent 为 "code_generator" 或 "scene_generator"
@@ -268,7 +316,8 @@ class PlannerAgent(BaseAgent):
 
             if result.get("parse_error"):
                 self.log_error("llm_response_parse_error", {"raw": str(result.get("raw_response", ""))[:200]})
-                return self._create_sample_task_plan(requirements)
+                # 统一返回 dict（调用方会 update 品类字段，裸 list 会崩）
+                return {"tasks": self._create_sample_task_plan(requirements), "asset_plan": {}}
 
             tasks = result.get("tasks", [])
             if not tasks:
@@ -300,7 +349,7 @@ class PlannerAgent(BaseAgent):
 
         except Exception as e:
             self.log_error("planner_llm_error", {"error": str(e)})
-            return self._create_sample_task_plan(requirements)
+            return {"tasks": self._create_sample_task_plan(requirements), "asset_plan": {}}
 
     def _parse_priority(self, priority) -> int:
         if isinstance(priority, int):

@@ -2004,3 +2004,139 @@ header h1 {
     50% { background-position: 100% 50%; }
     100% { background-position: 0% 50%; }
 }
+
+/* ═══ Live Preview Card — Godot 实时画面 ═══ */
+
+.live-preview-card {
+    margin: 14px 0 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: rgba(8, 12, 22, 0.8);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    animation: messageIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.live-preview-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+}
+
+.live-preview-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent-light);
+}
+
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success-glow);
+    animation: pulse 1.5s infinite;
+}
+
+.live-preview-pid {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.live-preview-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0;
+    transition: var(--transition);
+}
+
+.live-preview-close:hover {
+    color: var(--error);
+    border-color: var(--error);
+}
+
+.live-preview-stage {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background:
+        linear-gradient(180deg, rgba(108, 140, 255, 0.08) 0%, transparent 40%),
+        radial-gradient(ellipse at 50% 80%, rgba(167, 139, 250, 0.06) 0%, transparent 60%),
+        var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.live-preview-img {
+    max-width: 100%;
+    max-height: 100%;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    image-rendering: -webkit-optimize-contrast;
+}
+
+.live-preview-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    background: var(--bg);
+    pointer-events: none;
+    transition: opacity 0.3s;
+}
+
+.live-preview-img:not([src=""]) + .live-preview-placeholder,
+.live-preview-img[src]:not([src=""]) ~ .live-preview-placeholder {
+    opacity: 0;
+}
+
+.live-preview-status {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+    border-radius: 12px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #fff;
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+}
+
+.status-dot.ok { background: var(--success); box-shadow: 0 0 6px var(--success-glow); }
+.status-dot.warn { background: var(--warning); box-shadow: 0 0 6px var(--warning-glow); }
+.status-dot.err { background: var(--error); box-shadow: 0 0 6px var(--error-glow); }
+.status-text { color: #fff; font-weight: 500; }
+.status-fps { color: rgba(255,255,255,0.7); }

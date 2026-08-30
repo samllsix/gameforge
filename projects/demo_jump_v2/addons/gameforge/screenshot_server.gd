@@ -56,10 +56,10 @@ func _ready() -> void:
 
 	# headless 模式下没有真实窗口（DisplayServer=null），跳过窗口操作
 	if DisplayServer.get_name() != "headless":
-		# 把窗口位置设到屏幕外（20000,20000 多屏下也基本不可能被看到）
+		# 把窗口位置设到屏幕外（20000,20000 多屏下也基本不可能被看到）。
+		# 注意：绝不能最小化 —— 最小化会停掉 OpenGL 渲染，截图全黑
+		# （窗口尺寸/位置由 supervisor 的 CLI 参数在创建时就设好，这里只是兜底再移一次）
 		DisplayServer.window_set_position(Vector2i(20000, 20000))
-		# 同时强制最小化，进一步减少打扰
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
 
 
 func _exit_tree() -> void:
@@ -161,7 +161,16 @@ func _advance_to_frame(target_frame: int) -> void:
 
 
 func _capture_viewport() -> Image:
-	# 1) 优先尝试主 root viewport（headless dummy 下唯一可能有内容的）
+	# 1) 优先：注入的 SubViewport —— 预览窗口只有 64x64，
+	#    根视口跟着窗口缩放，只有 SubViewport 保有全分辨率画面
+	if sub_viewport != null:
+		var tex2 := sub_viewport.get_texture()
+		if tex2 != null:
+			var img2 := tex2.get_image()
+			if img2 != null and not img2.is_empty():
+				return img2
+
+	# 2) 备用：主 root viewport（未接 SubViewport 时的兜底）
 	var main_vp := get_viewport()
 	if main_vp != null:
 		var tex := main_vp.get_texture()
@@ -169,14 +178,6 @@ func _capture_viewport() -> Image:
 			var img := tex.get_image()
 			if img != null and not img.is_empty():
 				return img
-
-	# 2) 备用：注入的 SubViewport
-	if sub_viewport != null:
-		var tex2 := sub_viewport.get_texture()
-		if tex2 != null:
-			var img2 := tex2.get_image()
-			if img2 != null and not img2.is_empty():
-				return img2
 
 	# 3) 兜底：占位图（headless dummy 下总是走这里）
 	return _placeholder(640, 360)

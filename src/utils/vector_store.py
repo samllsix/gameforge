@@ -9,6 +9,7 @@ Qdrant不可用时自动降级为无检索模式，不影响主流程。
 """
 
 import os
+import asyncio
 import logging
 import hashlib
 from typing import Any, Dict, List, Optional
@@ -39,7 +40,8 @@ def _get_embedding_func():
         base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
         api_key = os.getenv("DEEPSEEK_API_KEY", "")
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    # 显式超时：OpenAI SDK 默认 600s，会长时间阻塞调用线程/事件循环
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
 
     def embed(texts: List[str]) -> List[List[float]]:
         """生成文本嵌入向量"""
@@ -94,11 +96,16 @@ async def get_qdrant():
             )
 
             # 测试连接 + 确保 collection 存在
-            collections = _qdrant_client.get_collections().collections
+            # QdrantClient 是同步 HTTP 客户端，网络调用必须放到线程池，
+            # 否则会阻塞 asyncio 事件循环（最长 timeout=5s）
+            collections = (
+                await asyncio.to_thread(_qdrant_client.get_collections)
+            ).collections
             collection_names = [c.name for c in collections]
 
             if COLLECTION_NAME not in collection_names:
-                _qdrant_client.create_collection(
+                await asyncio.to_thread(
+                    _qdrant_client.create_collection,
                     collection_name=COLLECTION_NAME,
                     vectors_config=VectorParams(
                         size=EMBEDDING_SIZE,
@@ -152,11 +159,11 @@ async def store_code(
     try:
         from qdrant_client.models import PointStruct
 
-        # 生成嵌入向量
+        # 生成嵌入向量（OpenAI 同步 SDK 是阻塞网络调用，放线程池避免卡事件循环）
         embed = _get_embedding_func()
         # 用任务名+代码前500字符作为嵌入输入
         embed_input = f"{task_name}\n{code[:500]}"
-        vectors = embed([embed_input])
+        vectors = await asyncio.to_thread(embed, [embed_input])
 
         # 生成唯一ID
         point_id = hashlib.md5(f"{file_path}:{task_name}".encode()).hexdigest()[:32]
@@ -171,7 +178,8 @@ async def store_code(
             **(metadata or {}),
         }
 
-        client.upsert(
+        await asyncio.to_thread(
+            client.upsert,
             collection_name=COLLECTION_NAME,
             points=[
                 PointStruct(
@@ -214,9 +222,9 @@ async def search_similar_code(
     try:
         from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-        # 生成查询向量
+        # 生成查询向量（阻塞网络调用，放线程池）
         embed = _get_embedding_func()
-        query_vector = embed([query])[0]
+        query_vector = (await asyncio.to_thread(embed, [query]))[0]
 
         # 构建过滤条件
         must_conditions = [
@@ -224,8 +232,9 @@ async def search_similar_code(
             FieldCondition(key="task_type", match=MatchValue(value=task_type)),
         ]
 
-        # 检索
-        results = client.query_points(
+        # 检索（同步 HTTP 调用，放线程池）
+        results = await asyncio.to_thread(
+            client.query_points,
             collection_name=COLLECTION_NAME,
             query=query_vector,
             query_filter=Filter(must=must_conditions),
@@ -255,7 +264,7 @@ async def get_collection_stats() -> Dict[str, Any]:
         return {"available": False}
 
     try:
-        info = client.get_collection(COLLECTION_NAME)
+        info = await asyncio.to_thread(client.get_collection, COLLECTION_NAME)
         return {
             "available": True,
             "collection": COLLECTION_NAME,

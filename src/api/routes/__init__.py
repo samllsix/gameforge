@@ -8,6 +8,8 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 
+import structlog
+
 from src.api.schemas import (
     CompileRequest,
     CompileResponse,
@@ -18,6 +20,8 @@ from src.api.schemas import (
 )
 from src.cli import load_config
 from src.engine.godot import GodotEditor
+
+logger = structlog.get_logger()
 
 router = APIRouter()
 
@@ -37,7 +41,7 @@ async def compile_project(request: CompileRequest):
             raise HTTPException(status_code=400, detail=msg)
 
         # 将阻塞的编译操作放到线程池执行
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, editor.compile_project)
 
         return CompileResponse(
@@ -47,8 +51,9 @@ async def compile_project(request: CompileRequest):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("compile_project_failed")
+        raise HTTPException(status_code=500, detail="编译流程内部错误，请查看服务端日志")
 
 
 @router.post("/import", response_model=ImportResponse)
@@ -66,7 +71,7 @@ async def import_files(request: ImportRequest):
             raise HTTPException(status_code=400, detail=msg)
 
         # 将阻塞的导入操作放到线程池执行
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None, editor.import_files, request.files
         )
@@ -79,22 +84,24 @@ async def import_files(request: ImportRequest):
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("import_files_failed")
+        raise HTTPException(status_code=500, detail="文件导入内部错误，请查看服务端日志")
 
 
 @router.post("/eval", response_model=EvalResponse)
 async def run_evaluation(request: EvalRequest):
     """运行代码评测"""
     try:
-        from src.eval.metrics import run_evaluation
+        from src.eval.metrics import run_evaluation as _run_evaluation
 
-        report = run_evaluation(request.project_name, code_files=request.code_files)
+        report = _run_evaluation(request.project_name, code_files=request.code_files)
 
         return EvalResponse(
             project_name=report.project_name,
             overall_score=report.overall_score,
             metrics=[m.to_dict() for m in report.metrics],
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("run_evaluation_failed")
+        raise HTTPException(status_code=500, detail="代码评测内部错误，请查看服务端日志")

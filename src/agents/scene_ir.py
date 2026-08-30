@@ -8,12 +8,15 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 from typing import Any, Dict, List, Optional
 
+from src.agents.genre_specs import SUPPORTED_GENRE_IDS
+
 
 # ═══════════════════════════════════════════════════════════════
 #  Scene IR — LLM 输出的目标格式
 # ═══════════════════════════════════════════════════════════════
 
-_VALID_GENRES = {"platformer", "shooter", "rpg", "puzzle", "runner", "tower_defense"}
+# 12 个品类 id，与 genre_specs 注册表保持同步
+_VALID_GENRES = set(SUPPORTED_GENRE_IDS)
 _VALID_LAYOUTS = {"linear", "arena", "open_world", "grid", "room_based"}
 _VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 _VALID_ROLES = {

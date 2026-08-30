@@ -266,15 +266,15 @@
   <aside class="left hud"><span class="grid"></span><span class="scanln"></span>
     <div class="ph">系统菜单</div>
     <div class="nav">
-      <div class="nav-item active"><span class="bar"></span><div class="hex">◈</div><div class="tx"><b>世界概览</b><small>世界状态总览</small></div></div>
-      <div class="nav-item"><span class="bar"></span><div class="hex">⊞</div><div class="tx"><b>任务规划</b><small>主线与支线任务</small></div></div>
-      <div class="nav-item"><span class="bar"></span><div class="hex">⬡</div><div class="tx"><b>角色设定</b><small>角色创建管理</small></div></div>
-      <div class="nav-item"><span class="bar"></span><div class="hex">⌨</div><div class="tx"><b>代码生成</b><small>AI 自动生成代码</small></div></div>
-      <div class="nav-item"><span class="bar"></span><div class="hex">⛬</div><div class="tx"><b>场景构建</b><small>场景与关卡编辑</small></div></div>
-      <div class="nav-item"><span class="bar"></span><div class="hex">▤</div><div class="tx"><b>资产库</b><small>资源与素材管理</small></div></div>
-      <div class="nav-item"><span class="bar"></span><div class="hex">✓</div><div class="tx"><b>测试审查</b><small>测试与 Bug 检测</small></div></div>
-      <div class="nav-item"><span class="bar"></span><div class="hex">⏶</div><div class="tx"><b>部署发布</b><small>打包与发布管理</small></div></div>
-      <div class="nav-item"><span class="bar"></span><div class="hex">≣</div><div class="tx"><b>系统日志</b><small>操作日志记录</small></div></div>
+      <div class="nav-item active" data-phase="designing"><span class="bar"></span><div class="hex">◈</div><div class="tx"><b>世界概览</b><small>世界状态总览</small></div></div>
+      <div class="nav-item" data-phase="planning"><span class="bar"></span><div class="hex">⊞</div><div class="tx"><b>任务规划</b><small>主线与支线任务</small></div></div>
+      <div class="nav-item" data-phase="game_design"><span class="bar"></span><div class="hex">⬡</div><div class="tx"><b>角色设定</b><small>角色创建管理</small></div></div>
+      <div class="nav-item" data-phase="generating"><span class="bar"></span><div class="hex">⌨</div><div class="tx"><b>代码生成</b><small>AI 自动生成代码</small></div></div>
+      <div class="nav-item" data-phase="scene"><span class="bar"></span><div class="hex">⛬</div><div class="tx"><b>场景构建</b><small>场景与关卡编辑</small></div></div>
+      <div class="nav-item" data-phase="assets"><span class="bar"></span><div class="hex">▤</div><div class="tx"><b>资产库</b><small>资源与素材管理</small></div></div>
+      <div class="nav-item" data-phase="testing"><span class="bar"></span><div class="hex">✓</div><div class="tx"><b>测试审查</b><small>测试与 Bug 检测</small></div></div>
+      <div class="nav-item" data-phase="complete"><span class="bar"></span><div class="hex">⏶</div><div class="tx"><b>部署发布</b><small>打包与发布管理</small></div></div>
+      <div class="nav-item" data-phase="log"><span class="bar"></span><div class="hex">≣</div><div class="tx"><b>系统日志</b><small>操作日志记录</small></div></div>
     </div>
     <div class="sysstat">
       <div class="tt">系统状态</div>
@@ -311,7 +311,7 @@
       <div class="fcard fc3"><div class="hd"><div class="hex">♟</div><b>角色设定</b></div><div class="brow"><div class="tags"><b>角色</b> | 技能 | 职业<br><b>关系</b> | 背景故事</div><canvas class="holo" data-k="role"></canvas></div></div>
       <div class="fcard fc4"><div class="hd"><div class="hex">✦</div><b>系统规则</b></div><div class="brow"><div class="tags"><b>世界</b> | 天气 | 生态<br><b>物理</b> | 魔法 | 科技</div><canvas class="holo" data-k="rule"></canvas></div></div>
     </div>
-    <div class="cmdbar"><span class="pr">›</span><input id="cmdInput" placeholder="输入你的游戏创意，AI 将为你生成完整的游戏世界…"><button id="buildBtn">开始构建 ➤</button></div>
+    <div class="cmdbar"><span class="pr">›</span><input id="cmdInput" placeholder="输入你的游戏创意，AI 将为你生成完整的游戏世界…"><button id="diceBtn" title="灵感骰子：随机摇一个游戏概念填入" style="background:#2a1f4a">🎲 灵感</button><button id="buildBtn">开始构建 ➤</button></div>
     <div class="qt-h">快速模板</div>
     <div class="qt">
       <div class="t"><div class="art" data-g="g1"></div><div class="lb">2D平台冒险</div></div>
@@ -329,13 +329,13 @@
       <div class="ph">系统进程 <span class="en">AGENT OPS</span></div>
       <div class="proc-sub">多智能体协作中…</div>
       <div class="proc-list">
-        <div class="proc-item"><div class="hex">◈</div><div class="in"><b>世界设计师</b><small>构建世界板块</small><div class="tr"><i style="width:23%"></i></div></div><div class="pc">23%</div></div>
-        <div class="proc-item"><div class="hex">⊞</div><div class="in"><b>任务规划师</b><small>设计任务链</small><div class="tr"><i style="width:45%"></i></div></div><div class="pc">45%</div></div>
-        <div class="proc-item"><div class="hex">⌨</div><div class="in"><b>代码工程师</b><small>生成核心代码</small><div class="tr"><i style="width:68%"></i></div></div><div class="pc">68%</div></div>
-        <div class="proc-item"><div class="hex">✓</div><div class="in"><b>代码审查员</b><small>检查代码质量</small><div class="tr"><i style="width:12%"></i></div></div><div class="pc">12%</div></div>
-        <div class="proc-item"><div class="hex">⚗</div><div class="in"><b>测试工程师</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
-        <div class="proc-item"><div class="hex">⛬</div><div class="in"><b>场景构建师</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
-        <div class="proc-item"><div class="hex">⏶</div><div class="in"><b>系统整合员</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
+        <div class="proc-item" data-phase="designing"><div class="hex">◈</div><div class="in"><b>世界设计师</b><small>构建世界板块</small><div class="tr"><i style="width:23%"></i></div></div><div class="pc">23%</div></div>
+        <div class="proc-item" data-phase="planning"><div class="hex">⊞</div><div class="in"><b>任务规划师</b><small>设计任务链</small><div class="tr"><i style="width:45%"></i></div></div><div class="pc">45%</div></div>
+        <div class="proc-item" data-phase="generating"><div class="hex">⌨</div><div class="in"><b>代码工程师</b><small>生成核心代码</small><div class="tr"><i style="width:68%"></i></div></div><div class="pc">68%</div></div>
+        <div class="proc-item" data-phase="reviewing"><div class="hex">✓</div><div class="in"><b>代码审查员</b><small>检查代码质量</small><div class="tr"><i style="width:12%"></i></div></div><div class="pc">12%</div></div>
+        <div class="proc-item" data-phase="testing"><div class="hex">⚗</div><div class="in"><b>测试工程师</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
+        <div class="proc-item" data-phase="scene"><div class="hex">⛬</div><div class="in"><b>场景构建师</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
+        <div class="proc-item" data-phase="complete"><div class="hex">⏶</div><div class="in"><b>系统整合员</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
       </div>
     </div>
     <div class="prev"><div class="ph">实时预览 <span class="en">LIVE</span> <span class="fps" id="prevFps">--</span></div><div class="prev-box"><canvas id="prevCanvas"></canvas><span class="tag" id="prevTag">GAME</span></div></div>
@@ -610,7 +610,9 @@ function drawECG(t){const w=ec.width,h=ec.height;ecx.clearRect(0,0,w,h);
 /* 实时预览 — 通过后端 /api/v1/preview/frame 拉取 Godot 渲染出的游戏画面 */
 const pv=document.getElementById('prevCanvas'),pvx=pv.getContext('2d');sizeC(pv);
 const prevTag=document.getElementById('prevTag'),prevFps=document.getElementById('prevFps');
-const PREVIEW_PROJECT_ID='demo_jump_v2';
+/* 真实后端的项目 ID，由 SSE complete / scene_complete 事件注入；为空时走 demo 兜底 */
+let PREVIEW_PROJECT_ID=null;
+const PREVIEW_FALLBACK_PID='demo_jump_v2';
 // 后端 base URL：
 // 1) location.protocol==='file:' 时直接走 127.0.0.1:8000，避免 file:// 下 fetch 退化成 file:///D:/api/...
 // 2) hostname 为 127.0.0.1/localhost 时用 127.0.0.1:8000
@@ -620,6 +622,7 @@ const PREVIEW_BACKEND = (location.protocol === 'file:'
   || location.hostname === 'localhost')
   ? 'http://127.0.0.1:8000' : '';
 let prevFrame=0,prevBusy=false,prevOk=0,prevFail=0,prevLastTs=0,prevTicker=0,prevImg=new Image();
+let prevUrl=null; /* 当前帧的 objectURL，加载完成/失败/被替换时都要 revoke，否则泄漏 */
 let prevFallback=true; /* 后端不可用时降级到本地模拟 */
 
 function drawPrevFallback(){const w=pv.width,h=pv.height;pvx.clearRect(0,0,w,h);
@@ -633,17 +636,40 @@ function drawPrevFallback(){const w=pv.width,h=pv.height;pvx.clearRect(0,0,w,h);
   pvx.fillStyle='rgba(150,220,200,.55)';for(let i=0;i<8;i++)pvx.fillRect((i*53+prevTicker*20)%w,h*0.82+(i%3)*h*0.04,2,2);
   prevTicker+=0.016;}
 
+async function autoPublish(pid){
+  /* 一键发布：门禁 → Web 导出 → 可玩链接 */
+  pushLog('开始打包 Web 版（含发布门禁）…','');
+  try{
+    const resp=await fetch(`${PREVIEW_BACKEND}/api/v1/projects/${encodeURIComponent(pid)}/export`,{method:'POST'});
+    const x=await resp.json();
+    if(x.ok&&x.web_url){
+      pushLog(`打包完成 · <a href="${PREVIEW_BACKEND}${x.web_url}" target="_blank" style="color:#7cf;text-decoration:underline">▶ 立即试玩</a>`,'ok');
+      setWelcome('已上线 ✓');
+    }else{
+      const first=x.errors&&x.errors[0];
+      pushLog('打包未通过：'+(x.message||'')+(first?' · '+(first.snippet||first.pattern||''):''),'err');
+    }
+  }catch(e){ pushLog('打包请求失败：'+e.message,'err'); }
+}
+
 async function fetchPreviewFrame(){
   if(prevBusy)return;
   prevBusy=true;
+  const frameCtrl=new AbortController();
+  const frameTimer=setTimeout(()=>frameCtrl.abort(),5000); /* 单帧拉取超时：防止 fetch 永久挂起把 prevBusy 卡死 */
   try{
-    const url=`${PREVIEW_BACKEND}/api/v1/preview/frame?project_id=${encodeURIComponent(PREVIEW_PROJECT_ID)}&frame=${prevFrame}&width=640&height=360`;
-    const resp=await fetch(url,{cache:'no-store'});
+    const pid=PREVIEW_PROJECT_ID||PREVIEW_FALLBACK_PID;
+    const url=`${PREVIEW_BACKEND}/api/v1/preview/frame?project_id=${encodeURIComponent(pid)}&frame=${prevFrame}&width=640&height=360`;
+    const resp=await fetch(url,{cache:'no-store',signal:frameCtrl.signal});
     if(!resp.ok)throw new Error('HTTP '+resp.status);
     const blob=await resp.blob();
     const src=resp.headers.get('X-Preview-Source')||'unknown';
     const url2=URL.createObjectURL(blob);
-    prevImg.onload=()=>{URL.revokeObjectURL(url2);};
+    /* 上一帧 URL 立即回收（其 onload 可能尚未触发就被本帧覆盖，仅靠 onload 会泄漏） */
+    if(prevUrl)URL.revokeObjectURL(prevUrl);
+    prevImg.onload=()=>{if(prevUrl){URL.revokeObjectURL(prevUrl);prevUrl=null;}};
+    prevImg.onerror=()=>{if(prevUrl){URL.revokeObjectURL(prevUrl);prevUrl=null;}};
+    prevUrl=url2;
     prevImg.src=url2;
     prevOk++;prevFrame++;prevLastTs=Date.now();
     const live=src==='godot-live'||src==='godot-mss';
@@ -656,7 +682,7 @@ async function fetchPreviewFrame(){
     if(prevTag && prevTag.textContent!=='SIM')prevTag.textContent='SIM';
     if(prevFail>=3 && !prevFallback){prevFallback=true;pushLog('预览失败，已降级到模拟（'+e.message+'）');}
     else if(prevFallback===false && prevFail===1){prevFallback=true;}
-  }finally{prevBusy=false;}
+  }finally{clearTimeout(frameTimer);prevBusy=false;}
 }
 
 function drawPrev(){
@@ -708,10 +734,18 @@ function drawFlow(t){const w=fl.width,h=fl.height;flx.clearRect(0,0,w,h);
 /* 系统日志 */
 const log=document.getElementById('log');
 function ts(){const d=new Date();return '['+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0')+']';}
-[['t','系统启动完成'],['t','连接多智能体网络... <span class="ok">成功</span>'],['t','世界模型初始化... <span class="ok">完成</span>'],['t','等待开发者指令...']].forEach(s=>{const d=document.createElement('div');d.innerHTML='<span class="t">'+ts()+'</span> '+s[1];log.appendChild(d);});
-const pool=['世界设计师：板块生成 <span class="ok">完成</span>','任务规划师：任务链更新','代码工程师：模块编译 <span class="ok">通过</span>','生态模拟：种群平衡 <span class="ok">稳定</span>','记忆网络：节点同步','代码审查员：质量扫描 <span class="wa">1 处建议</span>','数据流：吞吐量 +4.2%'];
-function pushLog(msg){const d=document.createElement('div');d.innerHTML='<span class="t">'+ts()+'</span> '+msg;log.appendChild(d);const max=Math.max(8,Math.floor(log.clientHeight/Math.max(1,parseFloat(getComputedStyle(d).lineHeight)||13)));while(log.children.length>max)log.removeChild(log.firstChild);}
-setInterval(()=>pushLog(pool[Math.floor(Math.random()*pool.length)]),3000);
+function pushLog(msg,level){
+  /* level: '' | 'ok' | 'wa' | 'err' */
+  const cls = level ? ' '+level : '';
+  const d=document.createElement('div');
+  d.innerHTML='<span class="t">'+ts()+'</span><span class="'+ (level||'') +'">'+msg+'</span>';
+  log.appendChild(d);
+  const max=Math.max(8,Math.floor(log.clientHeight/Math.max(1,parseFloat(getComputedStyle(d).lineHeight)||13)));
+  while(log.children.length>max)log.removeChild(log.firstChild);
+  log.scrollTop=log.scrollHeight;
+}
+/* 初始 4 条启动日志（保留原本的视觉） */
+[['系统启动完成'],['连接多智能体网络... <span class="ok">成功</span>'],['世界模型初始化... <span class="ok">完成</span>'],['等待开发者指令...']].forEach(s=>pushLog(s));
 
 /* 快速模板缩略图 */
 document.querySelectorAll('.qt .art').forEach(el=>{const cv=document.createElement('canvas');el.appendChild(cv);
@@ -727,11 +761,49 @@ const toast=document.getElementById('toast');
 function showToast(t){toast.textContent=t;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2400);}
 document.querySelectorAll('.nav-item').forEach(it=>{it.addEventListener('click',()=>{
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));it.classList.add('active');
-  const name=it.querySelector('b').textContent.trim();showToast('模块激活 · '+name);pushLog('进入模块：'+name);});});
+  const name=it.querySelector('b').textContent.trim();
+  showToast('模块激活 · '+name);
+});});
 document.getElementById('buildBtn').addEventListener('click',()=>{const t=document.getElementById('cmdInput').value.trim();
   showToast(t?('开始构建：'+t.slice(0,36)+'…'):'已开始构建你的世界……');
   pushLog('接受构建指令：'+(t?t.slice(0,20):'默认世界'));
-  for(let i=0;i<60;i++)pts.push({x:W/2,y:H/2,vx:(Math.random()-.5)*6,vy:(Math.random()-.5)*6,r:Math.random()*2+1});if(pts.length>200)pts.splice(0,pts.length-200);});
+  /* 视觉爆发 + 触发真实 SSE */
+  for(let i=0;i<60;i++)pts.push({x:W/2,y:H/2,vx:(Math.random()-.5)*6,vy:(Math.random()-.5)*6,r:Math.random()*2+1});if(pts.length>200)pts.splice(0,pts.length-200);
+  startGeneration(t || '创建一个2D平台跳跃游戏');
+});
+
+document.getElementById('diceBtn').addEventListener('click', rollInspiration);
+
+async function rollInspiration(){
+  const btn = document.getElementById('diceBtn');
+  btn.disabled = true;
+  try{
+    const resp = await fetch(`${PREVIEW_BACKEND}/api/v1/concepts/random`);
+    const c = await resp.json();
+    document.getElementById('cmdInput').value = c.pitch;
+    pushLog(`🎲 ${c.pitch}`, 'ok');
+    pushLog(`机制: ${c.mechanics.join(' · ')} | 胜利: ${c.win}`, '');
+  }catch(e){
+    pushLog('灵感骰子请求失败：' + e.message, 'err');
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+/* 快速模板点击 → 填入输入框 */
+document.querySelectorAll('.qt .t').forEach(el=>{el.addEventListener('click',()=>{
+  const lbl=el.querySelector('.lb').textContent.trim();
+  const prompts={
+    '2D平台冒险':'创建一个2D平台跳跃游戏，玩家可以左右移动跳跃，收集金币，避开敌人',
+    '开放世界RPG':'创建一个开放世界RPG，包含任务系统、角色成长和剧情分支',
+    '策略战争':'创建一个回合制策略战争游戏，玩家建造基地、训练军队、争夺领土',
+    '科幻射击':'创建一个科幻射击游戏，玩家操控飞船在太空激战，躲避弹幕并击毁敌人',
+    '模拟经营':'创建一个模拟经营游戏，玩家经营一家咖啡厅，管理员工和客人',
+    '恐怖解谜':'创建一个恐怖解谜游戏，玩家在废弃医院探索，收集线索解开谜团',
+  };
+  document.getElementById('cmdInput').value = prompts[lbl] || lbl;
+  showToast('已载入模板：'+lbl);
+});});
 
 /* 主循环 */
 function loop(){const t=T();drawGalaxy(t);drawECG(t);drawPrev();drawWD(t);drawEnergy(t,0.72+Math.sin(t*0.5)*0.02);drawFlow(t);
@@ -743,6 +815,309 @@ addEventListener('resize',()=>{gr=sizeC(gx);sizeC(ec);sizeC(pv);sizeC(wd);sizeC(
 /* 实时预览轮询：每 250ms 拉一帧（Godot 进程常驻后单帧截图 ~50-150ms） */
 setInterval(fetchPreviewFrame,250);
 fetchPreviewFrame();
+
+/* ═══════════════════════════════════════════════════════════════════
+ * 真实后端联动：SSE /api/v1/generate_stream + /api/v1/preview/stats
+ * ─ 7 阶段进程条 / 四角卡片 / 顶部能量值 / 左侧 ECG 都接真数据
+ * ═══════════════════════════════════════════════════════════════════ */
+
+const _abortCtrl = { ctrl: null };
+let isGenerating = false;
+
+/* 阶段事件映射（与真实后端 _phaseMap 对齐） */
+const PHASE_TO_NAV = {
+  designing: 'designing', game_design: 'designing',
+  planning: 'planning', task_plan: 'planning',
+  generating: 'generating', code_file: 'generating', code_generated: 'generating',
+  reviewing: 'reviewing', code_reviewed: 'reviewing', review_result: 'reviewing',
+  testing: 'testing', testing_complete: 'testing',
+  scene: 'scene', scene_start: 'scene', scene_complete: 'scene', scene_error: 'scene', scene_skipped: 'scene',
+  complete: 'complete', error: 'error',
+};
+const PHASE_LABEL = {
+  designing: '世界设计', planning: '任务规划', generating: '代码生成',
+  reviewing: '代码审查', testing: '测试生成', scene: '场景构建', complete: '完成',
+};
+const PROC_LABELS = {
+  designing: '世界设计师', planning: '任务规划师', generating: '代码工程师',
+  reviewing: '代码审查员', testing: '测试工程师', scene: '场景构建师', complete: '系统整合员',
+};
+
+/* 重置所有进程条为 pending（isGenerating 起跑时调用） */
+function resetProcs() {
+  document.querySelectorAll('.proc-item').forEach(el => {
+    el.classList.remove('active','done');
+    const tr = el.querySelector('.tr i'); if (tr) tr.style.width = '0%';
+    const pc = el.querySelector('.pc'); if (pc) { pc.textContent = '—'; pc.style.color = 'var(--muted)'; }
+    const sm = el.querySelector('.in small');
+    if (sm) { sm.classList.add('wait'); sm.textContent = '等待中…'; }
+  });
+}
+
+/* 设置某个阶段为 active（之前阶段标 done） */
+function setPhaseActive(phase) {
+  const mapped = PHASE_TO_NAV[phase] || phase;
+  let hitActive = false;
+  document.querySelectorAll('.proc-item').forEach(el => {
+    const p = el.dataset.phase;
+    el.classList.remove('active','done');
+    const sm = el.querySelector('.in small'); const pc = el.querySelector('.pc'); const tr = el.querySelector('.tr i');
+    if (!hitActive && p === mapped) {
+      el.classList.add('active');
+      if (sm) { sm.classList.remove('wait'); sm.textContent = '运行中…'; }
+      if (pc) { pc.textContent = '50%'; pc.style.color = ''; }
+      if (tr) tr.style.width = '50%';
+      hitActive = true;
+    } else if (hitActive) {
+      // 后面阶段保持 pending
+      if (sm) { sm.classList.add('wait'); sm.textContent = '等待中…'; }
+    } else {
+      // 已走过的阶段标 done
+      el.classList.add('done');
+      if (sm) { sm.classList.remove('wait'); sm.textContent = '已完成'; }
+      if (pc) { pc.textContent = '100%'; pc.style.color = 'var(--good)'; }
+      if (tr) tr.style.width = '100%';
+    }
+  });
+  // 左侧菜单激活
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.phase === mapped);
+  });
+}
+
+/* 标完成某个阶段 */
+function setPhaseDone(phase) {
+  const mapped = PHASE_TO_NAV[phase] || phase;
+  document.querySelectorAll('.proc-item').forEach(el => {
+    if (el.dataset.phase === mapped) {
+      el.classList.remove('active');
+      el.classList.add('done');
+      const tr = el.querySelector('.tr i'); if (tr) tr.style.width = '100%';
+      const pc = el.querySelector('.pc'); if (pc) { pc.textContent = '100%'; pc.style.color = 'var(--good)'; }
+      const sm = el.querySelector('.in small');
+      if (sm) { sm.classList.remove('wait'); sm.textContent = '已完成'; }
+    }
+  });
+}
+
+/* 顶部提示语 */
+function setWelcome(text) {
+  const h2 = document.querySelector('.welcome h2');
+  const p = document.querySelector('.welcome p');
+  if (h2) h2.textContent = text || '欢迎回来，开发者';
+  if (p) p.innerHTML = '<i>◆</i>在数字世界中书写你的传奇<i>◆</i>';
+}
+
+/* 四角卡片数据填充（来自 game_design 事件） */
+function renderCornerCards(d) {
+  const fm = (sel, lines) => {
+    const el = document.querySelector(sel); if (!el) return;
+    el.innerHTML = lines.map(line => `<b>${line.k}</b> | ${line.v}`).join('<br>');
+  };
+  const sys = (d.systems || []).slice(0, 6);
+  const ent = (d.entities || []).slice(0, 6);
+  const cam = d.camera_mode || '—';
+  const genre = d.genre || '—';
+  fm('.fc1 .tags', [
+    { k: '类型', v: genre },
+    { k: '视角', v: cam },
+    { k: '实体', v: (d.entities || []).slice(0, 3).join(' / ') || '—' },
+  ]);
+  fm('.fc2 .tags', [
+    { k: '系统', v: sys.slice(0, 3).join(' / ') || '—' },
+    { k: '玩法', v: d.play_mode || sys[0] || '—' },
+    { k: '目标', v: d.objective || '—' },
+  ]);
+  fm('.fc3 .tags', [
+    { k: '角色', v: ent[0] || 'Player' },
+    { k: '关系', v: ent.slice(1, 3).join(' / ') || '剧情故事' },
+    { k: '背景', v: d.story || '—' },
+  ]);
+  fm('.fc4 .tags', [
+    { k: '数值', v: d.has_combat ? '战斗' : '收集' },
+    { k: '物理', v: '2D' },
+    { k: '特性', v: (d.tags || []).slice(0, 2).join(' / ') || '横版' },
+  ]);
+}
+
+/* 中央 hero 显示真实 Godot 帧 — 在 galaxy-wrap 内追加 img（绝对定位叠加在星云上） */
+let heroFrame = document.getElementById('heroFrame');
+if (!heroFrame) {
+  heroFrame = document.createElement('img');
+  heroFrame.id = 'heroFrame';
+  heroFrame.alt = 'Godot 实时画面';
+  heroFrame.style.cssText = 'position:absolute;inset:8% 10%;width:80%;height:84%;object-fit:contain;z-index:4;opacity:0;transition:opacity .4s;border-radius:14px;box-shadow:0 0 30px rgba(96,180,255,.35);pointer-events:none;';
+  const gw = document.querySelector('.galaxy-wrap'); if (gw) gw.appendChild(heroFrame);
+}
+
+/* SSE 启动入口 */
+async function startGeneration(requirements) {
+  if (isGenerating) {
+    showToast('正在构建中，请稍候…');
+    return;
+  }
+  isGenerating = true;
+  resetProcs();
+  setWelcome('正在构建你的世界…');
+  document.getElementById('buildBtn').textContent = '构建中 ⏳';
+  document.getElementById('buildBtn').disabled = true;
+
+  const controller = new AbortController();
+  _abortCtrl.ctrl = controller;
+
+  /* 30 秒连接超时：超时真正中止挂起的请求（响应头到达后即 clearTimeout 解除） */
+  let connectTimedOut = false;
+  const connectTimer = setTimeout(() => { connectTimedOut = true; controller.abort(); }, 30000);
+
+  try {
+    const resp = await fetch(`${PREVIEW_BACKEND}/api/v1/generate_stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requirements, engine: 'godot', project_name: '' }),
+      signal: controller.signal,
+    });
+    if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
+    clearTimeout(connectTimer); /* 连接已建立，解除连接超时，不影响后续流式读取 */
+    const reader = resp.body.getReader();
+    const td2 = new TextDecoder();
+    let buffer = ''; /* 跨 chunk 缓冲：事件行可能被网络分块从中间截断 */
+    let pendingEvent = '';
+    const handleLine = (line) => {
+      if (line.startsWith(':')) return; /* SSE 注释行（空闲心跳 ": ping"），必须忽略 */
+      if (line.startsWith('event: ')) { pendingEvent = line.slice(7).trim(); return; }
+      if (!line.startsWith('data: ')) return;
+      let data;
+      try { data = JSON.parse(line.slice(6)); } catch (e) { return; /* skip malformed */ }
+      if (pendingEvent) { data.event = pendingEvent; pendingEvent = ''; }
+      try { handleStreamEvent(data); } catch (e) { /* 单个事件处理异常不应中断整个流 */ }
+    };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += td2.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); /* 残留的半行留到下一 chunk 拼接 */
+      for (const line of lines) handleLine(line);
+    }
+    if (buffer) handleLine(buffer); /* 流结束时可能残留最后一行 */
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      pushLog('SSE 连接失败：' + e.message, 'err');
+      showToast('连接失败，请检查后端是否运行在 ' + (PREVIEW_BACKEND || '当前域'));
+    } else {
+      pushLog(connectTimedOut ? '连接超时（30秒），请确认后端服务可用' : '已停止当前生成', 'wa');
+    }
+  } finally {
+    clearTimeout(connectTimer);
+    isGenerating = false;
+    _abortCtrl.ctrl = null;
+    const btn = document.getElementById('buildBtn');
+    btn.textContent = '开始构建 ➤';
+    btn.disabled = false;
+  }
+}
+
+/* SSE 事件分发 */
+function handleStreamEvent(data) {
+  const ev = data.event || data.phase || '';
+  const msg = data.message || '';
+  let line = '[' + (ev || 'event') + '] ' + msg;
+
+  switch (ev) {
+    case 'phase_start':
+      setPhaseActive(data.phase || '');
+      pushLog(line, '');
+      break;
+    case 'game_design':
+      setPhaseDone('designing');
+      renderCornerCards(data);
+      pushLog('游戏设计完成 · ' + (data.game_title || data.genre || ''), 'ok');
+      break;
+    case 'genre':
+      pushLog((data.message || '品类匹配') + (data.representative ? ' · 基款 ' + data.representative : ''), 'ok');
+      break;
+    case 'task_plan':
+      setPhaseDone('planning');
+      pushLog('任务规划完成 · ' + (data.tasks ? data.tasks.length : 0) + ' 个子任务', 'ok');
+      break;
+    case 'code_file':
+      pushLog('[code_file] ' + (data.file_path || ''), '');
+      break;
+    case 'code_generated':
+      setPhaseDone('generating');
+      pushLog('代码生成完成', 'ok');
+      break;
+    case 'review_result':
+      setPhaseDone('reviewing');
+      pushLog('代码审查：' + (data.warnings ? data.warnings.length : 0) + ' 警告', data.warnings && data.warnings.length ? 'wa' : 'ok');
+      break;
+    case 'testing':
+      setPhaseActive('testing');
+      pushLog(line, '');
+      break;
+    case 'scene_start':
+      setPhaseActive('scene');
+      pushLog(line, '');
+      break;
+    case 'scene_complete':
+      setPhaseDone('scene');
+      pushLog('场景已生成：' + (data.scene_name || data.scene_path || ''), 'ok');
+      if (data.project_id) startLivePreview(data.project_id);
+      break;
+    case 'scene_skipped':
+      setPhaseDone('scene');
+      pushLog('场景跳过：' + (data.reason || '未启用'), 'wa');
+      break;
+    case 'scene_error':
+      setPhaseDone('scene');
+      pushLog('场景生成失败：' + (data.message || ''), 'err');
+      break;
+    case 'complete':
+      setPhaseDone('complete');
+      pushLog('代码生成完成！' + (data.task_count || 0) + ' 任务', 'ok');
+      setWelcome('构建完成 ✓');
+      if (data.project_id) startLivePreview(data.project_id);
+      if (data.project_id) autoPublish(data.project_id);
+      break;
+    case 'error':
+      pushLog('错误：' + (data.message || '未知错误'), 'err');
+      break;
+    case 'compile_result':
+      pushLog('编译：' + (data.status || ''), data.status === 'success' ? 'ok' : 'wa');
+      break;
+    default:
+      pushLog(line, '');
+  }
+}
+
+/* 中央大图 + 右侧小图同步拉真实帧 */
+function startLivePreview(projectId) {
+  if (!projectId) return;
+  PREVIEW_PROJECT_ID = projectId;
+  pushLog('实时预览已连接：' + projectId, 'ok');
+  heroFrame.src = `${PREVIEW_BACKEND}/api/v1/preview/frame?project_id=${encodeURIComponent(projectId)}&width=640&height=360&frame=0&t=${Date.now()}`;
+  heroFrame.style.opacity = '1';
+  // 右侧小预览立即拉一帧
+  prevFrame = 0;
+  fetchPreviewFrame();
+}
+
+/* 顶部 /api/v1/preview/stats 轮询：更新能量值、内存、进程数 */
+async function pollStats() {
+  const statsCtrl=new AbortController();
+  const statsTimer=setTimeout(()=>statsCtrl.abort(),10000); /* 防止挂起的 fetch 每 2s 不断堆积 */
+  try {
+    const resp = await fetch(`${PREVIEW_BACKEND}/api/v1/preview/stats`, { cache: 'no-store', signal: statsCtrl.signal });
+    if (!resp.ok) return;
+    const stats = await resp.json();
+    const alive = Object.keys(stats.alive || stats || {}).length;
+    const total = Object.keys(stats).filter(k => k !== 'alive').length;
+    const eng = document.querySelector('.h-right .eng b');
+    if (eng) eng.textContent = alive + '/' + (total || 16);
+  } catch (_) { /* ignore */ } finally { clearTimeout(statsTimer); }
+}
+setInterval(pollStats, 2000);
+pollStats();
 </script>
 </body>
 </html>

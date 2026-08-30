@@ -79,7 +79,7 @@ class RecipeStore:
             return False
 
         requirements = (
-            state.get("project_context", {}).get("requirements", "") or ""
+            (state.get("project_context") or {}).get("requirements", "") or ""
         )
         gdm = state.get("game_design_model") or {}
 

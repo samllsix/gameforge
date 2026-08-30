@@ -16,6 +16,8 @@ const appState = {
 };
 
 const _abort = { controller: null };
+// 收到 complete 事件后置 true：finally 据此保留（而非误杀）由 complete 启动的实时预览轮询
+let _streamCompleted = false;
 
 // ═══ 2. DOM 工具 ═══
 
@@ -51,8 +53,13 @@ function escapeHtml(text) {
 
 function ensureHljs(callback) {
     if (window.hljs) { callback(); return; }
+    // 上限 200 次（约 10s）：防止 hljs 始终未定义时 interval 永久轮询
+    let tries = 0;
     const check = setInterval(() => {
-        if (window.hljs) { clearInterval(check); callback(); }
+        if (window.hljs || ++tries > 200) {
+            clearInterval(check);
+            if (window.hljs) callback();
+        }
     }, 50);
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/index.min.js';
@@ -84,6 +91,7 @@ function getHeaders(isJson = true) {
 async function startGeneration(requirements, engine, projectName) {
     if (appState.isGenerating) return;
     appState.isGenerating = true;
+    _streamCompleted = false;
     appState.error = null;
     appState.sceneData = null;
 
@@ -100,10 +108,13 @@ async function startGeneration(requirements, engine, projectName) {
     const abortCtrl = new AbortController();
     _abort.controller = abortCtrl;
 
-    // 30 秒连接超时
+    // 30 秒连接超时：超时真正中止挂起的请求（响应头到达后即 clearTimeout 解除，不影响后续流式读取）
+    let connectTimedOut = false;
     const timeoutId = setTimeout(() => {
-        if (appState.isGenerating) {
+        if (appState.isGenerating && _abort.controller === abortCtrl) {
+            connectTimedOut = true;
             appendLog('连接超时（30秒），服务器可能繁忙', 'warning');
+            abortCtrl.abort();
         }
     }, 30000);
 
@@ -138,6 +149,7 @@ async function startGeneration(requirements, engine, projectName) {
             buffer = lines.pop();
 
             for (const line of lines) {
+                if (line.startsWith(':')) continue; // SSE 注释行（如空闲心跳 ": ping"），必须忽略
                 if (line.startsWith('event: ')) {
                     pendingEvent = line.slice(7).trim();
                 } else if (line.startsWith('data: ')) {
@@ -168,8 +180,9 @@ async function startGeneration(requirements, engine, projectName) {
         clearTimeout(timeoutId);
         if (e.name === 'AbortError') {
             removeProgress();
-            addAIMessage(el('span', { className: 'warning-text' }, '生成已停止'));
-            appendLog('用户停止了生成', 'warning');
+            addAIMessage(el('span', { className: 'warning-text' },
+                connectTimedOut ? '连接超时，请稍后重试' : '生成已停止'));
+            appendLog(connectTimedOut ? '连接超时，已中止请求' : '用户停止了生成', 'warning');
         } else {
             removeProgress();
             addAIMessage(el('span', { className: 'error-text' }, '生成失败: ' + e.message));
@@ -181,6 +194,9 @@ async function startGeneration(requirements, engine, projectName) {
         submitBtn.classList.remove('hidden');
         stopBtn.classList.add('hidden');
         removeProgress();
+        // 失败/用户停止/异常断流时关闭实时预览轮询；
+        // 正常收到 complete 启动的预览保留继续运行
+        if (!_streamCompleted) previewLiveStop();
     }
 }
 
@@ -605,7 +621,9 @@ function renderCodeTabs(files) {
     });
     container.appendChild(tabsDiv);
 
-    const codeBlock = el('code', { id: 'currentCodeBlock' });
+    // 不用固定 id：多张结果卡片会各自生成一个代码块，固定 id 会重复；
+    // 用类名 + 卡片内定位（见 switchCodeTab）
+    const codeBlock = el('code', { className: 'current-code-block' });
     codeBlock.textContent = files[fileNames[0]] || '';
     const display = el('div', { className: 'code-display' },
         el('pre', null, codeBlock),
@@ -615,11 +633,15 @@ function renderCodeTabs(files) {
     return container;
 }
 
-function switchCodeTab(filename) {
+function switchCodeTab(filename, tabEl) {
     document.querySelectorAll('.code-tab').forEach(t => t.classList.remove('active'));
-    const tab = document.querySelector(`.code-tab[data-file="${filename}"]`);
+    const tab = tabEl || document.querySelector(`.code-tab[data-file="${filename}"]`);
     if (tab) tab.classList.add('active');
-    const codeEl = document.getElementById('currentCodeBlock');
+    // 定位到同一张结果卡片内的代码块（结构: 容器 > .code-tabs + .code-display > pre > code）
+    const tabsBox = tab && tab.closest('.code-tabs');
+    const codeEl = tabsBox && tabsBox.parentElement
+        ? tabsBox.parentElement.querySelector('.code-display code')
+        : document.querySelector('.code-display code');
     if (codeEl) codeEl.textContent = appState.files[filename] || '';
 }
 
@@ -663,6 +685,13 @@ function handleStreamEvent(data) {
             }
             designCard.appendChild(taskList);
             addAIMessage(designCard);
+            break;
+
+        case 'genre':
+            appendLog(data.message || '品类匹配', 'success');
+            if (data.representative) {
+                appendLog('基款参考：' + data.representative + ' · 难度 ' + (data.difficulty || 'medium'), 'success');
+            }
             break;
 
         case 'task_plan':
@@ -759,6 +788,9 @@ function handleStreamEvent(data) {
             }
             sceneCard.appendChild(sceneInfo);
             addAIMessage(sceneCard);
+
+            // 实时预览：场景已就绪后即可拉帧
+            if (data.project_id) previewLiveStart(data.project_id, sceneCard);
             break;
 
         case 'scene_error':
@@ -800,6 +832,7 @@ function handleStreamEvent(data) {
             break;
 
         case 'complete':
+            _streamCompleted = true;
             removeProgress();
             updatePhaseTimeline('complete', 'done');
             updatePhaseTimeline('generating', 'done');
@@ -897,10 +930,19 @@ function handleStreamEvent(data) {
             }
 
             addAIMessage(resultCard);
+
+            // 实时预览：拿到后端在 complete 事件里附带的 project_id 后启动轮询
+            if (data.project_id) {
+                previewLiveStart(data.project_id, resultCard);
+            } else {
+                previewLiveStop();
+            }
+
             break;
 
         case 'error':
             removeProgress();
+            previewLiveStop();
             appendLog('错误: ' + (data.message || '未知错误'), 'error');
             addAIMessage(el('span', { className: 'error-text' }, escapeHtml(data.message || '未知错误')));
             break;
@@ -1048,6 +1090,108 @@ function autoResizeTextarea(textarea) {
     textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
 }
 
+// ═══ 10.5 实时预览 — 轮询 /api/v1/preview/frame ═══
+
+const _previewLive = {
+    intervalId: null,
+    projectId: null,
+    imgEl: null,
+    statusEl: null,
+    fps: 0,
+    frames: 0,
+    fpsTimer: null,
+};
+
+function _buildPreviewCard(projectId) {
+    const card = el('div', { className: 'live-preview-card' });
+
+    const head = el('div', { className: 'live-preview-head' },
+        el('span', { className: 'live-preview-title' },
+            el('span', { className: 'live-dot' }),
+            '实时预览 · LIVE'
+        ),
+        el('span', { className: 'live-preview-pid' }, '#/' + escapeHtml(projectId) + '/s'),
+        el('button', { className: 'live-preview-close', title: '停止预览' }, '×'),
+    );
+    card.appendChild(head);
+
+    const stage = el('div', { className: 'live-preview-stage' });
+    const img = el('img', { className: 'live-preview-img', alt: 'Godot 实时画面' });
+    img.addEventListener('error', () => _previewLiveStatus('image', '连接中断'));
+    img.addEventListener('load', () => _previewLiveStatus('image', '已连接'));
+    stage.appendChild(img);
+
+    const placeholder = el('div', { className: 'live-preview-placeholder' }, 'Godot 启动中...');
+    stage.appendChild(placeholder);
+
+    const status = el('div', { className: 'live-preview-status' },
+        el('span', { className: 'status-dot' }),
+        el('span', { className: 'status-text' }, '启动中'),
+        el('span', { className: 'status-fps' }, 'FPS —'),
+    );
+    stage.appendChild(status);
+    card.appendChild(stage);
+
+    head.querySelector('.live-preview-close').addEventListener('click', () => previewLiveStop());
+    _previewLive.imgEl = img;
+    _previewLive.statusEl = status;
+    return card;
+}
+
+function _previewLiveStatus(kind, text) {
+    const el = _previewLive.statusEl;
+    if (!el) return;
+    const txt = el.querySelector('.status-text');
+    const dot = el.querySelector('.status-dot');
+    if (txt) txt.textContent = text;
+    if (dot) dot.className = 'status-dot ' + (kind === 'image' ? 'ok' : kind);
+}
+
+function previewLiveStart(projectId, attachTo) {
+    previewLiveStop();
+    if (!projectId) return;
+
+    _previewLive.projectId = projectId;
+    _previewLive.frames = 0;
+    _previewLive.fps = 0;
+
+    const card = _buildPreviewCard(projectId);
+    if (attachTo) attachTo.appendChild(card);
+
+    let frame = 0;
+    const tick = () => {
+        if (!_previewLive.projectId) return;
+        const url = `/api/v1/preview/frame?project_id=${encodeURIComponent(projectId)}&width=640&height=360&frame=${frame}&t=${Date.now()}`;
+        if (_previewLive.imgEl) _previewLive.imgEl.src = url;
+        frame += 1;
+        _previewLive.frames += 1;
+    };
+    // 立刻拉一帧
+    tick();
+    _previewLive.intervalId = setInterval(tick, 280); // ~3.5 fps 上限（mss/截图实际更快）
+
+    _previewLive.fpsTimer = setInterval(() => {
+        const el = _previewLive.statusEl;
+        if (!el) return;
+        const fps = el.querySelector('.status-fps');
+        if (fps) fps.textContent = 'FPS ' + _previewLive.frames;
+        _previewLive.frames = 0;
+    }, 1000);
+
+    appendLog('实时预览已连接: ' + projectId, 'info');
+}
+
+function previewLiveStop() {
+    if (_previewLive.intervalId) clearInterval(_previewLive.intervalId);
+    if (_previewLive.fpsTimer) clearInterval(_previewLive.fpsTimer);
+    if (_previewLive.imgEl) _previewLive.imgEl.src = '';
+    _previewLive.intervalId = null;
+    _previewLive.fpsTimer = null;
+    _previewLive.projectId = null;
+    _previewLive.imgEl = null;
+    _previewLive.statusEl = null;
+}
+
 // ═══ 11. 清空与下载 ═══
 
 function clearChat() {
@@ -1080,6 +1224,7 @@ function clearChat() {
     const previewCode = document.getElementById('previewCode');
     if (previewCode) previewCode.textContent = '// 选择文件查看代码';
 
+    previewLiveStop();
     appendLog('对话已清空', 'info');
 }
 
@@ -1208,7 +1353,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 代码标签页事件委托
     bind('chatMessages', 'click', (e) => {
         const tab = e.target.closest('.code-tab');
-        if (tab && tab.dataset.file) switchCodeTab(tab.dataset.file);
+        if (tab && tab.dataset.file) switchCodeTab(tab.dataset.file, tab);
     });
 
     // 文件树点击事件委托

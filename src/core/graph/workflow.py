@@ -8,6 +8,7 @@ import time as _time
 
 import asyncio
 import json
+import re
 import structlog
 from pathlib import Path
 
@@ -44,6 +45,9 @@ class GameDevWorkflow:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        # 本类不继承 BaseAgent，但异常兜底路径按 BaseAgent 风格使用
+        # self.logger / self.log_error / self.log_action，这里补齐（否则 AttributeError）
+        self.logger = logger.bind(component="workflow")
         self.orchestrator = OrchestratorAgent(config)
         self.game_designer = GameDesignerAgent(config)
         self.planner = PlannerAgent(config)
@@ -84,6 +88,34 @@ class GameDevWorkflow:
         )
 
         self.graph = self._build_graph()
+
+    # 实时预览：把"项目名"规整为后端 /api/v1/preview/frame 接受的 project_id
+    # （与 src/api/main.py 的 _PREVIEW_PROJECT_RE 完全对齐）
+    _PREVIEW_ID_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
+
+    def _resolve_preview_project_id(self, state: "GameDevState") -> str:
+        """从 state 推出当前项目的 preview project_id。
+
+        优先级：
+        1. state["preview_project_id"]（已由外部注入）
+        2. project_name（前端输入，做 sanitize）
+        3. requirements 取首个稳定 token（兜底）
+
+        失败时返回 ""，调用方据此判断是否带 project_id 字段。
+        """
+        existing = state.get("preview_project_id")
+        if isinstance(existing, str) and self._PREVIEW_ID_RE.match(existing):
+            return existing
+
+        ctx = state.get("project_context", {}) or {}
+        name = ctx.get("project_name") or ctx.get("requirements") or ""
+        if not isinstance(name, str):
+            return ""
+
+        sanitized = re.sub(r"[^A-Za-z0-9_\-\.]", "_", name).strip("._-")[:64]
+        if sanitized and self._PREVIEW_ID_RE.match(sanitized):
+            return sanitized
+        return ""
 
     def _build_graph(self):
         """构建LangGraph状态图，返回编译后的可执行图"""
@@ -162,11 +194,18 @@ class GameDevWorkflow:
         """规划节点 — 解析需求并生成任务计划"""
         try:
             plan_result = await self.planner.plan(state)
-            task_plan = plan_result.get("tasks", []) if isinstance(plan_result, dict) else plan_result
-            asset_plan = plan_result.get("asset_plan", {}) if isinstance(plan_result, dict) else {}
+            is_dict = isinstance(plan_result, dict)
+            task_plan = plan_result.get("tasks", []) if is_dict else plan_result
+            asset_plan = plan_result.get("asset_plan", {}) if is_dict else {}
+            genre_match = {
+                "genre": plan_result.get("genre"),
+                "representative": plan_result.get("representative"),
+                "difficulty": plan_result.get("difficulty"),
+            } if is_dict else None
             return {
                 "task_plan": task_plan,
                 "asset_plan": asset_plan,
+                "genre_match": genre_match,
                 "current_phase": "planning_complete",
             }
         except Exception as e:
@@ -439,6 +478,15 @@ class GameDevWorkflow:
 
     # ========== 工具方法 ==========
 
+    def log_action(self, action: str, details: Optional[Dict] = None) -> None:
+        """记录操作日志（与 BaseAgent.log_action 语义一致）"""
+        self.logger.info("agent_action", action=action, **(details or {}))
+
+    def log_error(self, error: str, details: Optional[Dict] = None) -> None:
+        """记录错误日志（与 BaseAgent.log_error 语义一致）"""
+        safe_details = {(k if k != "error" else "detail_error"): v for k, v in (details or {}).items()}
+        self.logger.error("agent_error", error_message=error, **safe_details)
+
     _NON_CODE_TASK_TYPES = {
         TaskType.SCENE.value,
         TaskType.DOCUMENTATION.value,
@@ -496,10 +544,12 @@ class GameDevWorkflow:
 
             if status == "built":
                 msg = "Godot 场景已生成！请在 Godot Editor 中查看"
+                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "message": msg,
                     "scene_path": result.get("scene_path", ""),
                     "object_count": len(scene_desc.get("game_objects", [])) if scene_desc else 0,
+                    **({"project_id": pid} if pid else {}),
                 })
             elif status == "skipped":
                 await event_callback("scene_skipped", {
@@ -637,7 +687,8 @@ class GameDevWorkflow:
         await event_callback("phase_start", {
             "phase": "compiling", "message": "正在写入 GDScript 到 Godot 项目...",
         })
-        import_result = editor.import_files(gd_files)
+        # import_files 同步写盘，放入线程池避免阻塞事件循环
+        import_result = await asyncio.to_thread(editor.import_files, gd_files)
         if import_result.get("status") == "error":
             await event_callback("compile_result", {
                 "status": "error",
@@ -659,14 +710,19 @@ class GameDevWorkflow:
                 from src.engine.godot.scene_builder import GodotSceneBuilder
                 tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
                 name = scene_desc.get("scene_name", "GameScene")
-                editor.import_files({f"scenes/{name}.tscn": tscn_text})
+                # import_files 同步写盘，放入线程池避免阻塞事件循环
+                await asyncio.to_thread(
+                    editor.import_files, {f"scenes/{name}.tscn": tscn_text}
+                )
                 state["scene_status"] = "success"
                 state["scene_path"] = f"res://scenes/{name}.tscn"
+                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": name,
                     "scene_path": state["scene_path"],
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "headless",
+                    **({"project_id": pid} if pid else {}),
                 })
             except Exception as e:
                 self.log_error("headless_scene_build_failed", {"error": str(e)})
@@ -728,7 +784,7 @@ class GameDevWorkflow:
             updated_gd = {k: v for k, v in updated_files.items() if k.endswith(".gd")}
             if updated_gd != gd_files:
                 gd_files = updated_gd
-                editor.import_files(gd_files)
+                await asyncio.to_thread(editor.import_files, gd_files)
                 res_paths = ["res://" + k for k in gd_files.keys()]
 
         await event_callback("compile_result", {
@@ -820,7 +876,7 @@ class GameDevWorkflow:
                     if k.endswith(".gd")
                 }
                 if updated_gd:
-                    editor.import_files(updated_gd)
+                    await asyncio.to_thread(editor.import_files, updated_gd)
             except Exception as e:
                 self.log_error("runtime_smoke_reimport_failed", {"error": str(e)})
 
@@ -917,11 +973,13 @@ class GameDevWorkflow:
             if scene_result.get("status") == "success":
                 state["scene_status"] = "success"
                 state["scene_path"] = scene_result.get("scene_path", "")
+                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": scene_desc.get("scene_name", "GameScene"),
                     "scene_path": scene_result.get("scene_path", ""),
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "success" if not errors else "with_errors",
+                    **({"project_id": pid} if pid else {}),
                 })
             else:
                 state["scene_status"] = "error"
@@ -955,7 +1013,8 @@ class GameDevWorkflow:
             "phase": "compiling",
             "message": "正在导入代码到 Godot 项目...",
         })
-        import_result = editor.import_files(gd_files)
+        # import_files 同步写盘，放入线程池避免阻塞事件循环
+        import_result = await asyncio.to_thread(editor.import_files, gd_files)
         if import_result.get("status") == "error":
             await event_callback("compile_result", {
                 "status": "error",
@@ -977,14 +1036,19 @@ class GameDevWorkflow:
                 from src.engine.godot.scene_builder import GodotSceneBuilder
                 tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
                 name = scene_desc.get("scene_name", "GameScene")
-                editor.import_files({f"scenes/{name}.tscn": tscn_text})
+                # import_files 同步写盘，放入线程池避免阻塞事件循环
+                await asyncio.to_thread(
+                    editor.import_files, {f"scenes/{name}.tscn": tscn_text}
+                )
                 state["scene_status"] = "success"
                 state["scene_path"] = f"res://scenes/{name}.tscn"
+                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": name,
                     "scene_path": state["scene_path"],
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "headless",
+                    **({"project_id": pid} if pid else {}),
                 })
             except Exception as e:
                 self.log_error("headless_scene_build_failed", {"error": str(e)})
@@ -1115,6 +1179,7 @@ class GameDevWorkflow:
             "task_plan": [],
             "current_task_id": None,
             "ready_task_ids": None,
+            "genre_match": None,
             "code_generated": {},
             "code_artifacts": [],
             "test_results": None,
@@ -1231,7 +1296,8 @@ class GameDevWorkflow:
         if not self.recipe_enabled:
             return None
         requirements = state.get("project_context", {}).get("requirements", "")
-        recipe = self.recipe_store.search(requirements)
+        # search 会同步读取全部配方 JSON（每个含完整代码文件），放入线程池避免阻塞事件循环
+        recipe = await asyncio.to_thread(self.recipe_store.search, requirements)
         if not recipe:
             return None
 
@@ -1258,12 +1324,14 @@ class GameDevWorkflow:
                 await self._try_godot_pipeline(state, cb)
         except Exception as e:
             record_workflow_run(False, _time.time() - _start)
-            set_active_workflows(0)
             state.setdefault("warnings", []).append(f"配方复用后处理失败: {e}")
-        finally:
+        else:
+            # 成功只在未异常时记录一次；放在 finally 会把失败也计成 success
             record_workflow_run(True, _time.time() - _start)
+        finally:
             set_active_workflows(0)
 
+        pid = self._resolve_preview_project_id(state)
         await cb("complete", {
             "phase": "complete",
             "message": "已复用已验证配方",
@@ -1274,6 +1342,7 @@ class GameDevWorkflow:
             "runnable": True,
             "recipe_reused": True,
             "warnings": state.get("warnings", []),
+            **({"project_id": pid} if pid else {}),
         })
         return state
 
@@ -1323,6 +1392,15 @@ class GameDevWorkflow:
 
         try:
             result = await self.graph.ainvoke(state, config={"recursion_limit": recursion_limit})
+            # 场景生成任务在 LangGraph 之外并行运行，写入的是 ainvoke 前的初始 dict，
+            # 而 ainvoke 返回的是通道快照；把场景字段同步回来（与 run_with_streaming 一致），
+            # 否则批处理模式下 scene_description/scene_status 丢失、场景被重复构建。
+            for _key in (
+                "scene_status", "scene_description", "scene_path",
+                "scene_error", "scene_compile_errors",
+            ):
+                if _key in state:
+                    result[_key] = state[_key]
             state = result
 
             for task in state.get("task_plan", []):
@@ -1338,6 +1416,8 @@ class GameDevWorkflow:
 
         except Exception:
             _success = False
+            # 主图已失败，取消仍在后台运行的场景生成任务，避免任务泄漏
+            scene_task.cancel()
             raise
         finally:
             record_workflow_run(_success, _time.time() - _start)
@@ -1421,6 +1501,15 @@ class GameDevWorkflow:
                                 "tasks": new_plan,
                                 "message": f"任务计划生成完成，共 {len(new_plan)} 项",
                             })
+                        # 品类智能匹配结果：SSE 推给前端展示（基款/难度）
+                        genre_match = output.get("genre_match")
+                        if genre_match and node_name == "planner":
+                            await event_callback("genre", {
+                                "genre": genre_match.get("genre") or "",
+                                "representative": genre_match.get("representative") or "",
+                                "difficulty": genre_match.get("difficulty") or "medium",
+                                "message": f"品类匹配: {genre_match.get('genre') or '通用'} · 难度 {genre_match.get('difficulty') or 'medium'}",
+                            })
 
                         new_code = output.get("code_generated", {})
                         if new_code:
@@ -1436,12 +1525,15 @@ class GameDevWorkflow:
 
             if final_state is not None:
                 # 场景生成任务在 LangGraph 之外并行运行，其写入的字段不在 final_state 中。
-                # 合并进来，否则末尾 _try_godot_pipeline 拿不到 scene_description，无法构建 .tscn。
+                # 注意 final_state 含初始值（scene_status="pending"/scene_description=None），
+                # 故不能以 "键不存在" 作为合并条件，否则 scene_description 永远合并不进来，
+                # 末尾 _try_godot_pipeline 拿不到 scene_description，无法构建 .tscn。
+                # 图内节点不写 scene_* 字段，这里用场景任务的写入值覆盖是安全的。
                 for _key in (
                     "scene_status", "scene_description", "scene_path",
                     "scene_error", "scene_compile_errors",
                 ):
-                    if _key in state and _key not in final_state:
+                    if _key in state:
                         final_state[_key] = state[_key]
                 state = final_state
 
@@ -1471,9 +1563,24 @@ class GameDevWorkflow:
         state["runnable"] = smoke_summary.get("runnable")
 
         # P1 语义级复用：真机冒烟通过 → 沉淀为已验证配方，供后续同类需求复用
+        # （save_recipe 同步写完整代码 JSON，放入线程池避免阻塞事件循环）
         if state.get("runnable") is True:
-            self._bake_if_verified(state)
+            await asyncio.to_thread(self._bake_if_verified, state)
 
+        # P2 稳定性指标：本次生成的修改次数（按品类/难度，量化多智能体协作的首过率）
+        try:
+            from src.utils.metrics import record_generation_stability
+
+            genre_match = state.get("genre_match") or {}
+            record_generation_stability(
+                genre_match.get("genre") or "unknown",
+                genre_match.get("difficulty") or "medium",
+                int(state.get("fix_attempts", 0)),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        pid = self._resolve_preview_project_id(state)
         await event_callback("complete", {
             "phase": "complete",
             "message": "代码生成完成！",
@@ -1486,6 +1593,7 @@ class GameDevWorkflow:
             "runtime_smoke_errors": smoke_summary.get("runtime_smoke_errors", [])[:5],
             "runtime_smoke_skipped": smoke_summary.get("runtime_smoke_skipped", False),
             "warnings": state.get("warnings", []),
+            **({"project_id": pid} if pid else {}),
         })
 
         return state

@@ -5,19 +5,27 @@
 """
 
 import os
-import asyncio
+import re
 import json
+import time
+import asyncio
+import contextlib
+from contextlib import asynccontextmanager
+from http import HTTPStatus
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
 import yaml
 import structlog
-from contextlib import asynccontextmanager
-
-logger = structlog.get_logger()
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+import uvicorn
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import StreamingResponse, Response
-from typing import Dict, Any, List, Optional
-import uvicorn
+from fastapi.responses import StreamingResponse, Response, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from src.core.graph.workflow import create_workflow
 from src.core.concurrency import ConcurrencyManager
@@ -35,13 +43,18 @@ from src.api.security import (
     get_secure_cors_config,
     get_audit_logger,
 )
+from src.api.routes import router as routes_router
 from src.api.schemas import (
     GenerateRequest,
     GenerateResponse,
     TaskPlanRequest,
     TaskPlanResponse,
     TaskStatusResponse,
+    HealthResponse,
+    AgentListResponse,
 )
+
+logger = structlog.get_logger()
 
 
 def load_config() -> Dict[str, Any]:
@@ -113,7 +126,7 @@ async def lifespan(app: FastAPI):
     # P2-5 LLM 启动探活 — 一次 ping，结果写到 app.state
     try:
         from src.utils.llm_health import ping as llm_ping
-        llm_status = await llm_ping(config, timeout=5.0)
+        llm_status = await llm_ping(config, timeout=15.0)
         app.state.llm_status = llm_status.to_dict()
         logger.info(
             "llm.startup_check",
@@ -162,22 +175,28 @@ app.add_middleware(CORSMiddleware, **cors_config)
 # 3. GZip 压缩（对 CSS/JS/HTML 响应压缩 ~70%）
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
-# 3. 请求体大小限制 (2MB)
+# 4. 请求体大小限制 (2MB)
 app.add_middleware(RequestBodyLimitMiddleware, max_size_bytes=2_097_152)
 
-# 4. 输入验证（检测注入攻击）
+# 5. 输入验证（检测注入攻击）
 app.add_middleware(InputValidationMiddleware)
 
-# 5. 请求指标
+# 6. 请求指标
 app.add_middleware(RequestMetricsMiddleware, log_file="logs/api_metrics.jsonl")
 
-# 6. 并发控制（限制同时处理20个请求）
+# 7. 并发控制（限制同时处理20个请求）
 app.add_middleware(ConcurrencyLimitMiddleware, max_concurrent=20)
 
-# 7. 速率限制（每IP每分钟60个请求）
-app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
+# 8. 速率限制（每IP每分钟60个请求）
+#    预览帧前端 ~250ms 轮询一次（≈240 req/min），远超全局限额，按前缀排除
+app.add_middleware(
+    RateLimitMiddleware,
+    max_requests=60,
+    window_seconds=60,
+    exclude_prefixes=["/api/v1/preview/"],
+)
 
-# 8. API密钥认证（默认关闭，通过环境变量启用）
+# 9. API密钥认证（默认关闭，通过环境变量启用）
 API_KEYS = {}
 if os.getenv("GAMEFORGE_API_KEYS"):
     # 格式: key1:name1,key2:name2
@@ -204,11 +223,6 @@ app.add_middleware(
 
 # ========== 静态文件和前端 ==========
 
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
-
 _static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "static")
 
 
@@ -234,9 +248,29 @@ app.add_middleware(StaticCacheMiddleware)
 
 @app.get("/app")
 async def serve_frontend():
-    """前端页面"""
+    """旧版聊天界面（兼容旧路径）"""
     return FileResponse(
         os.path.join(_static_dir, "index.html"),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
+# ========== 数字生命驾驶舱主入口（替换旧聊天 UI） ==========
+
+def _digital_life_html_path() -> str:
+    """返回驾驶舱 HTML 的绝对路径，文件不存在时降级到旧 /app。"""
+    project_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+    return os.path.join(project_root, "digital-life-system-spatial.html")
+
+
+@app.get("/dashboard")
+@app.get("/digital")
+async def serve_dashboard():
+    """数字生命驾驶舱 SPA（接 SSE + /api/v1/preview/*）"""
+    return FileResponse(
+        _digital_life_html_path(),
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
@@ -251,13 +285,39 @@ async def serve_demo():
 
 
 # 挂载额外路由模块
-from src.api.routes import router as routes_router
 app.include_router(routes_router, prefix="/api/v1/ext", tags=["extended"])
 
 
+# ========== 统一错误信封 ==========
+# 所有 JSON 错误响应统一为 {"error": <机器可读码>, "message": <人读信息>}，
+# 与中间件 (_send_json_error) 的格式保持一致。
+
+@app.exception_handler(HTTPException)
+async def http_exception_to_envelope(request: Request, exc: HTTPException):
+    try:
+        code = HTTPStatus(exc.status_code).phrase.lower().replace(" ", "_").replace("-", "_")
+    except ValueError:
+        code = "http_error"
+    return JSONResponse(
+        status_code=exc.status_code,
+        headers=exc.headers,
+        content={"error": code, "message": exc.detail},
+    )
 
 
-# ========== 请求/响应模型（从schemas模块统一导入） ==========
+@app.exception_handler(RequestValidationError)
+async def validation_error_to_envelope(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "validation_error",
+            "message": "请求参数校验失败",
+            "fields": [
+                {"loc": list(err.get("loc", [])), "message": err.get("message", "")}
+                for err in exc.errors()
+            ],
+        },
+    )
 
 
 # ========== 初始化 ==========
@@ -267,7 +327,19 @@ app.include_router(routes_router, prefix="/api/v1/ext", tags=["extended"])
 
 @app.get("/")
 async def root():
-    """根路径"""
+    """根路径 — 数字生命驾驶舱入口（当文件存在时）"""
+    if os.path.isfile(_digital_life_html_path()):
+        return FileResponse(
+            _digital_life_html_path(),
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
+    return {"name": "GameForge API", "version": API_VERSION,
+            "dashboard_entry": "/dashboard", "ui_hint": "open /dashboard"}
+
+
+@app.get("/api-info")
+async def api_info():
+    """API 元信息（保留旧 / 等同行为）"""
     llm = getattr(app.state, "llm_status", None) or {
         "llm_configured": False, "ping_ok": None, "ping_error": "not_checked",
     }
@@ -288,19 +360,19 @@ async def root():
     }
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 async def health_check():
     """健康检查"""
     manager = await ConcurrencyManager.get_instance()
     stats = manager.get_stats()
     llm = getattr(app.state, "llm_status", None) or {}
-    return {
-        "status": "healthy",
-        "concurrency": stats,
-        "llm_configured": llm.get("llm_configured", False),
-        "llm_ping_ok": llm.get("ping_ok"),
-        "llm_ping_error": llm.get("ping_error") or "",
-    }
+    return HealthResponse(
+        status="healthy",
+        concurrency=stats,
+        llm_configured=llm.get("llm_configured", False),
+        llm_ping_ok=llm.get("ping_ok"),
+        llm_ping_error=llm.get("ping_error") or "",
+    )
 
 
 @app.get("/stats")
@@ -322,15 +394,16 @@ async def prometheus_metrics():
     return Response(content=metrics_data, media_type=get_content_type())
 
 
-@app.post("/api/v1/generate", response_model=GenerateResponse)
-async def generate_code(request: GenerateRequest):
-    """生成游戏代码（异步队列模式）"""
+@app.post("/api/v1/generate", response_model=GenerateResponse, status_code=202)
+async def generate_code(request: GenerateRequest, http_request: Request):
+    """生成游戏代码（异步队列模式，返回 202 + Location 指向任务状态端点）"""
     manager = await ConcurrencyManager.get_instance()
     audit = get_audit_logger()
+    client_ip = http_request.client.host if http_request.client else "unknown"
 
     await audit.log_event(
         event_type="generate_request",
-        client_ip="api",
+        client_ip=client_ip,
         path="/api/v1/generate",
         method="POST",
         details={"engine": request.engine, "project": request.project_name},
@@ -363,10 +436,14 @@ async def generate_code(request: GenerateRequest):
     )
     payload["task_id"] = task_id
 
-    return GenerateResponse(
-        success=True,
-        task_id=task_id,
-        message=f"任务已提交，通过 /api/v1/task/{task_id} 查询进度",
+    return JSONResponse(
+        status_code=202,
+        headers={"Location": f"/api/v1/task/{task_id}"},
+        content=GenerateResponse(
+            success=True,
+            task_id=task_id,
+            message=f"任务已提交，通过 /api/v1/task/{task_id} 查询进度",
+        ).model_dump(),
     )
 
 
@@ -376,9 +453,9 @@ async def _save_generation_history(payload: Dict[str, Any], result: Dict[str, An
     供 generate_code / generate_code_sync / generate_code_stream 共用。
     """
     try:
-        from src.db.session import _engine, run_db_sync
+        from src.db.session import db_initialized, run_db_sync
         from src.db.models import GenerationHistory
-        if _engine is None:
+        if not db_initialized():
             return
 
         def _do_save():
@@ -438,14 +515,21 @@ async def generate_code_sync(request: GenerateRequest):
             task_count=len(result.get("task_plan", [])),
             fix_count=len(result.get("fix_history", [])),
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("generate_sync_failed")
+        raise HTTPException(status_code=500, detail="生成流程内部错误，请查看服务端日志")
 
 
 @app.post("/api/v1/generate_stream")
-async def generate_code_stream(request: GenerateRequest):
-    """生成游戏代码（SSE流式返回）"""
-    queue = asyncio.Queue()
+async def generate_code_stream(request: GenerateRequest, http_request: Request):
+    """生成游戏代码（SSE流式返回）
+
+    客户端断开时会取消后台 workflow，避免资源泄漏；
+    空闲期发送 `: ping` 注释心跳，防止代理断开长连接。
+    """
+    queue: asyncio.Queue = asyncio.Queue()
 
     async def event_generator():
         workflow = create_workflow(config)
@@ -470,13 +554,27 @@ async def generate_code_stream(request: GenerateRequest):
             finally:
                 await queue.put(None)
 
-        asyncio.create_task(run_workflow())
+        # 保留任务引用，防止被垃圾回收；finally 中统一取消
+        workflow_task = asyncio.create_task(run_workflow())
 
-        while True:
-            event = await queue.get()
-            if event is None:
-                break
-            yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+        try:
+            while True:
+                if await http_request.is_disconnected():
+                    workflow_task.cancel()
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                if event is None:
+                    break
+                yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+        finally:
+            if not workflow_task.done():
+                workflow_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await workflow_task
 
     return StreamingResponse(
         event_generator(),
@@ -516,8 +614,9 @@ async def plan_tasks(request: TaskPlanRequest):
         plan_result = await planner.plan(state)
         tasks = plan_result.get("tasks", []) if isinstance(plan_result, dict) else plan_result
         return TaskPlanResponse(success=True, tasks=tasks)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("plan_tasks_failed")
+        raise HTTPException(status_code=500, detail="任务规划内部错误，请查看服务端日志")
 
 
 @app.get("/api/v1/task/{task_id}", response_model=TaskStatusResponse)
@@ -540,16 +639,20 @@ async def get_task_status(task_id: str):
     )
 
 
-@app.post("/api/v1/task/{task_id}/wait")
-async def wait_for_task(task_id: str, timeout: int = 300):
-    """等待任务完成"""
+@app.post("/api/v1/task/{task_id}/wait", response_model=TaskStatusResponse)
+async def wait_for_task(
+    task_id: str,
+    timeout: int = Query(default=300, ge=1, le=600, description="最长等待秒数（1-600）"),
+):
+    """等待任务完成（长轮询）"""
     if not task_id.isalnum() or len(task_id) > 20:
         raise HTTPException(status_code=400, detail="无效的任务ID格式")
 
     manager = await ConcurrencyManager.get_instance()
-    task = await manager.wait_for_task(task_id, timeout=min(timeout, 600))
+    task = await manager.wait_for_task(task_id, timeout=timeout)
     if not task:
-        raise HTTPException(status_code=408, detail="等待超时")
+        # 504：服务端等待上游任务超时（408 语义是"客户端发请求太慢"，不适用）
+        raise HTTPException(status_code=504, detail="等待任务完成超时")
 
     return TaskStatusResponse(
         task_id=task.task_id,
@@ -559,23 +662,22 @@ async def wait_for_task(task_id: str, timeout: int = 300):
     )
 
 
-@app.get("/api/v1/agents")
+@app.get("/api/v1/agents", response_model=AgentListResponse)
 async def list_agents():
     """列出所有可用的Agent"""
-    return {
-        "agents": [
-            {"name": "orchestrator", "description": "编排Agent - 任务调度和流程控制", "status": "available"},
-            {"name": "planner", "description": "规划Agent - 解析需求并生成任务计划", "status": "available"},
-            {"name": "code_generator", "description": "代码生成Agent - 生成游戏代码", "status": "available"},
-            {"name": "code_reviewer", "description": "代码审查Agent - 审查代码质量", "status": "available"},
-            {"name": "test_generator", "description": "测试生成Agent - 生成测试用例", "status": "available"},
-            {"name": "debugger", "description": "调试Agent - 分析错误并生成修复方案", "status": "available"},
-            {"name": "refactor", "description": "重构Agent - 分析代码质量并优化重构", "status": "available"},
-            {"name": "reflector", "description": "反思Agent - 复盘运行并决定是否重规划（多智能体改造第二步）", "status": "available"},
-            {"name": "scene_generator", "description": "场景生成Agent - 生成 Godot 场景", "status": "available"},
-            {"name": "main_reviewer", "description": "主审查Agent - 终审与设计审查", "status": "available"},
-        ]
-    }
+    agents = [
+        {"name": "orchestrator", "description": "编排Agent - 任务调度和流程控制"},
+        {"name": "planner", "description": "规划Agent - 解析需求并生成任务计划"},
+        {"name": "code_generator", "description": "代码生成Agent - 生成游戏代码"},
+        {"name": "code_reviewer", "description": "代码审查Agent - 审查代码质量"},
+        {"name": "test_generator", "description": "测试生成Agent - 生成测试用例"},
+        {"name": "debugger", "description": "调试Agent - 分析错误并生成修复方案"},
+        {"name": "refactor", "description": "重构Agent - 分析代码质量并优化重构"},
+        {"name": "reflector", "description": "反思Agent - 复盘运行并决定是否重规划（多智能体改造第二步）"},
+        {"name": "scene_generator", "description": "场景生成Agent - 生成 Godot 场景"},
+        {"name": "main_reviewer", "description": "主审查Agent - 终审与设计审查"},
+    ]
+    return AgentListResponse(agents=agents)
 
 
 @app.post("/api/v1/debug/feature")
@@ -583,8 +685,11 @@ async def debug_feature(request: Dict[str, Any]):
     """调试端点：在浏览器中实测多智能体改造的每一项新能力（无需 LLM / 无需 Godot）。
 
     请求体：{"feature": "reflect" | "bus" | "delegate" | "engine", "state": {...可选覆盖}}
-    仅用于验证功能，不参与真实生成流水线。
+    仅用于验证功能，不参与真实生成流水线。生产环境返回 404。
     """
+    if IS_PRODUCTION:
+        raise HTTPException(status_code=404, detail="Not Found")
+
     feature = request.get("feature")
     state = request.get("state", {}) or {}
 
@@ -639,7 +744,10 @@ async def debug_feature(request: Dict[str, Any]):
 
 @app.get("/security/test")
 async def security_test():
-    """安全功能测试端点"""
+    """安全功能测试端点（生产环境返回 404，避免暴露安全配置）"""
+    if IS_PRODUCTION:
+        raise HTTPException(status_code=404, detail="Not Found")
+
     return {
         "security_features": {
             "input_validation": {
@@ -665,7 +773,10 @@ async def security_test():
 
 
 @app.get("/api/v1/tasks")
-async def list_tasks(limit: int = 50, status: Optional[str] = None):
+async def list_tasks(
+    limit: int = Query(default=50, ge=1, le=200, description="返回条数（1-200）"),
+    status: Optional[str] = Query(default=None, max_length=32),
+):
     """获取任务历史列表"""
     from src.db.session import get_db, run_db_sync
     from src.db.models import TaskRecord
@@ -676,7 +787,7 @@ async def list_tasks(limit: int = 50, status: Optional[str] = None):
             query = db.query(TaskRecord).order_by(TaskRecord.created_at.desc())
             if status:
                 query = query.filter(TaskRecord.status == status)
-            records = query.limit(min(limit, 200)).all()
+            records = query.limit(limit).all()
             return [r.to_dict() for r in records]
         finally:
             db.close()
@@ -689,7 +800,9 @@ async def list_tasks(limit: int = 50, status: Optional[str] = None):
 
 
 @app.get("/api/v1/history")
-async def get_generation_history(limit: int = 20):
+async def get_generation_history(
+    limit: int = Query(default=20, ge=1, le=100, description="返回条数（1-100）"),
+):
     """获取代码生成历史"""
     from src.db.session import get_db, run_db_sync
     from src.db.models import GenerationHistory
@@ -699,7 +812,7 @@ async def get_generation_history(limit: int = 20):
         try:
             records = db.query(GenerationHistory).order_by(
                 GenerationHistory.created_at.desc()
-            ).limit(min(limit, 100)).all()
+            ).limit(limit).all()
             return [r.to_dict() for r in records]
         finally:
             db.close()
@@ -756,13 +869,9 @@ async def get_history_by_task_id(task_id: str):
 
 # ========== 实时预览：让前端轮询拿到 Godot 渲染出的游戏画面 ==========
 
-import os as _os_preview
-import re as _re_preview
-import time as _time_preview
-import mimetypes as _mimetypes_preview
-from pathlib import Path as _Path_preview
-
-_PREVIEW_PROJECT_RE = _re_preview.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
+_PREVIEW_PROJECT_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
+# scene 必须是 res:// 开头的项目内相对路径（正则只允许安全字符，另显式拒绝 ".."）
+_PREVIEW_SCENE_RE = re.compile(r"^res://[A-Za-z0-9_\-\.]+(/[A-Za-z0-9_\-\.]+)*$")
 
 
 def _resolve_preview_project(project_id: str) -> str:
@@ -779,18 +888,18 @@ def _resolve_preview_project(project_id: str) -> str:
     return str(abs_root)
 
 
-def _projects_root() -> _Path_preview:
+def _projects_root() -> Path:
     """返回仓库内 projects/ 目录的绝对路径。"""
-    return _Path_preview(_os_preview.path.dirname(_os_preview.path.dirname(_os_preview.path.dirname(__file__)))) / "projects"
+    return Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "projects"
 
 
 @app.get("/api/v1/preview/frame")
 async def preview_frame(
     project_id: str,
     scene: Optional[str] = None,
-    width: int = 640,
-    height: int = 360,
-    frame: int = 0,
+    width: int = Query(default=640, ge=160, le=1920),
+    height: int = Query(default=360, ge=90, le=1080),
+    frame: int = Query(default=0, ge=0),
 ):
     """用 Godot 长驻进程渲染指定项目指定场景，返回 PNG 字节流。
 
@@ -803,30 +912,46 @@ async def preview_frame(
     """
     project_path = _resolve_preview_project(project_id)
 
+    if scene is not None and (".." in scene or not _PREVIEW_SCENE_RE.match(scene)):
+        raise HTTPException(status_code=400, detail="scene 非法（须为 res:// 开头的项目内相对路径）")
+
     preview_cfg = (config or {}).get("preview", {}) or {}
-    legacy_only = _os_preview.environ.get("GAMEFORGE_PREVIEW_LEGACY_ONLY", "").lower() in {"1", "true", "yes"}
+    legacy_only = os.environ.get("GAMEFORGE_PREVIEW_LEGACY_ONLY", "").lower() in {"1", "true", "yes"}
     legacy_only = legacy_only or bool(preview_cfg.get("legacy_only", False))
 
     # 2.0 自动建场景：如果项目下没有 project.godot + scenes/main.tscn，
-    # 用 scene_to_godot 自动写一份富画面模板（含视差背景、玩家、敌人、金币、HUD、粒子）
+    # 用 scene_to_godot 自动写一份场景（默认带 AI 生成的星露谷风像素素材，
+    # 无 key / 关闭开关 / 失败时自动回退纯色块视觉），含视差背景、玩家、敌人、金币、HUD、粒子
     if not legacy_only:
         try:
-            main_tscn = _os_preview.path.join(project_path, "scenes", "main.tscn")
-            if not _os_preview.path.isfile(main_tscn):
+            main_tscn = os.path.join(project_path, "scenes", "main.tscn")
+            if not os.path.isfile(main_tscn):
+                from src.engine.godot.asset_forge import forge_assets
                 from src.engine.godot.scene_to_godot import (
                     default_scene_ir, write_project,
                 )
                 scene_ir = default_scene_ir(theme="sky_blue", genre="platformer")
-                write_project(project_path, scene_ir, width=width, height=height)
+                assets_on = (config or {}).get("assets", {}).get("ai_generated", True)
+
+                def _build_project_files() -> None:
+                    # 主题驱动的美术指导书（一次 LLM 规划全部素材方向，失败回落母题模板）
+                    from src.agents.art_director import plan_art
+
+                    art_prompts = plan_art(scene_ir) if assets_on else None
+                    # forge_assets 内部有同项目锁 + 文件缓存，轮询重试不会重复扣 AI 调用
+                    assets = forge_assets(scene_ir, project_path, art_prompts=art_prompts) if assets_on else {}
+                    # 布局种子按 project_id 稳定散列：同项目重建布局一致，不同项目不重样
+                    layout_seed = abs(hash(project_id)) % (2 ** 31)
+                    write_project(project_path, scene_ir, width=width, height=height,
+                                  assets=assets, layout_seed=layout_seed)
+
+                await asyncio.to_thread(_build_project_files)
                 logger.info("preview.scene_auto_generated", project_id=project_id)
         except Exception as e:
             logger.warning("preview.scene_auto_gen_failed", error=str(e))
 
-    if not _os_preview.path.isfile(_os_preview.path.join(project_path, "project.godot")):
+    if not os.path.isfile(os.path.join(project_path, "project.godot")):
         raise HTTPException(status_code=404, detail=f"项目 {project_id} 缺少 project.godot")
-
-    width = max(160, min(width, 1920))
-    height = max(90, min(height, 1080))
 
     if not legacy_only:
         # 2.0 长驻进程路径：真窗口 + mss 截图
@@ -837,7 +962,7 @@ async def preview_frame(
                 await supervisor.start(project_id, project_path, scene_path=scene)
             except Exception as e:
                 logger.warning("preview.supervisor_start_failed", project_id=project_id, error=str(e))
-                raise HTTPException(status_code=502, detail=f"Godot 进程拉起起失败: {e}")
+                raise HTTPException(status_code=502, detail=f"Godot 进程拉起失败，请稍后重试")
 
         try:
             png_bytes = await supervisor.get_frame(
@@ -850,7 +975,7 @@ async def preview_frame(
             await supervisor.stop(project_id)
             raise HTTPException(status_code=502, detail=f"Godot 进程不可达: {e}")
 
-        ts = int(_time_preview.time())
+        ts = int(time.time())
         return Response(
             content=png_bytes,
             media_type="image/png",
@@ -871,14 +996,14 @@ async def preview_frame(
     if not scene:
         candidates = ["res://scenes/main.tscn", "res://main.tscn", "res://scenes/GameScene.tscn"]
         for c in candidates:
-            full = _os_preview.path.join(project_path, c.replace("res://", "").replace("/", _os_preview.sep))
-            if _os_preview.path.isfile(full):
+            full = os.path.join(project_path, c.replace("res://", "").replace("/", os.sep))
+            if os.path.isfile(full):
                 scene = c
                 break
         if not scene:
-            scenes_dir = _os_preview.path.join(project_path, "scenes")
-            if _os_preview.path.isdir(scenes_dir):
-                for fn in _os_preview.listdir(scenes_dir):
+            scenes_dir = os.path.join(project_path, "scenes")
+            if os.path.isdir(scenes_dir):
+                for fn in os.listdir(scenes_dir):
                     if fn.lower().endswith(".tscn"):
                         scene = "res://scenes/" + fn
                         break
@@ -886,12 +1011,11 @@ async def preview_frame(
             raise HTTPException(status_code=404, detail="项目中找不到 .tscn 场景文件")
 
     editor = GodotEditor(config)
-    out_dir = _os_preview.path.join(project_path, "_preview_cache")
-    _os_preview.makedirs(out_dir, exist_ok=True)
-    out_path = _os_preview.path.join(out_dir, f"frame_{frame % 16:02d}.png")
+    out_dir = os.path.join(project_path, "_preview_cache")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"frame_{frame % 16:02d}.png")
 
-    import asyncio as _asyncio
-    loop = _asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _render():
         return editor.render_screenshot_frame(
@@ -913,11 +1037,11 @@ async def preview_frame(
         )
 
     png_path = result["output_path"]
-    if not _os_preview.path.isfile(png_path):
+    if not os.path.isfile(png_path):
         raise HTTPException(status_code=500, detail="截图已声明成功但文件不存在")
 
-    data = _Path_preview(png_path).read_bytes()
-    ts = int(_time_preview.time())
+    data = Path(png_path).read_bytes()
+    ts = int(time.time())
     return Response(
         content=data,
         media_type="image/png",
@@ -938,6 +1062,179 @@ async def preview_stats():
     from src.engine.godot import GodotSupervisor
     sup = await GodotSupervisor.get_instance(config)
     return sup.stats()
+
+
+# ========== 一键发布：验收门禁 → 导出 → 可玩链接 ==========
+
+_PLAY_MIME = {
+    ".html": "text/html",
+    ".js": "text/javascript",
+    ".wasm": "application/wasm",
+    ".pck": "application/octet-stream",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".wav": "audio/wav",
+    ".json": "application/json",
+    ".ico": "image/x-icon",
+}
+
+
+def _resolve_editor_path() -> str:
+    """解析 Godot 编辑器路径（与 supervisor 同源：config → env）。"""
+    from src.engine.godot import _normalize_godot_path, _resolve_env
+
+    godot_cfg = (config or {}).get("godot", {}) or {}
+    return _normalize_godot_path(_resolve_env(
+        godot_cfg.get("editor_path", "") or os.getenv("GODOT_EDITOR_PATH", "")
+    ))
+
+
+# ========== 灵感骰子：融合概念组合引擎 ==========
+
+@app.get("/api/v1/concepts")
+async def list_concepts(limit: int = Query(default=100, ge=1, le=1000)):
+    """备用游戏概念库（基款×变体牌×主题包 组合排列，种子固定跨运行稳定）。"""
+    from src.agents.genre_fusion import build_concept_library
+
+    library = build_concept_library(count=limit)
+    return {
+        "count": len(library),
+        "concepts": [
+            {
+                "index": i,
+                "pitch": c.pitch,
+                "primary": c.primary_id,
+                "secondary": c.secondary_id,
+                "twist": c.twist["name_zh"],
+                "theme": c.theme_pack["name_zh"],
+                "mechanics": c.spec.mechanics,
+                "win": c.spec.win_condition,
+            }
+            for i, c in enumerate(library)
+        ],
+    }
+
+
+@app.get("/api/v1/concepts/random")
+async def random_concept(seed: Optional[int] = None):
+    """灵感骰子：随机摇一个可执行游戏概念（带 seed 可复现）。"""
+    from src.agents.genre_fusion import roll_concept
+
+    c = roll_concept(seed)
+    return {
+        "pitch": c.pitch,
+        "primary": c.primary_id,
+        "secondary": c.secondary_id,
+        "twist": c.twist["name_zh"],
+        "theme": c.theme_pack["name_zh"],
+        "mechanics": c.spec.mechanics,
+        "extensions": c.spec.extensions,
+        "win": c.spec.win_condition,
+        "lose": c.spec.lose_condition,
+        "hud_extras": c.spec.hud_extras,
+        "camera": c.spec.camera,
+    }
+
+
+@app.post("/api/v1/projects/{project_id}/export")
+async def export_project_api(
+    project_id: str,
+    preset: str = Query(default="Web", pattern="^(Web|Windows Desktop)$"),
+):
+    """一键发布：运行时冒烟门禁 → headless 导出 → 返回可玩链接。
+
+    门禁不过（场景跑不起来）不出包，把结构化错误返回给调用方。
+    """
+    project_path = _resolve_preview_project(project_id)
+    if not os.path.isfile(os.path.join(project_path, "scenes", "main.tscn")):
+        raise HTTPException(status_code=404, detail=f"项目 {project_id} 尚未生成场景")
+
+    editor_path = _resolve_editor_path()
+    if not editor_path or not os.path.isfile(editor_path):
+        raise HTTPException(status_code=503, detail="Godot 编辑器未配置（GODOT_EDITOR_PATH）")
+
+    def _gate_and_export() -> Dict[str, Any]:
+        # 发布门禁 1：机械基线检查（确定性，零成本）
+        from src.engine.godot.baseline_checker import check_project
+
+        baseline = check_project(project_path)
+        if not baseline["ok"]:
+            return {
+                "ok": False, "stage": "baseline",
+                "errors": [
+                    {"pattern": f["check"], "snippet": f["desc"] + (f" ({f['detail']})" if f["detail"] else "")}
+                    for f in baseline["failures"]
+                ],
+            }
+        # 门禁 1.5：headless 导入资源（新纹理/音效未 import 会导致运行时加载失败误报）
+        from src.engine.godot.export_kit import ensure_imported
+
+        ensure_imported(project_path, editor_path)
+        # 发布门禁 2：真机跑 60 帧，有脚本错误/崩溃即拦下
+        from src.engine.godot.runtime_smoke import GodotRuntimeSmoke
+
+        smoke = GodotRuntimeSmoke({"godot": {
+            "editor_path": editor_path, "project_path": project_path,
+        }})
+        smoke_result = smoke.run_scene(scene_path="res://scenes/main.tscn", frames=60)
+        if not smoke_result.runnable:
+            return {
+                "ok": False, "stage": "release_gate",
+                "errors": [
+                    {"pattern": e.get("pattern", ""), "snippet": e.get("snippet", "")[:200]}
+                    for e in (smoke_result.errors or [])[:5]
+                ],
+            }
+        from src.engine.godot.export_kit import export_project
+
+        return export_project(project_path, editor_path, preset_name=preset)
+
+    result = await asyncio.to_thread(_gate_and_export)
+    if not result.get("ok"):
+        stage = result.get("stage", "export")
+        is_gate = stage in {"release_gate", "baseline"}
+        return JSONResponse(
+            status_code=502,
+            content={
+                "ok": False,
+                "error": "release_gate_failed" if is_gate else "export_failed",
+                "message": ("发布门禁未通过（" + ("基线检查" if stage == "baseline" else "运行时冒烟") + "），游戏未能出包") if is_gate else "导出失败",
+                "stage": stage,
+                "errors": result.get("errors", []),
+                "stderr_tail": (result.get("stderr_tail") or "")[-400:],
+            },
+        )
+
+    out: Dict[str, Any] = {"ok": True, "preset": preset, "out_path": result["out_path"]}
+    if preset == "Web":
+        out["web_url"] = f"/play/{project_id}/index.html"
+    return out
+
+
+@app.get("/play/{project_id}/{file_path:path}")
+async def serve_play(project_id: str, file_path: str):
+    """伺服 Web 导出产物（带 COOP/COEP 头，Godot 线程导出必须）。"""
+    project_path = _resolve_preview_project(project_id)
+    web_root = os.path.abspath(os.path.join(project_path, "export", "web"))
+    if not file_path or file_path in {".", "/"}:
+        file_path = "index.html"
+    full = os.path.abspath(os.path.join(web_root, file_path))
+    if full != web_root and not full.startswith(web_root + os.sep):
+        raise HTTPException(status_code=400, detail="非法路径")
+    if not os.path.isfile(full):
+        raise HTTPException(status_code=404, detail="导出产物不存在（先调用导出接口）")
+
+    ext = os.path.splitext(full)[1].lower()
+    data = await asyncio.to_thread(lambda: Path(full).read_bytes())
+    return Response(
+        content=data,
+        media_type=_PLAY_MIME.get(ext, "application/octet-stream"),
+        headers={
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def start_server(host: Optional[str] = None, port: Optional[int] = None, workers: int = 1):

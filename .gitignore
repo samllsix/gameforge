@@ -103,3 +103,7 @@ cloudflared.exe
 # TRAE internal
 .trae-html-share-packages/
 _gf_check_result.json
+
+# GameForge 生成的导出产物与 AI 素材缓存(体积大,可随时重新生成)
+projects/*/export/
+projects/*/assets/gen/

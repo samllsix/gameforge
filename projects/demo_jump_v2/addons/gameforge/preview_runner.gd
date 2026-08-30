@@ -40,6 +40,27 @@ func _ready() -> void:
 
 	# 等一帧让 Godot 创建窗口 + 加载主场景
 	call_deferred("_post_init", port, token)
+	call_deferred("_setup_subviewport")
+
+
+func _setup_subviewport() -> void:
+	## 把主场景搬进 640x360 SubViewport 渲染。
+	## 预览窗口本身只有 64x64（CLI --resolution），根视口跟着窗口只有 64x64；
+	## SubViewport 独立于窗口尺寸，保证截图始终是全分辨率真画面。
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var sv := SubViewport.new()
+	sv.name = "GameForgePreviewViewport"
+	sv.size = Vector2i(640, 360)
+	sv.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	get_tree().root.add_child(sv)
+	scene.reparent(sv)
+	# 交给 screenshot_server：抓取时优先用这个全分辨率视口
+	var ss := get_tree().root.get_node_or_null("GameForgeScreenshotServer")
+	if ss != null:
+		ss.sub_viewport = sv
+		print("[preview_runner] subviewport wired size=", sv.size)
 
 
 func _post_init(port: int, token: String) -> void:

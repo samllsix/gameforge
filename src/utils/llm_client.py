@@ -161,7 +161,9 @@ class LLMClient:
             "base_url",
             os.getenv("MIMO_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1"),
         )
-        self.api_key = provider_api_key or os.getenv("MIMO_API_KEY", "")
+        self.api_key = provider_api_key or os.getenv(
+            llm_config.get("api_key_env", "MIMO_API_KEY"), ""
+        )
 
         # 重试和熔断配置
         self.retry_config = RetryConfig(
@@ -195,9 +197,12 @@ class LLMClient:
         if self._sync_client is None:
             from openai import OpenAI
 
+            # 显式超时：OpenAI SDK 默认 600s，同步调用卡住时会长时间挂起；
+            # 与连接池中 AsyncOpenAI 的 timeout=120.0 保持一致
             self._sync_client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
+                timeout=120.0,
             )
         return self._sync_client
 
@@ -395,7 +400,7 @@ def _resolve_provider_config(config: Dict[str, Any], provider_name: Optional[str
 
     # 回退到默认配置（兼容旧逻辑）
     base_url = llm_config.get("base_url", os.getenv("MIMO_BASE_URL", ""))
-    api_key = os.getenv("MIMO_API_KEY", "")
+    api_key = os.getenv(llm_config.get("api_key_env", "MIMO_API_KEY"), "")
     return base_url, api_key
 
 

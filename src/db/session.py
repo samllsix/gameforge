@@ -154,6 +154,11 @@ def get_engine(database_url: str = None):
     return _engine
 
 
+def db_initialized() -> bool:
+    """数据库引擎是否已初始化（公开判断入口，避免外部访问私有 _engine）"""
+    return _engine is not None
+
+
 def get_session_factory():
     """获取会话工厂（单例）"""
     global _SessionLocal

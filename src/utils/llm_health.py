@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass, field, asdict
@@ -121,6 +122,3 @@ async def ping(config: Dict[str, Any], timeout: float = 5.0) -> LLMHealthStatus:
             detail=str(e)[:200],
         )
     return status
-
-
-import asyncio  # noqa: E402  放在文件末尾避免与上面 dataclass 装饰器冲突

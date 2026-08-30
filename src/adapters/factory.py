@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any, Dict, List, Optional, Type
 
@@ -45,6 +46,33 @@ def _ensure_defaults_registered():
     if "mock" not in _BACKEND_REGISTRY:
         from src.adapters.mock_client import LocalMockClient
         register_backend("mock", LocalMockClient)
+
+
+def _accepts_config(cls: Type[ILLMClient]) -> bool:
+    """判断后端构造函数是否接受 config 关键字参数。
+
+    用签名内省代替旧的 try/except TypeError 试探：
+    试探写法会把构造函数内部真实抛出的 TypeError 当成"不接受 config"而吞掉，
+    导致客户端被以错误方式静默创建、真实错误被掩盖。
+    """
+    try:
+        sig = inspect.signature(cls)
+    except (TypeError, ValueError):
+        # 无法内省（C 扩展等）：保持旧的试探行为
+        return True
+    # 类未自定义 __init__ 时，inspect 内省到的是 object.__init__ 的
+    # (*args, **kwargs)，但实际不接受任何关键字参数
+    if getattr(cls, "__init__", None) is object.__init__:
+        return False
+    for param in sig.parameters.values():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+        if param.name == "config" and param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return True
+    return False
 
 
 # ── 工厂函数 ──────────────────────────────────────────────────
@@ -97,8 +125,8 @@ def create_client(
     if backend_lower == "mock":
         return cls(**kwargs)
 
-    # 自定义后端：尝试传 config，不支持则不传
-    try:
+    # 自定义后端：按签名决定是否传 config（不再用 TypeError 试探，
+    # 避免吞掉构造函数内部真正的 TypeError）
+    if _accepts_config(cls):
         return cls(config=config, **kwargs)
-    except TypeError:
-        return cls(**kwargs)
+    return cls(**kwargs)

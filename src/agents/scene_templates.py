@@ -124,6 +124,36 @@ def match_template(gdm: Dict[str, Any]) -> Optional[str]:
 #  模板填充
 # ═══════════════════════════════════════════════════════════════
 
+# GDM 实体 components 里常见的是 Godot/Unity 节点类型或碰撞组件名，
+# 这些不是脚本类名，不能拿去当 script 绑定；否则下游 scene_builder 会
+# 把它们当作内置组件忽略，实体脚本被静默丢弃（玩家/敌人失去控制器）。
+_NON_SCRIPT_COMPONENTS = {
+    "characterbody2d", "characterbody3d", "staticbody2d", "staticbody3d",
+    "rigidbody2d", "rigidbody3d", "rigidbody", "area2d", "area3d",
+    "node", "node2d", "node3d", "control", "canvaslayer",
+    "camera2d", "camera3d", "collisionshape2d", "collisionshape3d",
+    "boxcollision", "circlecollision", "capsulecollision",
+    "boxcollider2d", "boxcollider", "circlecollider2d", "circlecollider",
+    "capsulecollider2d", "capsulecollider", "spherecollider",
+    "sprite2d", "sprite", "animatedsprite2d", "label", "tilemap",
+    "transform", "charactercontroller", "audiosource",
+    "meshrenderer", "meshfilter", "spriterenderer",
+    "directionallight2d", "directionallight3d", "pointlight2d", "pointlight3d",
+}
+
+
+def _script_from_components(components: Any) -> Optional[str]:
+    """从 GDM 实体的 components 中挑出像脚本类名的项（跳过节点/碰撞等内置组件）。"""
+    if not isinstance(components, list):
+        return None
+    for c in components:
+        if isinstance(c, str) and c.strip():
+            if c.strip().lower() in _NON_SCRIPT_COMPONENTS:
+                continue
+            return c.strip()
+    return None
+
+
 def fill_template(template_name: str, gdm: Dict[str, Any]) -> SceneIR:
     """用模板结构 + GDM 数据填充，返回完整 SceneIR。"""
     tpl = TEMPLATES.get(template_name)
@@ -135,8 +165,8 @@ def fill_template(template_name: str, gdm: Dict[str, Any]) -> SceneIR:
     for ent in gdm.get("entities", []):
         name = ent.get("name", "")
         components = ent.get("components", [])
-        # 取第一个组件作为脚本名
-        script = components[0] if components else None
+        # 取第一个"像脚本类名"的组件作为脚本名（跳过 CharacterBody2D 等节点类型）
+        script = _script_from_components(components)
         if name and script:
             gdm_entity_map[name.lower()] = script
 

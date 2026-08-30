@@ -164,6 +164,22 @@ def record_fix_attempt(success: bool):
     fix_attempts_total.labels(result=result).inc()
 
 
+generation_revisions_total = Counter(
+    "gameforge_generation_revisions_total",
+    "每次生成的修复/重试次数（按品类与难度统计首过率与稳定性）",
+    ["genre", "difficulty"],
+)
+
+
+def record_generation_stability(genre: str, difficulty: str, fix_attempts: int):
+    """记录一次生成的修改次数（多智能体协作稳定性的核心指标）"""
+    if not PROMETHEUS_AVAILABLE:
+        return
+    generation_revisions_total.labels(
+        genre=genre or "unknown", difficulty=difficulty or "medium"
+    ).inc(max(int(fix_attempts), 0))
+
+
 def set_active_workflows(count: int):
     """设置活跃工作流数"""
     if not PROMETHEUS_AVAILABLE:

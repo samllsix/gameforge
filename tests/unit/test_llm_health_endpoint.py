@@ -34,11 +34,15 @@ def test_root_endpoint_exposes_llm_status(monkeypatch):
 
     from fastapi.testclient import TestClient
     with TestClient(main_mod.app) as client:
+        # / 现在返回数字生命驾驶舱 HTML（项目根目录下有 digital-life-system-spatial.html）
         r_root = client.get("/")
+        r_info = client.get("/api-info")
         r_health = client.get("/health")
 
+    # / 在驾驶舱 HTML 存在时是 HTML 页面，否则是 JSON 元信息
     assert r_root.status_code == 200
-    body = r_root.json()
+    assert r_info.status_code == 200
+    body = r_info.json()
     assert "llm_configured" in body
     assert body["llm_configured"] is False
     assert body["llm_ping_ok"] is None
@@ -67,7 +71,8 @@ def test_lifespan_survives_ping_crash(monkeypatch):
     })
 
     with TestClient(main_mod.app) as client:
-        r = client.get("/")
+        # / 现在是数字生命驾驶舱入口（HTML），元信息走 /api-info
+        r = client.get("/api-info")
     assert r.status_code == 200
     body = r.json()
     assert body["llm_configured"] is False

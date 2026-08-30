@@ -139,6 +139,9 @@ class GameDevState(TypedDict):
     task_plan: List[Dict[str, Any]]
     current_task_id: Optional[str]
 
+    # 品类智能匹配结果（genre_specs.match_genre 的产物，供 SSE 推送与下游生成参考）
+    genre_match: Optional[Dict[str, Any]]
+
     # 代码生成 — reducer: 字典合并
     code_generated: Annotated[Dict[str, str], merge_dicts]
     code_artifacts: Annotated[List[Dict[str, Any]], add]

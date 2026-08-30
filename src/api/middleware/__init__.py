@@ -7,6 +7,7 @@
 import time
 import json
 import asyncio
+from pathlib import Path
 from typing import Dict, Any, Optional
 from collections import defaultdict
 from datetime import datetime
@@ -56,12 +57,15 @@ class RateLimitMiddleware:
         max_requests: int = 100,
         window_seconds: int = 60,
         exclude_paths: Optional[list] = None,
+        exclude_prefixes: Optional[list] = None,
     ):
         self.app = app
         self.limiter = RateLimiter(
             max_requests=max_requests, window_seconds=window_seconds
         )
         self.exclude_paths = exclude_paths or ["/health", "/docs", "/openapi.json"]
+        # 前缀排除：用于高频轮询类端点（如预览帧轮询 ~240 req/min，远超全局限额）
+        self.exclude_prefixes = exclude_prefixes or []
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -71,7 +75,9 @@ class RateLimitMiddleware:
         path = _get_path(scope)
 
         # 排除不需要限流的路径
-        if path in self.exclude_paths:
+        if path in self.exclude_paths or any(
+            path.startswith(prefix) for prefix in self.exclude_prefixes
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -121,8 +127,8 @@ class ConcurrencyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # 尝试获取信号量（非阻塞）
-        if self.semaphore.locked() and self.semaphore._value == 0:
+        # 尝试获取信号量（非阻塞；locked() 即无剩余额度）
+        if self.semaphore.locked():
             await _send_json_error(send, 503, {
                 "error": "Service overloaded",
                 "message": "服务器繁忙，请稍后重试",
@@ -160,6 +166,24 @@ class RequestMetricsMiddleware:
             "paths": defaultdict(int),
         }
         self._lock = asyncio.Lock()
+        self._file_lock = asyncio.Lock()
+
+    async def _append_log(self, entry: Dict[str, Any]):
+        """把单条请求指标追加到 jsonl 文件（线程池执行，避免阻塞事件循环）"""
+        if not self.log_file:
+            return
+
+        def _write():
+            log_path = Path(self.log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        try:
+            async with self._file_lock:
+                await asyncio.to_thread(_write)
+        except Exception:
+            pass  # 指标日志失败不影响请求本身
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -168,6 +192,8 @@ class RequestMetricsMiddleware:
 
         start_time = time.time()
         path = _get_path(scope)
+        method = scope.get("method", "")
+        client_ip = _get_client_ip(scope)
 
         # 捕获状态码
         status_code = [200]
@@ -189,6 +215,14 @@ class RequestMetricsMiddleware:
             self.stats["total_duration"] += duration
             self.stats["status_codes"][status_code[0]] += 1
             self.stats["paths"][path] += 1
+        await self._append_log({
+            "timestamp": datetime.now().isoformat(),
+            "method": method,
+            "path": path,
+            "status_code": status_code[0],
+            "duration_ms": round(duration * 1000, 2),
+            "client_ip": client_ip,
+        })
 
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""

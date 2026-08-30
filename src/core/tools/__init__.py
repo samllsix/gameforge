@@ -23,7 +23,9 @@ def read_file(file_path: str, encoding: str = "utf-8") -> Optional[str]:
 def write_file(file_path: str, content: str, encoding: str = "utf-8") -> bool:
     """安全写入文件内容"""
     try:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        dir_name = os.path.dirname(file_path)
+        if dir_name:  # 无目录部分（如 "a.gd"）时 makedirs("") 会抛 FileNotFoundError
+            os.makedirs(dir_name, exist_ok=True)
         with open(file_path, "w", encoding=encoding) as f:
             f.write(content)
         return True

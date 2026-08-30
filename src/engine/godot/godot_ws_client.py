@@ -128,7 +128,9 @@ class GodotWSClient:
 
         self.on(response_event, _response_handler)
         try:
-            await self.send(event_type, data)
+            if not await self.send(event_type, data):
+                # 发送已失败（未连接/对端断开），立即返回而不是傻等满 timeout
+                return None
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             return None

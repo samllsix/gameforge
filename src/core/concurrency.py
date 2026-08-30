@@ -230,6 +230,11 @@ class ConcurrencyManager:
                     task_id=task.task_id,
                     duration=time.time() - task.started_at,
                 )
+            except asyncio.CancelledError:
+                # 任务被取消：必须置状态并唤醒等待者，否则 wait_for_task 只能等超时
+                task.status = TaskStatus.CANCELLED
+                logger.warning("task_cancelled", task_id=task.task_id)
+                raise
             except Exception as e:
                 task.status = TaskStatus.FAILED
                 task.error = str(e)
@@ -237,8 +242,9 @@ class ConcurrencyManager:
                 logger.error("task_failed", task_id=task.task_id, error=str(e))
             finally:
                 task.completed_at = time.time()
-                await self._persist_task(task)
+                # 先 set 再做持久化：即使持久化被取消打断，等待者也能被唤醒
                 task.completion_event.set()
+                await self._persist_task(task)
 
     async def get_task_status(self, task_id: str) -> Optional[QueuedTask]:
         """获取任务状态"""

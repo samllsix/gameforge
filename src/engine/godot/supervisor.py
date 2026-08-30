@@ -4,7 +4,7 @@
 `http://127.0.0.1:<port>/screenshot?frame=N` 拿到当前 Viewport 的 PNG。
 
 特性：
-- 启动 Godot 长驻进程（preview_runner.gd），监听 8769（可配）
+- 启动 Godot 长驻进程（preview_runner.gd + screenshot_server.gd），监听 8769（可配）
 - 进程崩溃自愈：端口探活失败 3 次 → 重启，指数退避
 - 单进程内 Godot 单线程 → 每 project 串行；多 project 可并行
 - LRU 滚动重启：单进程运行超过 max_process_age_seconds 自动重启
@@ -13,6 +13,17 @@
 - 上下文管理器 shutdown：FastAPI lifespan 退出时优雅关闭所有子进程
 
 设计参考：`docs/realtime-preview-design.md`
+
+v2 变更（2026-08-24）：
+- 截图路径：mss 抓屏 → httpx 调 Godot /screenshot（由 screenshot_server.gd 实现）
+- 窗口位置：移除 supervisor._move_window_after_spawn，由 screenshot_server.gd 自己把窗口移到 (20000, 20000)
+- 依赖清理：screenshot_gpu.py 仍保留以兼容，但运行时不再调用
+
+v3 变更（2026-08-29）：
+- 窗口从创建起就是 64x64 屏幕外小点（CLI --resolution 64x64 --position 20000,20000），彻底不可见
+- 真画面由 preview_runner.gd 的 640x360 SubViewport 渲染，与窗口尺寸无关（screenshot_server.gd 优先抓它）
+- 修复黑帧：绝不能最小化窗口 —— 最小化会停掉 OpenGL 渲染，截图全黑
+- 冷启动项目先跑 --headless --import 预导入，避免首帧请求超时
 """
 
 from __future__ import annotations
@@ -31,15 +42,11 @@ import structlog
 
 logger = structlog.get_logger()
 
-# Godot 窗口固定位置（与 screenshot_gpu.py、preview_runner.gd 一致）
-WINDOW_X = 20000
-WINDOW_Y = 20000
-
 try:
     import httpx
     HAS_HTTPX = True
 except ImportError:
-    HAS_HTTPXX = False
+    HAS_HTTPX = False
     httpx = None  # type: ignore
 
 
@@ -64,6 +71,7 @@ class ProjectProc:
     project_id: str
     project_path: str
     port: int
+    auth_token: str = ""
     proc: Optional[subprocess.Popen] = None
     started_at: float = field(default_factory=time.time)
     last_used_at: float = field(default_factory=time.time)
@@ -221,9 +229,12 @@ class GodotSupervisor:
     async def get_frame(self, project_id: str, frame_index: int = 0, width: int = 640, height: int = 360) -> bytes:
         """获取一帧 PNG。
 
-        实现：mss 抓 Godot 窗口区域（位于屏幕外 WINDOW_X,WINDOW_Y 处）。
+        实现：httpx 调 Godot 端 screenshot_server.gd 的 /screenshot 端点。
         失败时抛 GodotTimeout / GodotCrashed。
         """
+        if not HAS_HTTPX:
+            raise GodotCrashed("httpx 未安装，无法调用 Godot HTTP 截图服务")
+
         pp = self._procs.get(project_id)
         if pp is None or not pp.is_alive():
             raise GodotCrashed(f"Godot 进程未运行: {project_id}")
@@ -231,25 +242,27 @@ class GodotSupervisor:
         async with pp.lock:
             pp.last_used_at = time.time()
 
-        # mss 截图走线程池（mss 阻塞 GDI 调用）
-        from src.engine.godot.screenshot_gpu import capture_window
-        loop = asyncio.get_event_loop()
+        url = f"http://127.0.0.1:{pp.port}/screenshot"
+        params = {"frame": str(int(frame_index))}
+        headers = {"X-API-Key": pp.auth_token or self.token}
+
         try:
-            png_bytes = await asyncio.wait_for(
-                loop.run_in_executor(None, capture_window, project_id, width, height),
-                timeout=self.request_timeout,
+            async with httpx.AsyncClient(timeout=self.request_timeout) as client:
+                resp = await client.get(url, params=params, headers=headers)
+        except httpx.TimeoutException as e:
+            raise GodotTimeout(f"Godot /screenshot 超时 {self.request_timeout}s") from e
+        except httpx.HTTPError as e:
+            raise GodotCrashed(f"Godot /screenshot HTTP 错误: {e}") from e
+
+        if resp.status_code != 200:
+            # 401/403 多半是 token 不一致；500/503 是 Godot 端 render 异常
+            raise GodotCrashed(
+                f"Godot /screenshot 返回 HTTP {resp.status_code}: {resp.text[:160]}"
             )
-        except asyncio.TimeoutError as e:
-            raise GodotTimeout(f"mss 截图超时 {self.request_timeout}s") from e
 
+        png_bytes = resp.content
         if not png_bytes:
-            raise GodotCrashed("mss 截图返回空（可能窗口未渲染或被隐藏）")
-
-        # 启发式：截图全黑说明窗口可能被遮挡或未渲染
-        from src.engine.godot.screenshot_gpu import WindowCapture
-        wc = WindowCapture(project_id=project_id, width=width, height=height)
-        if wc.is_black(png_bytes):
-            logger.debug("supervisor.black_frame", project_id=project_id, frame=frame_index)
+            raise GodotCrashed("Godot /screenshot 返回空 body")
 
         return png_bytes
 
@@ -320,6 +333,17 @@ class GodotSupervisor:
         if not os.path.isfile(os.path.join(project_path, "project.godot")):
             raise FileNotFoundError(f"项目目录中找不到 project.godot: {project_path}")
 
+        # 冷启动项目（无 .godot 导入缓存）先做一次无窗口导入，
+        # 避免首帧请求把导入时间算进 startup_timeout 导致超时
+        if not os.path.isdir(os.path.join(project_path, ".godot")):
+            try:
+                from src.engine.godot.export_kit import ensure_imported
+
+                ensure_imported(project_path, self.editor_path)
+                logger.info("supervisor.preimport_done", project_id=project_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("supervisor.preimport_failed", project_id=project_id, error=str(e))
+
         # 把 preview_runner.gd 与 screenshot_server.gd 复制到目标项目的 addons/gameforge/
         # 让 Godot 启动时能找到这两个脚本（项目独立，源 addon 不一定挂载）
         addon_dir = os.path.join(project_path, "addons", "gameforge")
@@ -349,23 +373,23 @@ class GodotSupervisor:
         env = os.environ.copy()
         env["GAMEFORGE_PREVIEW_PORT"] = str(port)
         env["GAMEFORGE_PREVIEW_TOKEN"] = self.token
+        # 预览截图模式：跳过开始画面直接进入玩法（导出的成品仍从开始画面起步）
+        env["GAMEFORGE_PREVIEW_AUTOSTART"] = "1"
 
-        # 计算 Godot 窗口位置：紧贴屏幕右下角任务栏上方
-        # 默认屏幕 1536x960 → 窗口放 (1216, 770) 320x180
-        # 1920x1200 → 窗口放 (1536, 920)
-        # 我们通过 Win32 API 探测主屏尺寸，再算出合适位置
-        wx, wy = self._compute_window_position(width=320, height=180)
-
+        wx, wy = int(self.window_position[0]), int(self.window_position[1])
         cmd = [
             self.editor_path,
             "--rendering-driver", "opengl3",
             "--audio-driver", "Dummy",
             "--path", project_path,
-            "--resolution", "320x180",
+            # 窗口从创建起就是 64x64 屏幕外小点（用户不可见）：
+            # 渲染交给 preview_runner.gd 里的 640x360 SubViewport，与窗口尺寸无关
+            "--resolution", "64x64",
+            "--position", f"{wx},{wy}",
             "--max-fps", "60",
-            # 不加 --headless：需要真窗口才能让 mss 抓图
+            # 不加 --headless：dummy 渲染器抓不到真画面（实测只出占位图）
             # 不加 --script：走 project.godot 的 main_scene + autoload
-            # 窗口位置由 _move_window_after_spawn 用 Win32 SetWindowPos 设置
+            # 绝不能最小化：最小化会停掉 OpenGL 渲染，截图全黑
         ]
         logger.info(
             "supervisor.spawn",
@@ -389,16 +413,17 @@ class GodotSupervisor:
             project_id=project_id,
             project_path=project_path,
             port=port,
+            auth_token=self.token,
             proc=proc,
             current_scene=scene,
         )
 
-        # 等待端口就绪（仅做 health 探活用；mss 截图不依赖）
+        # 等待端口就绪（HTTP 截图路径依赖 screenshot_server.gd 的 /screenshot 端点）
         try:
             await self._wait_port_open(port, self.startup_timeout)
             logger.info("supervisor.port_open", project_id=project_id, port=port)
         except GodotTimeout:
-            # mss 截图方案下端口不可用也能工作（窗口已就绪）
+            # 端口没起 → screenshot_server.gd 没挂上，整条 HTTP 截图路径走不通
             if pp.is_alive():
                 logger.warning(
                     "supervisor.port_not_open_but_process_alive",
@@ -411,11 +436,9 @@ class GodotSupervisor:
                 except Exception:
                     pass
                 raise GodotCrashed(f"Godot 进程启动后已退出: {project_id}")
-
-        # 把 Godot 窗口用 Win32 SetWindowPos 移到正确位置（因为 --position 在 4.6.3 失效）
-        await asyncio.get_event_loop().run_in_executor(
-            None, self._move_window_after_spawn, pp, wx, wy, 320, 180,
-        )
+            raise GodotCrashed(
+                f"Godot 端口 {port} 在 {self.startup_timeout}s 内未就绪，无法 HTTP 截图"
+            )
 
         return pp
 
@@ -434,68 +457,6 @@ class GodotSupervisor:
             await asyncio.sleep(0.2)
         # 超时但进程还活着，让上层决定如何处理
         raise GodotTimeout(f"Godot {port} 端口 {timeout}s 内未就绪")
-
-    def _move_window_after_spawn(self, pp: "ProjectProc", x: int, y: int, w: int, h: int) -> None:
-        """Godot 进程起来后，用 Win32 SetWindowPos 把窗口移到指定位置 + 大小。
-
-        Godot 4.6.3 的 --position 命令行参数被忽略（窗口仍出现在 (-25600, -25600)），
-        所以我们必须在 spawn 后用 Win32 API 强制移动。
-        """
-        if os.name != "nt":
-            return
-        try:
-            import ctypes
-            from ctypes import wintypes
-            user32 = ctypes.windll.user32
-            EnumWindows = user32.EnumWindows
-            EnumWindowsProc = ctypes.WINFUNCTYPE(
-                wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
-            )
-            GetWindowThreadProcessId = user32.GetWindowThreadProcessId
-
-            target_pid = pp.proc.pid if pp.proc else None
-            if not target_pid:
-                return
-
-            hwnds = []
-            def _enum(hwnd, _l):
-                pid = wintypes.DWORD()
-                GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                if pid.value == target_pid:
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length == 0:
-                        return True
-                    buf = ctypes.create_unicode_buffer(length + 1)
-                    user32.GetWindowTextW(hwnd, buf, length + 1)
-                    rect = wintypes.RECT()
-                    user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                    rw = rect.right - rect.left
-                    rh = rect.bottom - rect.top
-                    if rw >= 100 and rh >= 100:
-                        hwnds.append((hwnd, rw, rh))
-                return True
-
-            EnumWindows(EnumWindowsProc(_enum), 0)
-            if not hwnds:
-                return
-            hwnds.sort(key=lambda x: x[1] * x[2], reverse=True)
-            hwnd = hwnds[0][0]
-
-            # SWP_NOZORDER=4, SWP_NOACTIVATE=16, SWP_SHOWWINDOW=64
-            user32.SetWindowPos(
-                hwnd, 0, x, y, w, h,
-                0x00000004 | 0x00000010 | 0x00000040,
-            )
-            # SC_RESTORE = 9 — 如果被最小化，强制还原
-            user32.ShowWindow(hwnd, 9)
-            logger.info(
-                "supervisor.window_moved",
-                project_id=pp.project_id,
-                hwnd=hwnd,
-                x=x, y=y, w=w, h=h,
-            )
-        except Exception as e:
-            logger.warning("supervisor.move_window_failed", error=str(e))
 
     async def _terminate_proc(self, pp: ProjectProc) -> None:
         if pp.proc is None:
@@ -529,26 +490,6 @@ class GodotSupervisor:
                 if fn.lower().endswith(".tscn"):
                     return "res://scenes/" + fn
         return None
-
-    def _compute_window_position(self, width: int = 320, height: int = 180) -> tuple:
-        """计算 Godot 窗口位置：紧贴屏幕右下角任务栏上方。
-
-        默认屏幕 1536x960 → 窗口放 (1216, 770) 320x180
-        1920x1200 → 窗口放 (1536, 920)
-        通过 Win32 API 探测主屏尺寸，再算出合适位置。
-        """
-        screen_w, screen_h = 1536, 960
-        if os.name == "nt":
-            try:
-                import ctypes
-                user32 = ctypes.windll.user32
-                screen_w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
-                screen_h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
-            except Exception:
-                pass
-        wx = max(0, screen_w - width)
-        wy = max(0, screen_h - height)
-        return (wx, wy)
 
     def _inject_autoload(self, project_path: str) -> None:
         """把 GameForgePreviewRunner 注入到 project.godot 的 [autoload] 段。

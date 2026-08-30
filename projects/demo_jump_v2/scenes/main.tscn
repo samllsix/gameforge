@@ -8,189 +8,214 @@
 [ext_resource type="Script" path="res://addons/gameforge/runtime/parallax_bg.gd" id="6_script"]
 [ext_resource type="Script" path="res://addons/gameforge/runtime/hud.gd" id="7_script"]
 [ext_resource type="Script" path="res://addons/gameforge/runtime/player.gd" id="8_script"]
+[ext_resource type="Script" path="res://addons/gameforge/runtime/game_flow.gd" id="9_script"]
+[ext_resource type="Texture2D" path="res://assets/gen/background.png" id="10_texture2d"]
+[ext_resource type="Texture2D" path="res://assets/gen/player.png" id="11_texture2d"]
+[ext_resource type="Texture2D" path="res://assets/gen/enemy.png" id="12_texture2d"]
+[ext_resource type="Texture2D" path="res://assets/gen/pickup.png" id="13_texture2d"]
 
 [sub_resource type="RectangleShape2D" id="shape_Platform1"]
-size = Vector2(640, 24)
+size = Vector2(320, 24)
 [sub_resource type="RectangleShape2D" id="shape_Platform2"]
 size = Vector2(100, 16)
 [sub_resource type="RectangleShape2D" id="shape_Platform3"]
+size = Vector2(100, 16)
+[sub_resource type="RectangleShape2D" id="shape_Platform4"]
 size = Vector2(100, 16)
 [sub_resource type="RectangleShape2D" id="shape_player"]
 size = Vector2(32, 48)
 
 [node name="GameScene" type="Node2D"]
-position = Vector2(320, 90)
+position = Vector2(160, 45)
 [node name="ParallaxLayer1" type="Node2D" parent="."]
 script = ExtResource("6_script")
 speed = 0.30
-wrap_left = -704.0
-wrap_period = 768.0
+wrap_left = -384.0
+wrap_period = 448.0
 [node name="BGColor1" type="ColorRect" parent="ParallaxLayer1"]
 color = Color(0.275, 0.510, 0.863, 1.0)
-offset_left = -640
-offset_top = -360
-offset_right = 1280
-offset_bottom = 720
+offset_left = -320
+offset_top = -180
+offset_right = 640
+offset_bottom = 360
 mouse_filter = 2
+[node name="BGArt1" type="Sprite2D" parent="ParallaxLayer1"]
+texture = ExtResource("10_texture2d")
+centered = false
+position = Vector2(-320, -180)
+scale = Vector2(0.7059, 0.7031)
+texture_filter = 1
 [node name="Deco1_1" type="ColorRect" parent="ParallaxLayer1"]
 color = Color(1.000, 1.000, 0.784, 0.35)
-offset_left = -627
+offset_left = -339
 offset_top = 0
-offset_right = -623
+offset_right = -335
 offset_bottom = 4
 mouse_filter = 2
 [node name="Deco1_2" type="ColorRect" parent="ParallaxLayer1"]
 color = Color(1.000, 1.000, 0.784, 0.35)
-offset_left = -473
+offset_left = -249
 offset_top = 73
-offset_right = -458
+offset_right = -234
 offset_bottom = 88
 mouse_filter = 2
 [node name="Deco1_3" type="ColorRect" parent="ParallaxLayer1"]
 color = Color(1.000, 1.000, 0.784, 0.35)
-offset_left = -320
-offset_top = 146
-offset_right = -306
-offset_bottom = 160
+offset_left = -160
+offset_top = 56
+offset_right = -146
+offset_bottom = 70
 mouse_filter = 2
 [node name="Deco1_4" type="ColorRect" parent="ParallaxLayer1"]
 color = Color(1.000, 1.000, 0.784, 0.35)
-offset_left = -166
+offset_left = -70
 offset_top = 39
-offset_right = -153
+offset_right = -57
 offset_bottom = 52
 mouse_filter = 2
 [node name="Deco1_5" type="ColorRect" parent="ParallaxLayer1"]
 color = Color(1.000, 1.000, 0.784, 0.35)
-offset_left = -12
-offset_top = 112
-offset_right = 0
-offset_bottom = 124
+offset_left = 19
+offset_top = 22
+offset_right = 31
+offset_bottom = 34
 mouse_filter = 2
 [node name="ParallaxLayer2" type="Node2D" parent="."]
 script = ExtResource("6_script")
 speed = 1.00
-wrap_left = -704.0
-wrap_period = 768.0
+wrap_left = -384.0
+wrap_period = 448.0
 [node name="BGColor2" type="ColorRect" parent="ParallaxLayer2"]
 color = Color(0.353, 0.412, 0.529, 1.0)
-offset_left = -640
-offset_top = -360
-offset_right = 1280
-offset_bottom = 720
+offset_left = -320
+offset_top = -180
+offset_right = 640
+offset_bottom = 360
 mouse_filter = 2
+[node name="BGArt2" type="Sprite2D" parent="ParallaxLayer2"]
+texture = ExtResource("10_texture2d")
+centered = false
+position = Vector2(-320, -180)
+scale = Vector2(0.7059, 0.7031)
+texture_filter = 1
 [node name="Deco2_1" type="ColorRect" parent="ParallaxLayer2"]
 color = Color(1.000, 1.000, 0.784, 0.55)
-offset_left = -640
+offset_left = -346
 offset_top = 31
-offset_right = -631
+offset_right = -337
 offset_bottom = 40
 mouse_filter = 2
 [node name="Deco2_2" type="ColorRect" parent="ParallaxLayer2"]
 color = Color(1.000, 1.000, 0.784, 0.55)
-offset_left = -512
-offset_top = 104
-offset_right = -504
-offset_bottom = 112
+offset_left = -272
+offset_top = 14
+offset_right = -264
+offset_bottom = 22
 mouse_filter = 2
 [node name="Deco2_3" type="ColorRect" parent="ParallaxLayer2"]
 color = Color(1.000, 1.000, 0.784, 0.55)
-offset_left = -384
-offset_top = 177
-offset_right = -377
-offset_bottom = 184
+offset_left = -197
+offset_top = 87
+offset_right = -190
+offset_bottom = 94
 mouse_filter = 2
 [node name="Deco2_4" type="ColorRect" parent="ParallaxLayer2"]
 color = Color(1.000, 1.000, 0.784, 0.55)
-offset_left = -256
+offset_left = -122
 offset_top = 70
-offset_right = -250
+offset_right = -116
 offset_bottom = 76
 mouse_filter = 2
 [node name="Deco2_5" type="ColorRect" parent="ParallaxLayer2"]
 color = Color(1.000, 1.000, 0.784, 0.55)
-offset_left = -128
-offset_top = 143
-offset_right = -123
-offset_bottom = 148
+offset_left = -48
+offset_top = 53
+offset_right = -43
+offset_bottom = 58
 mouse_filter = 2
 [node name="Deco2_6" type="ColorRect" parent="ParallaxLayer2"]
 color = Color(1.000, 1.000, 0.784, 0.55)
-offset_left = 0
+offset_left = 26
 offset_top = 36
-offset_right = 4
+offset_right = 30
 offset_bottom = 40
 mouse_filter = 2
 [node name="ParallaxLayer3" type="Node2D" parent="."]
 script = ExtResource("6_script")
 speed = 1.70
-wrap_left = -704.0
-wrap_period = 768.0
+wrap_left = -384.0
+wrap_period = 448.0
 [node name="BGColor3" type="ColorRect" parent="ParallaxLayer3"]
 color = Color(0.431, 0.314, 0.196, 1.0)
-offset_left = -640
-offset_top = -360
-offset_right = 1280
-offset_bottom = 720
+offset_left = -320
+offset_top = -180
+offset_right = 640
+offset_bottom = 360
 mouse_filter = 2
+[node name="BGArt3" type="Sprite2D" parent="ParallaxLayer3"]
+texture = ExtResource("10_texture2d")
+centered = false
+position = Vector2(-320, -180)
+scale = Vector2(0.7059, 0.7031)
+texture_filter = 1
 [node name="Deco3_1" type="ColorRect" parent="ParallaxLayer3"]
 color = Color(1.000, 1.000, 0.784, 0.75)
-offset_left = -649
+offset_left = -352
 offset_top = 62
-offset_right = -635
+offset_right = -338
 offset_bottom = 76
 mouse_filter = 2
 [node name="Deco3_2" type="ColorRect" parent="ParallaxLayer3"]
 color = Color(1.000, 1.000, 0.784, 0.75)
-offset_left = -539
-offset_top = 135
-offset_right = -526
-offset_bottom = 148
+offset_left = -288
+offset_top = 45
+offset_right = -275
+offset_bottom = 58
 mouse_filter = 2
 [node name="Deco3_3" type="ColorRect" parent="ParallaxLayer3"]
 color = Color(1.000, 1.000, 0.784, 0.75)
-offset_left = -429
+offset_left = -224
 offset_top = 28
-offset_right = -417
+offset_right = -212
 offset_bottom = 40
 mouse_filter = 2
 [node name="Deco3_4" type="ColorRect" parent="ParallaxLayer3"]
 color = Color(1.000, 1.000, 0.784, 0.75)
-offset_left = -320
-offset_top = 101
-offset_right = -309
-offset_bottom = 112
+offset_left = -160
+offset_top = 11
+offset_right = -149
+offset_bottom = 22
 mouse_filter = 2
 [node name="Deco3_5" type="ColorRect" parent="ParallaxLayer3"]
 color = Color(1.000, 1.000, 0.784, 0.75)
-offset_left = -210
-offset_top = 174
-offset_right = -200
-offset_bottom = 184
+offset_left = -96
+offset_top = 84
+offset_right = -86
+offset_bottom = 94
 mouse_filter = 2
 [node name="Deco3_6" type="ColorRect" parent="ParallaxLayer3"]
 color = Color(1.000, 1.000, 0.784, 0.75)
-offset_left = -100
+offset_left = -32
 offset_top = 67
-offset_right = -91
+offset_right = -23
 offset_bottom = 76
 mouse_filter = 2
 [node name="Deco3_7" type="ColorRect" parent="ParallaxLayer3"]
 color = Color(1.000, 1.000, 0.784, 0.75)
-offset_left = 9
-offset_top = 140
-offset_right = 17
-offset_bottom = 148
+offset_left = 32
+offset_top = 50
+offset_right = 40
+offset_bottom = 58
 mouse_filter = 2
 [node name="Platform1" type="StaticBody2D" parent="."]
-position = Vector2(0, 168)
+position = Vector2(0, 78)
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Platform1"]
 shape = SubResource("shape_Platform1")
 [node name="Visual" type="ColorRect" parent="Platform1"]
 color = Color(0.431, 0.314, 0.196, 1.0)
-offset_left = -320
+offset_left = -160
 offset_top = -12
-offset_right = 320
+offset_right = 160
 offset_bottom = 12
 mouse_filter = 2
 [node name="Platform2" type="StaticBody2D" parent="."]
@@ -215,8 +240,19 @@ offset_top = -8
 offset_right = 50
 offset_bottom = 8
 mouse_filter = 2
-[node name="Player" type="CharacterBody2D" parent="."]
-position = Vector2(-220, 100)
+[node name="Platform4" type="StaticBody2D" parent="."]
+position = Vector2(210, 18)
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platform4"]
+shape = SubResource("shape_Platform4")
+[node name="Visual" type="ColorRect" parent="Platform4"]
+color = Color(0.431, 0.314, 0.196, 1.0)
+offset_left = -50
+offset_top = -8
+offset_right = 50
+offset_bottom = 8
+mouse_filter = 2
+[node name="Player" type="CharacterBody2D" parent="." groups=["player"]]
+position = Vector2(-60, 10)
 script = ExtResource("8_script")
 speed = 120.0
 jump_velocity = -260.0
@@ -224,7 +260,7 @@ gravity = 600.0
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Player"]
 shape = SubResource("shape_player")
 [node name="PlayerVisual" type="ColorRect" parent="Player"]
-color = Color(1.000, 0.784, 0.314, 1.0)
+color = Color(1.000, 1.000, 1.000, 0.0)
 offset_left = -16
 offset_top = -24
 offset_right = 16
@@ -233,49 +269,52 @@ script = ExtResource("2_script")
 bounce_height = 6.0
 bounce_speed = 2.5
 mouse_filter = 2
-[node name="Enemy1" type="CharacterBody2D" parent="."]
-position = Vector2(240, 120)
+[node name="Sprite" type="Sprite2D" parent="PlayerVisual"]
+texture = ExtResource("11_texture2d")
+position = Vector2(16, 24)
+scale = Vector2(0.0938, 0.0938)
+texture_filter = 1
+[node name="Enemy1" type="CharacterBody2D" parent="." groups=["enemy"]]
+position = Vector2(80, 30)
 script = ExtResource("5_script")
 speed = 50.0
 range = 80.0
 color_seed = 0
 [node name="Visual" type="ColorRect" parent="Enemy1"]
-color = Color(0.863, 0.314, 0.314, 1.0)
+color = Color(1.000, 1.000, 1.000, 0.0)
 offset_left = -14
 offset_top = -14
 offset_right = 14
 offset_bottom = 14
 mouse_filter = 2
-[node name="Enemy2" type="CharacterBody2D" parent="."]
-position = Vector2(300, 120)
+[node name="Sprite" type="Sprite2D" parent="Enemy1/Visual"]
+texture = ExtResource("12_texture2d")
+position = Vector2(14, 14)
+scale = Vector2(0.0547, 0.0547)
+texture_filter = 1
+[node name="Enemy2" type="CharacterBody2D" parent="." groups=["enemy"]]
+position = Vector2(140, 30)
 script = ExtResource("5_script")
 speed = 50.0
 range = 80.0
 color_seed = 31
 [node name="Visual" type="ColorRect" parent="Enemy2"]
-color = Color(0.863, 0.314, 0.314, 1.0)
+color = Color(1.000, 1.000, 1.000, 0.0)
 offset_left = -14
 offset_top = -14
 offset_right = 14
 offset_bottom = 14
 mouse_filter = 2
-[node name="NPC1" type="Node2D" parent="."]
-position = Vector2(-100, 80)
-[node name="Visual" type="ColorRect" parent="NPC1"]
-color = Color(1.000, 0.784, 0.314, 0.8)
-offset_left = -20
-offset_top = -20
-offset_right = 20
-offset_bottom = 20
-pivot_offset = Vector2(20, 20)
-script = ExtResource("3_script")
-rot_speed = 1.2
-mouse_filter = 2
+[node name="Sprite" type="Sprite2D" parent="Enemy2/Visual"]
+texture = ExtResource("12_texture2d")
+position = Vector2(14, 14)
+scale = Vector2(0.0547, 0.0547)
+texture_filter = 1
 [node name="Pickup1" type="Area2D" parent="."]
 position = Vector2(-200, 60)
 script = ExtResource("4_script")
 [node name="Visual" type="ColorRect" parent="Pickup1"]
-color = Color(1.000, 0.863, 0.235, 1.0)
+color = Color(1.000, 1.000, 1.000, 0.0)
 offset_left = -10
 offset_top = -10
 offset_right = 10
@@ -287,11 +326,16 @@ move_range_y = 12.0
 move_speed = 1.5
 phase = 0.0
 mouse_filter = 2
+[node name="Sprite" type="Sprite2D" parent="Pickup1/Visual"]
+texture = ExtResource("13_texture2d")
+position = Vector2(10, 10)
+scale = Vector2(0.0391, 0.0391)
+texture_filter = 1
 [node name="Pickup2" type="Area2D" parent="."]
 position = Vector2(-120, 100)
 script = ExtResource("4_script")
 [node name="Visual" type="ColorRect" parent="Pickup2"]
-color = Color(1.000, 0.863, 0.235, 1.0)
+color = Color(1.000, 1.000, 1.000, 0.0)
 offset_left = -10
 offset_top = -10
 offset_right = 10
@@ -303,8 +347,34 @@ move_range_y = 12.0
 move_speed = 1.5
 phase = 0.7
 mouse_filter = 2
+[node name="Sprite" type="Sprite2D" parent="Pickup2/Visual"]
+texture = ExtResource("13_texture2d")
+position = Vector2(10, 10)
+scale = Vector2(0.0391, 0.0391)
+texture_filter = 1
+[node name="Pickup3" type="Area2D" parent="."]
+position = Vector2(-40, 60)
+script = ExtResource("4_script")
+[node name="Visual" type="ColorRect" parent="Pickup3"]
+color = Color(1.000, 1.000, 1.000, 0.0)
+offset_left = -10
+offset_top = -10
+offset_right = 10
+offset_bottom = 10
+pivot_offset = Vector2(10, 10)
+script = ExtResource("1_script")
+move_range_x = 60.0
+move_range_y = 12.0
+move_speed = 1.5
+phase = 1.4
+mouse_filter = 2
+[node name="Sprite" type="Sprite2D" parent="Pickup3/Visual"]
+texture = ExtResource("13_texture2d")
+position = Vector2(10, 10)
+scale = Vector2(0.0391, 0.0391)
+texture_filter = 1
 [node name="Prop1" type="Node2D" parent="."]
-position = Vector2(-260, 140)
+position = Vector2(-100, 50)
 [node name="Visual" type="ColorRect" parent="Prop1"]
 color = Color(0.431, 0.314, 0.196, 0.9)
 offset_left = -8
@@ -313,7 +383,7 @@ offset_right = 8
 offset_bottom = 16
 mouse_filter = 2
 [node name="Prop2" type="Node2D" parent="."]
-position = Vector2(-170, 116)
+position = Vector2(-10, 26)
 [node name="Visual" type="ColorRect" parent="Prop2"]
 color = Color(0.431, 0.314, 0.196, 0.9)
 offset_left = -8
@@ -322,11 +392,11 @@ offset_right = 8
 offset_bottom = 16
 mouse_filter = 2
 [node name="Particles" type="CPUParticles2D" parent="."]
-position = Vector2(0, 90)
+position = Vector2(0, 45)
 amount = 24
 lifetime = 4.0
 emission_shape = 3
-emission_rect_extents = Vector2(320, 20)
+emission_rect_extents = Vector2(160, 20)
 direction = Vector2(0, 1)
 spread = 30.0
 gravity = Vector2(0, 30)
@@ -360,6 +430,80 @@ text = "00:00"
 theme_override_colors/font_color = Color(0.941, 0.961, 1.000, 1.0)
 horizontal_alignment = 2
 mouse_filter = 2
+[node name="GameFlow" type="CanvasLayer" parent="." groups=["game_flow"]]
+process_mode = 3
+layer = 20
+script = ExtResource("9_script")
+[node name="BootPanel" type="ColorRect" parent="GameFlow"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.65)
+mouse_filter = 2
+[node name="Title" type="Label" parent="GameFlow/BootPanel"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_bottom = -60.0
+text = "点击开始游戏"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 36
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+[node name="Help" type="Label" parent="GameFlow/BootPanel"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 40.0
+text = "方向键 / A D 移动 · 空格跳跃 · Esc 暂停"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 18
+theme_override_colors/font_color = Color(1, 1, 1, 0.75)
+[node name="PausePanel" type="ColorRect" parent="GameFlow"]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0, 0, 0, 0.55)
+[node name="PauseLabel" type="Label" parent="GameFlow/PausePanel"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+text = "已暂停 · 按 Esc 继续"
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 30
+[node name="OverPanel" type="ColorRect" parent="GameFlow"]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0, 0, 0, 0.75)
+[node name="Center" type="CenterContainer" parent="GameFlow/OverPanel"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+[node name="Box" type="VBoxContainer" parent="GameFlow/OverPanel/Center"]
+theme_override_constants/separation = 16
+[node name="OverTitle" type="Label" parent="GameFlow/OverPanel/Center/Box"]
+text = "GAME OVER"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 40
+theme_override_colors/font_color = Color(1, 0.35, 0.35, 1)
+[node name="ScoreResult" type="Label" parent="GameFlow/OverPanel/Center/Box"]
+text = "最终得分  0"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 22
+[node name="RestartBtn" type="Button" parent="GameFlow/OverPanel/Center/Box"]
+text = "重新开始 (R)"
+[node name="QuitBtn" type="Button" parent="GameFlow/OverPanel/Center/Box"]
+text = "退出游戏"
 
 [connection signal="body_entered" from="Pickup1" to="Pickup1" method="_on_body_entered"]
 [connection signal="body_entered" from="Pickup2" to="Pickup2" method="_on_body_entered"]
+[connection signal="body_entered" from="Pickup3" to="Pickup3" method="_on_body_entered"]
+[connection signal="pressed" from="GameFlow/OverPanel/Center/Box/RestartBtn" to="GameFlow" method="_on_restart_pressed"]
+[connection signal="pressed" from="GameFlow/OverPanel/Center/Box/QuitBtn" to="GameFlow" method="_on_quit_pressed"]

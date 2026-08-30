@@ -242,3 +242,48 @@ def test_normalize_handles_punctuation_case_and_whitespace():
     from src.core.recipes import _normalize_text
     assert _normalize_text("  平台 跳跃，跑酷!! 玩家. ") == "平台跳跃跑酷玩家"
     assert _normalize_text("2D Platform Game") == "2dplatformgame"
+
+
+# ---------------- 实时预览 project_id 解析 ----------------
+
+def test_resolve_preview_project_id_from_project_name():
+    """优先取 project_name，sanitize 后需符合 _PREVIEW_PROJECT_RE。"""
+    wf = _make_workflow()
+    state = {"project_context": {"project_name": "My Game Project", "requirements": "2D平台跳跃"}}
+    pid = wf._resolve_preview_project_id(state)
+    assert pid == "My_Game_Project", "非字母数字字符应替换为下划线"
+
+
+def test_resolve_preview_project_id_falls_back_to_requirements():
+    """project_name 缺失时，回退到 requirements。"""
+    wf = _make_workflow()
+    state = {"project_context": {"requirements": "制作一个2D平台跳跃游戏"}}
+    pid = wf._resolve_preview_project_id(state)
+    # sanitize: 中文字符 → _，再 strip 首尾 _, 中间连续字母数字保留
+    assert pid == "2D", f"实际 sanitize 后应为 '2D'，实得 {pid!r}"
+    assert all(c.isalnum() or c in "_-." for c in pid)
+
+
+def test_resolve_preview_project_id_explicit_override_takes_priority():
+    """显式注入的 preview_project_id 应被尊重。"""
+    wf = _make_workflow()
+    state = {
+        "preview_project_id": "my-custom-pid",
+        "project_context": {"project_name": "ignored", "requirements": "ignored"},
+    }
+    assert wf._resolve_preview_project_id(state) == "my-custom-pid"
+
+
+def test_resolve_preview_project_id_illegal_returns_empty():
+    """非法字符全部 sanitize 掉后为空时，返回空串（调用方据此不附 project_id）。"""
+    wf = _make_workflow()
+    state = {"project_context": {"project_name": "    ", "requirements": ""}}
+    assert wf._resolve_preview_project_id(state) == ""
+
+
+def test_resolve_preview_project_id_truncates_to_64():
+    """超长名截到 64 字符以内。"""
+    wf = _make_workflow()
+    long_name = "a" * 100
+    pid = wf._resolve_preview_project_id({"project_context": {"project_name": long_name}})
+    assert len(pid) == 64

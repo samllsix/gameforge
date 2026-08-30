@@ -121,6 +121,7 @@ class GodotCompiler:
             cmd = [self.editor_path, "--headless", "--check-only", "--path", self.project_path]
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=self.timeout,
+                encoding="utf-8", errors="replace",
                 cwd=self.project_path,
             )
 
@@ -274,18 +275,11 @@ class GodotEditor:
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=self.timeout,
+                encoding="utf-8", errors="replace",
                 cwd=self.project_path,
             )
             output = result.stdout + result.stderr
             errors = self._parse_headless_errors(output)
-            # 清理临时文件
-            try:
-                os.remove(manifest_path)
-                res_path = os.path.join(self.project_path, "_gf_check_result.json")
-                if os.path.isfile(res_path):
-                    os.remove(res_path)
-            except Exception:
-                pass
             return GodotCompileResult(
                 success=len(errors) == 0,
                 errors=errors,
@@ -308,6 +302,14 @@ class GodotEditor:
             return GodotCompileResult(
                 success=False, errors=[{"message": str(e)}], warnings=[], output="",
             )
+        finally:
+            # 成功/超时/异常各路径都要清理临时 manifest 与结果文件，避免残留在项目根
+            for tmp_file in (manifest_path, os.path.join(self.project_path, "_gf_check_result.json")):
+                try:
+                    if os.path.isfile(tmp_file):
+                        os.remove(tmp_file)
+                except Exception:
+                    pass
 
     def _parse_headless_errors(self, output: str) -> List[Dict[str, Any]]:
         """解析 headless 校验输出中的脚本错误
@@ -357,7 +359,16 @@ class GodotEditor:
         for rel_path, content in files.items():
             try:
                 clean = rel_path.removeprefix("res://").removeprefix("res:/")
-                file_path = os.path.join(self.project_path, clean)
+                project_root = os.path.abspath(self.project_path)
+                file_path = os.path.abspath(os.path.join(project_root, clean))
+                # 纵深防御：resolve 后必须仍在项目根目录内，防止 "../" 写到项目外
+                try:
+                    inside = os.path.commonpath([project_root, file_path]) == project_root
+                except ValueError:  # Windows 跨盘符时 commonpath 抛 ValueError
+                    inside = False
+                if not inside:
+                    errors.append(f"{rel_path}: 路径越出项目目录，已拒绝写入")
+                    continue
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(content)
@@ -388,6 +399,7 @@ class GodotEditor:
             cmd = [self.editor_path, "--headless", "--script", script_path, "--path", self.project_path]
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=self.timeout,
+                encoding="utf-8", errors="replace",
                 cwd=self.project_path,
             )
             return {
@@ -412,6 +424,7 @@ class GodotEditor:
             result = subprocess.run(
                 [self.editor_path, "--version"],
                 capture_output=True, text=True, timeout=10,
+                encoding="utf-8", errors="replace",
             )
             version_str = result.stdout.strip()
             major = int(version_str.split(".")[0]) if version_str else self.godot_version
@@ -506,6 +519,7 @@ class GodotEditor:
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=timeout,
+                encoding="utf-8", errors="replace",
                 cwd=project_path,
             )
         except subprocess.TimeoutExpired:
@@ -514,6 +528,12 @@ class GodotEditor:
             return {"ok": False, "error": f"找不到 Godot 引擎: {self.editor_path}"}
         except Exception as e:
             return {"ok": False, "error": f"调用 Godot 失败: {e}"}
+        finally:
+            # 成功/失败/异常都要清理临时 manifest，避免残留在项目根目录
+            try:
+                os.remove(manifest_path)
+            except Exception:
+                pass
 
         if not os.path.isfile(output_path):
             return {
