@@ -1154,6 +1154,18 @@ async def export_project_api(
         raise HTTPException(status_code=503, detail="Godot 编辑器未配置（GODOT_EDITOR_PATH）")
 
     def _gate_and_export() -> Dict[str, Any]:
+        # 发布门禁 0：gd-guard 脚本安检（Rust 闸门，拦危险 API；二进制缺失则跳过）
+        from src.engine.godot.gd_guard import scan_project
+
+        guard = scan_project(project_path)
+        if guard["available"] and guard["verdict"] == "block":
+            return {
+                "ok": False, "stage": "gd_guard",
+                "errors": [
+                    {"pattern": f.get("rule", ""), "snippet": f"{f.get('file','')}:{f.get('line','')} {f.get('detail','')} {f.get('snippet','')}"}
+                    for f in guard["findings"][:5]
+                ],
+            }
         # 发布门禁 1：机械基线检查（确定性，零成本）
         from src.engine.godot.baseline_checker import check_project
 
@@ -1192,7 +1204,7 @@ async def export_project_api(
     result = await asyncio.to_thread(_gate_and_export)
     if not result.get("ok"):
         stage = result.get("stage", "export")
-        is_gate = stage in {"release_gate", "baseline"}
+        is_gate = stage in {"release_gate", "baseline", "gd_guard"}
         return JSONResponse(
             status_code=502,
             content={

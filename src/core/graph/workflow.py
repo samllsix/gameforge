@@ -5,6 +5,7 @@
 """
 
 import time as _time
+import os
 
 import asyncio
 import json
@@ -1557,6 +1558,26 @@ class GameDevWorkflow:
         # Godot 一键构建 pipeline
         if state.get("scene_status") in (None, "pending", "skipped"):
             await self._try_godot_pipeline(state, event_callback)
+
+        # 安全闸门：gd-guard 扫描生成脚本（危险 API 一票否决，Rust 二进制缺失则跳过）
+        try:
+            from src.engine.godot.gd_guard import scan_project
+
+            project_hint = self._resolve_preview_project_id(state)
+            if project_hint:
+                scan_dir = os.path.join("projects", project_hint)
+                if os.path.isdir(scan_dir):
+                    guard = scan_project(scan_dir)
+                    if guard["available"] and guard["verdict"] == "block":
+                        findings = guard["findings"][:5]
+                        state["warnings"] = list(state.get("warnings", [])) + [
+                            f"gd-guard 拦截: {f.get('file','')}:{f.get('line','')} {f.get('detail','')}" for f in findings
+                        ]
+                        await event_callback("scene_error", {"message": "gd-guard 安全闸门拦截了危险脚本，已阻止运行/出包"})
+                        state["runnable"] = False
+                        return state
+        except Exception:  # noqa: BLE001
+            pass  # 闸门缺失/异常不阻塞主流程(失败开放)
 
         # P0-2 运行时冒烟测试（"可运行"闭环）
         smoke_summary = await self._runtime_smoke_test(state, event_callback)

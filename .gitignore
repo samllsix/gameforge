@@ -100,6 +100,9 @@ generated-images/
 *.exe
 cloudflared.exe
 
+# Rust 构建产物
+tools/gd-guard/target/
+
 # TRAE internal
 .trae-html-share-packages/
 _gf_check_result.json
