@@ -82,6 +82,12 @@ if PROMETHEUS_AVAILABLE:
         ["result"],
         registry=registry,
     )
+    generation_revisions_total = Counter(
+        "gameforge_generation_revisions_total",
+        "每次生成的修复/重试次数（按品类与难度统计首过率与稳定性）",
+        ["genre", "difficulty"],
+        registry=registry,
+    )
 
     # 系统指标
     active_workflows = Gauge(
@@ -162,13 +168,6 @@ def record_fix_attempt(success: bool):
         return
     result = "success" if success else "failed"
     fix_attempts_total.labels(result=result).inc()
-
-
-generation_revisions_total = Counter(
-    "gameforge_generation_revisions_total",
-    "每次生成的修复/重试次数（按品类与难度统计首过率与稳定性）",
-    ["genre", "difficulty"],
-)
 
 
 def record_generation_stability(genre: str, difficulty: str, fix_attempts: int):
