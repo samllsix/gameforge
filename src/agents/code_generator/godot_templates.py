@@ -245,10 +245,29 @@ extends StaticBody2D
 
 
 def _audio():
-    return '''## 音效管理器 — 全局音效/音乐播放（Autoload 单例）
+    return '''## 音效管理器 — 全局音效/BGM 播放（Autoload 单例）
 extends Node
 
 @export var fallback_audio: AudioStream
+
+var _bgm_player: AudioStreamPlayer
+var _bgm_volume_db: float = {{audio_volume}} - 8.0  # BGM 比音效低 8dB
+
+func _ready() -> void:
+    # 自动加载并播放 BGM（文件不存在则静默，不报错）
+    var bgm_stream := load("res://assets/sfx/bgm.wav")
+    if bgm_stream:
+        _bgm_player = AudioStreamPlayer.new()
+        _bgm_player.stream = bgm_stream
+        _bgm_player.volume_db = _bgm_volume_db
+        add_child(_bgm_player)
+        _bgm_player.play()
+        # 循环播放：AudioStreamPlayer 没有 loop 属性，用 finished 信号模拟
+        _bgm_player.finished.connect(_on_bgm_finished)
+
+func _on_bgm_finished() -> void:
+    if _bgm_player and _bgm_player.stream:
+        _bgm_player.play()
 
 func play_sfx(stream: AudioStream, volume_db: float = {{audio_volume}}) -> void:
     if not stream:
