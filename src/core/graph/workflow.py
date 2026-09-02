@@ -1187,6 +1187,7 @@ class GameDevWorkflow:
             "is_complete": False,
             "requires_human_input": False,
             "project_context": input_state.get("project_context", {}),
+            "sandbox": input_state.get("sandbox"),
             "error_log": [],
             "scene_description": None,
             "scene_status": "pending",
