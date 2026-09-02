@@ -571,7 +571,7 @@ class GameDevWorkflow:
             editor = GodotEditor(sandbox_cfg or self.config)
             valid, _editor_msg = editor.validate()
             if valid:
-                await self._godot_compile_loop_headless(state, event_callback, max_rounds, editor, use_sandbox=use_sandbox)
+                await self._godot_compile_loop_headless(state, event_callback, max_rounds, editor)
                 return
             if compile_mode == "headless":
                 await event_callback("compile_result", {
@@ -652,7 +652,7 @@ class GameDevWorkflow:
         })
 
     async def _godot_compile_loop_headless(
-        self, state: GameDevState, event_callback, max_rounds: int, editor, use_sandbox: bool = False
+        self, state: GameDevState, event_callback, max_rounds: int, editor
     ) -> None:
         """Headless 编译闭环（无需 Godot 编辑器 GUI）
 
