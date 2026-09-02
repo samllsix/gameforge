@@ -30,6 +30,7 @@ from src.agents.refactor import RefactorAgent
 from src.agents.main_reviewer import MainReviewerAgent
 from src.core.memory import MemoryManager
 from src.core.recipes import RecipeStore
+from src.sandbox.controller import SandboxController
 
 
 class GameDevWorkflow:
@@ -64,6 +65,10 @@ class GameDevWorkflow:
         # P1 语义级复用：已验证配方库。命中则整体复用，绕过 LLM 主流水线。
         self.recipe_store = RecipeStore()
         self.recipe_enabled = config.get("recipes", {}).get("enabled", True)
+
+        # Sandbox 平台集成（Phase 1）
+        self.sandbox = SandboxController(config)
+        self.sandbox_enabled = config.get("sandbox", {}).get("enabled", False)
 
         self.graph = self._build_graph()
 
@@ -378,6 +383,22 @@ class GameDevWorkflow:
 
     # ========== 工具方法 ==========
 
+    def _sandbox_project_config(self, state: GameDevState) -> Optional[Dict[str, Any]]:
+        """若 Sandbox 启用，返回指向任务工作区的 Godot 配置副本；否则返回 None。"""
+        if not getattr(self, "sandbox_enabled", False):
+            return None
+        task = (state.get("sandbox") or {}).get("task")
+        if not task:
+            return None
+        task_dir = task.get("task_dir")
+        if not task_dir:
+            return None
+        cfg = dict(self.config)
+        godot_cfg = dict(cfg.get("godot") or {})
+        godot_cfg["project_path"] = task_dir
+        cfg["godot"] = godot_cfg
+        return cfg
+
     def log_action(self, action: str, details: Optional[Dict] = None) -> None:
         """记录操作日志（与 BaseAgent.log_action 语义一致）"""
         self.logger.info("agent_action", action=action, **(details or {}))
@@ -504,6 +525,9 @@ class GameDevWorkflow:
         """Godot 编译闭环：导入 → 编译 → 读错误 → 自动修复 → 重编译"""
         from src.engine.godot.godot_http_client import GodotHTTPClient
 
+        sandbox_cfg = self._sandbox_project_config(state)
+        use_sandbox = sandbox_cfg is not None
+
         # —— 编译闭环模式路由 ——
         # auto    : 配置了 Godot 引擎路径则走 headless（无需编辑器 GUI），否则退回 8765 HTTP
         # headless: 始终走 headless（未配置引擎路径则报错，不退回）
@@ -511,10 +535,10 @@ class GameDevWorkflow:
         compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
         if compile_mode in ("auto", "headless"):
             from src.engine.godot import GodotEditor
-            editor = GodotEditor(self.config)
+            editor = GodotEditor(sandbox_cfg or self.config)
             valid, _editor_msg = editor.validate()
             if valid:
-                await self._godot_compile_loop_headless(state, event_callback, max_rounds, editor)
+                await self._godot_compile_loop_headless(state, event_callback, max_rounds, editor, use_sandbox=use_sandbox)
                 return
             if compile_mode == "headless":
                 await event_callback("compile_result", {
@@ -535,6 +559,18 @@ class GameDevWorkflow:
         code_files = state.get("code_generated", {})
         gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
         if not gd_files:
+            return
+
+        if use_sandbox:
+            await event_callback("phase_start", {"phase": "compiling", "message": "正在写入沙箱工作区..."})
+            task = state.get("sandbox", {}).get("task")
+            for rel_path, content in gd_files.items():
+                if task:
+                    self.sandbox.modify(task, rel_path, content)
+            await event_callback("compile_result", {
+                "status": "success",
+                "message": f"已写入沙箱工作区 {len(gd_files)} 个文件",
+            })
             return
 
         await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
@@ -601,7 +637,7 @@ class GameDevWorkflow:
         })
 
     async def _godot_compile_loop_headless(
-        self, state: GameDevState, event_callback, max_rounds: int, editor
+        self, state: GameDevState, event_callback, max_rounds: int, editor, use_sandbox: bool = False
     ) -> None:
         """Headless 编译闭环（无需 Godot 编辑器 GUI）
 
@@ -830,14 +866,17 @@ class GameDevWorkflow:
           （无需打开编辑器 GUI，直接调用 Godot 引擎二进制落盘 .gd/.tscn 并校验）
         - 否则退回 8765 HTTP 编辑器插件
         """
+        sandbox_cfg = self._sandbox_project_config(state)
+        use_sandbox = sandbox_cfg is not None
+
         # —— 一键构建模式路由 ——
         compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
         if compile_mode in ("auto", "headless"):
             from src.engine.godot import GodotEditor
-            editor = GodotEditor(self.config)
+            editor = GodotEditor(sandbox_cfg or self.config)
             valid, _editor_msg = editor.validate()
             if valid:
-                await self._try_godot_pipeline_headless(state, event_callback, editor)
+                await self._try_godot_pipeline_headless(state, event_callback, editor, use_sandbox=use_sandbox)
                 return
             if compile_mode == "headless":
                 await event_callback("scene_skipped", {
@@ -861,7 +900,19 @@ class GameDevWorkflow:
         if not gd_files:
             return
 
-        # 第一步：导入所有代码文件
+        if use_sandbox:
+            await event_callback("phase_start", {"phase": "compiling", "message": "正在写入沙箱工作区..."})
+            task = state.get("sandbox", {}).get("task")
+            for rel_path, content in gd_files.items():
+                if task:
+                    self.sandbox.modify(task, rel_path, content)
+            await event_callback("compile_result", {
+                "status": "success",
+                "message": f"已写入沙箱工作区 {len(gd_files)} 个文件",
+            })
+            return
+
+        # 非沙箱模式：原 HTTP 编辑器导入
         await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
         import_result = await client.import_files(gd_files)
         if import_result.get("status") == "error":
@@ -927,7 +978,7 @@ class GameDevWorkflow:
             })
 
     async def _try_godot_pipeline_headless(
-        self, state: GameDevState, event_callback, editor
+        self, state: GameDevState, event_callback, editor, use_sandbox: bool = False
     ) -> None:
         """一键构建的 headless 实现（无需 Godot 编辑器 GUI）
 
@@ -941,6 +992,21 @@ class GameDevWorkflow:
         if not gd_files:
             return
 
+        if use_sandbox:
+            await event_callback("phase_start", {
+                "phase": "compiling",
+                "message": "正在写入沙箱工作区...",
+            })
+            task = state.get("sandbox", {}).get("task")
+            for rel_path, content in gd_files.items():
+                self.sandbox.modify(task, rel_path, content)
+            await event_callback("compile_result", {
+                "status": "success",
+                "message": f"已写入沙箱工作区 {len(gd_files)} 个文件",
+            })
+            return
+
+        # 非沙箱模式：原有 headless 写盘逻辑
         # 1) 写入 GDScript 到项目磁盘
         await event_callback("phase_start", {
             "phase": "compiling",
@@ -1299,9 +1365,24 @@ class GameDevWorkflow:
         _start = _time.time()
         set_active_workflows(1)
 
+        # Sandbox：创建任务工作区
+        sandbox_task = None
+        if self.sandbox_enabled:
+            try:
+                project_id = self._resolve_preview_project_id(state) or "default"
+                sandbox_task = self.sandbox.create(project_id, role="director")
+                state.setdefault("sandbox", {})["task"] = sandbox_task
+            except Exception as e:
+                self.logger.warning("sandbox_create_failed", error=str(e))
+
         # P1 语义级复用：命中已验证配方 → 快速路径直接返回
         recipe_state = await self._run_recipe(state, None)
         if recipe_state is not None:
+            if sandbox_task and self.sandbox_enabled:
+                try:
+                    self.sandbox.merge(sandbox_task)
+                except Exception as e:
+                    self.logger.warning("sandbox_merge_failed", error=str(e))
             return recipe_state
 
         # 加载项目记忆
@@ -1348,6 +1429,11 @@ class GameDevWorkflow:
             _success = False
             # 主图已失败，取消仍在后台运行的场景生成任务，避免任务泄漏
             scene_task.cancel()
+            if sandbox_task and self.sandbox_enabled:
+                try:
+                    self.sandbox.rollback(sandbox_task)
+                except Exception as e:
+                    self.logger.warning("sandbox_rollback_failed", error=str(e))
             raise
         finally:
             record_workflow_run(_success, _time.time() - _start)
@@ -1358,6 +1444,13 @@ class GameDevWorkflow:
         # Godot 一键构建 pipeline
         if state.get("scene_status") in (None, "pending", "skipped"):
             await self._try_godot_pipeline(state, lambda *a, **kw: asyncio.sleep(0))
+
+        # Sandbox：成功则合并回主线
+        if sandbox_task and self.sandbox_enabled:
+            try:
+                self.sandbox.merge(sandbox_task)
+            except Exception as e:
+                self.logger.warning("sandbox_merge_failed", error=str(e))
 
         return state
 
@@ -1375,9 +1468,24 @@ class GameDevWorkflow:
         _success = True
         set_active_workflows(1)
 
+        # Sandbox：创建任务工作区
+        sandbox_task = None
+        if self.sandbox_enabled:
+            try:
+                project_id = self._resolve_preview_project_id(state) or "default"
+                sandbox_task = self.sandbox.create(project_id, role="director")
+                state.setdefault("sandbox", {})["task"] = sandbox_task
+            except Exception as e:
+                self.logger.warning("sandbox_create_failed", error=str(e))
+
         # P1 语义级复用：命中已验证配方 → 快速路径直接返回
         recipe_state = await self._run_recipe(state, event_callback)
         if recipe_state is not None:
+            if sandbox_task and self.sandbox_enabled:
+                try:
+                    self.sandbox.merge(sandbox_task)
+                except Exception as e:
+                    self.logger.warning("sandbox_merge_failed", error=str(e))
             return recipe_state
 
         project_name = state.get("project_context", {}).get("project_name", "default")
@@ -1470,6 +1578,11 @@ class GameDevWorkflow:
         except Exception as e:
             _success = False
             await event_callback("error", {"message": f"生成过程出错: {str(e)}"})
+            if sandbox_task and self.sandbox_enabled:
+                try:
+                    self.sandbox.rollback(sandbox_task)
+                except Exception as rollback_error:
+                    self.logger.warning("sandbox_rollback_failed", error=str(rollback_error))
 
         for task in state.get("task_plan", []):
             if task.get("status") == TaskStatus.COMPLETED.value:
@@ -1545,6 +1658,13 @@ class GameDevWorkflow:
             "warnings": state.get("warnings", []),
             **({"project_id": pid} if pid else {}),
         })
+
+        # Sandbox：成功则合并回主线
+        if sandbox_task and self.sandbox_enabled:
+            try:
+                self.sandbox.merge(sandbox_task)
+            except Exception as e:
+                self.logger.warning("sandbox_merge_failed", error=str(e))
 
         return state
 

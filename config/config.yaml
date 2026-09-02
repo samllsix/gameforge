@@ -173,3 +173,12 @@ mcp:
     circuit_breaker:
       threshold: 5
       recovery_s: 60
+
+# Sandbox Configuration
+sandbox:
+  enabled: false
+  workspace_root: data/sandbox
+  memory_limit_mb: 2048
+  cpu_time_seconds: 120
+  timeout_seconds: 120
+  process_limit: 32
