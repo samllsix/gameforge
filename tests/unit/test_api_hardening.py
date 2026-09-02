@@ -197,3 +197,31 @@ def test_preview_width_rejects_out_of_range(api_client):
         "project_id": "demo", "width": 99999,
     })
     assert r.status_code == 422
+
+
+def test_preview_task_id_resolves_sandbox_path(api_client, tmp_path):
+    """sandbox task_id 应解析到 data/sandbox/<project_id>/tasks/<task_id>/"""
+    import os
+    from src.api.main import _resolve_preview_project
+
+    project_id = "demo"
+    task_id = "task_123"
+    sandbox_root = tmp_path / "data" / "sandbox" / project_id / "tasks" / task_id
+    sandbox_root.mkdir(parents=True, exist_ok=True)
+    (sandbox_root / "project.godot").write_text("[application]\n", encoding="utf-8")
+
+    cwd = os.getcwd()
+    os.chdir(str(tmp_path))
+    try:
+        resolved = _resolve_preview_project(project_id, task_id=task_id)
+        assert os.path.isdir(resolved)
+        assert resolved.endswith(os.path.join("data", "sandbox", project_id, "tasks", task_id))
+    finally:
+        os.chdir(cwd)
+
+
+def test_preview_task_id_missing_returns_404(api_client):
+    r = api_client.get("/api/v1/preview/frame", params={
+        "project_id": "demo", "task_id": "task_missing",
+    })
+    assert r.status_code == 404
