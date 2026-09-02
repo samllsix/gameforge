@@ -1055,7 +1055,8 @@ class GameDevWorkflow:
 
         # 3) headless 一次性校验（不做自动修复闭环）
         import os as _os2
-        _proj2 = self.config.get("godot", {}).get("project_path", "") or _os2.getcwd()
+        _sandbox_cfg = self._sandbox_project_config(state)
+        _proj2 = (_sandbox_cfg or self.config).get("godot", {}).get("project_path", "") or _os2.getcwd()
         res_paths = []
         for k in gd_files.keys():
             clean = k.removeprefix("res://").removeprefix("res:/")
