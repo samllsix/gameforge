@@ -124,6 +124,36 @@ class GameDevWorkflow:
             out["task_id"] = tid
         return out
 
+    async def _gd_guard_scan(self, state: GameDevState, event_callback) -> bool:
+        """安全闸门：gd-guard 扫描生成脚本。
+
+        返回 True 表示被拦截（调用方应提前结束工作流），False 表示继续。
+        """
+        try:
+            import src.engine.godot.gd_guard as _gd_guard
+
+            task = (state.get("sandbox") or {}).get("task")
+            scan_dir = None
+            if task and task.get("task_dir"):
+                scan_dir = task["task_dir"]
+            else:
+                project_hint = self._resolve_preview_project_id(state)
+                if project_hint:
+                    scan_dir = os.path.join("projects", project_hint)
+            if scan_dir and os.path.isdir(scan_dir):
+                guard = _gd_guard.scan_project(scan_dir)
+                if guard["available"] and guard["verdict"] == "block":
+                    findings = guard["findings"][:5]
+                    state["warnings"] = list(state.get("warnings", [])) + [
+                        f"gd-guard 拦截: {f.get('file','')}:{f.get('line','')} {f.get('detail','')}" for f in findings
+                    ]
+                    await event_callback("scene_error", {"message": "gd-guard 安全闸门拦截了危险脚本，已阻止运行/出包"})
+                    state["runnable"] = False
+                    return True
+        except Exception:  # noqa: BLE001
+            pass  # 闸门缺失/异常不阻塞主流程(失败开放)
+        return False
+
     def _build_graph(self):
         """构建LangGraph状态图，返回编译后的可执行图"""
         workflow = StateGraph(GameDevState)
@@ -1637,24 +1667,8 @@ class GameDevWorkflow:
             await self._try_godot_pipeline(state, event_callback)
 
         # 安全闸门：gd-guard 扫描生成脚本（危险 API 一票否决，Rust 二进制缺失则跳过）
-        try:
-            from src.engine.godot.gd_guard import scan_project
-
-            project_hint = self._resolve_preview_project_id(state)
-            if project_hint:
-                scan_dir = os.path.join("projects", project_hint)
-                if os.path.isdir(scan_dir):
-                    guard = scan_project(scan_dir)
-                    if guard["available"] and guard["verdict"] == "block":
-                        findings = guard["findings"][:5]
-                        state["warnings"] = list(state.get("warnings", [])) + [
-                            f"gd-guard 拦截: {f.get('file','')}:{f.get('line','')} {f.get('detail','')}" for f in findings
-                        ]
-                        await event_callback("scene_error", {"message": "gd-guard 安全闸门拦截了危险脚本，已阻止运行/出包"})
-                        state["runnable"] = False
-                        return state
-        except Exception:  # noqa: BLE001
-            pass  # 闸门缺失/异常不阻塞主流程(失败开放)
+        if await self._gd_guard_scan(state, event_callback):
+            return state
 
         # P0-2 运行时冒烟测试（"可运行"闭环）
         smoke_summary = await self._runtime_smoke_test(state, event_callback)
