@@ -1376,6 +1376,17 @@ async def sandbox_status(project_id: str):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.delete("/api/v1/sandbox/{project_id}/task/{task_id}")
+async def sandbox_destroy(project_id: str, task_id: str):
+    """销毁沙箱任务工作区"""
+    try:
+        sandbox = SandboxController(config)
+        sandbox.destroy(project_id, task_id=task_id)
+        return {"ok": True}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 def start_server(host: Optional[str] = None, port: Optional[int] = None, workers: int = 1):
     """启动服务器"""
     resolved_host = host or DEFAULT_HOST
