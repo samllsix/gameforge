@@ -713,7 +713,8 @@ class GameDevWorkflow:
 
         # 3) 校验闭环
         import os as _os
-        _proj = (sandbox_cfg or self.config).get("godot", {}).get("project_path", "") or _os.getcwd()
+        _sandbox_cfg = self._sandbox_project_config(state)
+        _proj = (_sandbox_cfg or self.config).get("godot", {}).get("project_path", "") or _os.getcwd()
         res_paths = []
         for k in gd_files.keys():
             clean = k.removeprefix("res://").removeprefix("res:/")
