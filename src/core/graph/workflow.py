@@ -1296,6 +1296,8 @@ class GameDevWorkflow:
             return None
 
         RecipeStore.apply_recipe(state, recipe)
+        # Sandbox：配方命中后，将复用代码同步到任务工作区
+        self._sandbox_sync_code_generated(state, state)
 
         async def _noop(event_type, data):
             pass
