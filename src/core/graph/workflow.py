@@ -482,6 +482,23 @@ class GameDevWorkflow:
         cfg["godot"] = godot_cfg
         return cfg
 
+    def _sandbox_cleanup_if_needed(self, project_id: str) -> None:
+        """当项目沙箱任务数超过阈值时，自动清理最旧的任务。"""
+        if not getattr(self, "sandbox_enabled", False) or not getattr(self, "sandbox", None):
+            return
+        try:
+            tasks = self.sandbox.workspace.list_tasks(project_id)
+            threshold = int((self.config.get("sandbox") or {}).get("cleanup_threshold", 20))
+            if len(tasks) <= threshold:
+                return
+            keep_last = int((self.config.get("sandbox") or {}).get("cleanup_keep_last", 10))
+            max_age_hours = int((self.config.get("sandbox") or {}).get("cleanup_max_age_hours", 168))
+            result = self.sandbox.cleanup(project_id, keep_last=keep_last, max_age_hours=max_age_hours)
+            if result.get("removed"):
+                self.log_action("sandbox_auto_cleanup", result)
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("sandbox_cleanup_failed", error=str(e))
+
     def log_action(self, action: str, details: Optional[Dict] = None) -> None:
         """记录操作日志（与 BaseAgent.log_action 语义一致）"""
         self.logger.info("agent_action", action=action, **(details or {}))
@@ -1437,6 +1454,7 @@ class GameDevWorkflow:
                 project_id = self._resolve_preview_project_id(state) or "default"
                 sandbox_task = self.sandbox.create(project_id, role="director")
                 state.setdefault("sandbox", {})["task"] = sandbox_task
+                self._sandbox_cleanup_if_needed(project_id)
             except Exception as e:
                 self.logger.warning("sandbox_create_failed", error=str(e))
 
@@ -1540,6 +1558,7 @@ class GameDevWorkflow:
                 project_id = self._resolve_preview_project_id(state) or "default"
                 sandbox_task = self.sandbox.create(project_id, role="director")
                 state.setdefault("sandbox", {})["task"] = sandbox_task
+                self._sandbox_cleanup_if_needed(project_id)
             except Exception as e:
                 self.logger.warning("sandbox_create_failed", error=str(e))
 
