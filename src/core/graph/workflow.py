@@ -1231,6 +1231,8 @@ class GameDevWorkflow:
             logger.warning("code_validation_failed", error=str(e))
 
         self._add_project_artifacts(state)
+        # Sandbox：后处理生成的产物也同步到任务工作区
+        self._sandbox_sync_code_generated(state, state)
 
         # 评测系统
         try:
