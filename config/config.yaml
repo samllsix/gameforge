@@ -184,3 +184,13 @@ sandbox:
   process_limit: 32
   auto_merge: true
   auto_rollback: true
+  backend: local  # local | docker
+  cleanup_threshold: 20
+  cleanup_keep_last: 10
+  cleanup_max_age_hours: 168
+  docker:
+    image: gameforge/sandbox-runner:latest
+    network: false
+    mem_limit: 2g
+    cpu_quota: 100000
+    pids_limit: 32

@@ -41,7 +41,8 @@ class SandboxController:
     """统一入口：创建沙箱、权限校验、快照留痕、受限执行、合并/回滚。"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        cfg = (config or {}).get("sandbox", {})
+        self.config = config or {}
+        cfg = self.config.get("sandbox", {})
         self.workspace = WorkspaceManager(
             workspace_root=cfg.get("workspace_root") or os.environ.get("GAMEFORGE_WORKSPACE_ROOT"),
         )
@@ -133,9 +134,53 @@ class SandboxController:
             "started_at": time.strftime("%H:%M:%S"),
         }
         try:
+            backend = (self.config or {}).get("sandbox", {}).get("backend", "local")
+            if backend == "docker":
+                docker_cfg = (self.config or {}).get("sandbox", {}).get("docker") or {}
+                return self._execute_docker(task, cmd, pol, task_dir, docker_cfg)
             return run_isolated(cmd, policy=pol, cwd=task_dir)
         finally:
             self._active_runs.pop(task["task_id"], None)
+
+    def _execute_docker(
+        self,
+        task: Dict[str, str],
+        cmd: List[str],
+        policy: RuntimePolicy,
+        task_dir: str,
+        docker_cfg: Dict[str, Any],
+    ) -> ExecutionOutcome:
+        """Docker 后端：在容器里执行命令。"""
+        from src.sandbox.runtime.docker_runtime import run_in_container, DockerRuntimeError
+
+        image = docker_cfg.get("image", "gameforge/sandbox-runner:latest")
+        network_disabled = not bool(docker_cfg.get("network", False))
+        mem_limit = docker_cfg.get("mem_limit", "2g")
+        cpu_quota = int(docker_cfg.get("cpu_quota", 100000))
+        pids_limit = int(docker_cfg.get("pids_limit", 32))
+
+        try:
+            return run_in_container(
+                cmd=cmd,
+                policy=policy,
+                cwd=task_dir,
+                env=policy.sanitized_env(),
+                image=image,
+                network_disabled=network_disabled,
+                mem_limit=mem_limit,
+                cpu_quota=cpu_quota,
+                pids_limit=pids_limit,
+            )
+        except DockerRuntimeError as exc:
+            logger.error("docker_backend_error", error=str(exc))
+            return ExecutionOutcome(
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                elapsed_seconds=0.0,
+                killed_reason="docker_error",
+            )
 
     def set_policy(self, task: Dict[str, str], **overrides) -> RuntimePolicy:
         """给任务设置运行策略（如 QA 跑大场景放宽内存）。"""
