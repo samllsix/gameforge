@@ -53,6 +53,7 @@ from src.api.schemas import (
     HealthResponse,
     AgentListResponse,
 )
+from src.sandbox.controller import SandboxController
 
 logger = structlog.get_logger()
 
@@ -254,6 +255,8 @@ def _digital_life_html_path() -> str:
     return os.path.join(project_root, "digital-life-system-spatial.html")
 
 
+@app.get("/")
+@app.get("/app")
 @app.get("/dashboard")
 @app.get("/digital")
 async def serve_dashboard():
@@ -1309,6 +1312,65 @@ async def serve_play(project_id: str, file_path: str):
             "Cache-Control": "no-store",
         },
     )
+
+
+# ── Sandbox Management API ──
+
+@app.post("/api/v1/sandbox/{project_id}/create")
+async def sandbox_create(project_id: str, role: str = "director"):
+    """创建沙箱任务工作区"""
+    try:
+        sandbox = SandboxController(config)
+        task = sandbox.create(project_id, role=role)
+        return {"ok": True, "task": task}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/sandbox/{project_id}/task/{task_id}/modify")
+async def sandbox_modify(project_id: str, task_id: str, rel_path: str, content: str):
+    """修改沙箱工作区文件"""
+    try:
+        sandbox = SandboxController(config)
+        task = {"task_id": task_id, "task_dir": os.path.join("data", "sandbox", project_id, task_id), "role": "director"}
+        snap_id = sandbox.modify(task, rel_path, content)
+        return {"ok": True, "snap_id": snap_id}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/sandbox/{project_id}/task/{task_id}/merge")
+async def sandbox_merge(project_id: str, task_id: str):
+    """合并沙箱工作区到主线"""
+    try:
+        sandbox = SandboxController(config)
+        task = {"task_id": task_id, "task_dir": os.path.join("data", "sandbox", project_id, task_id), "role": "director"}
+        main_path = sandbox.merge(task)
+        return {"ok": True, "merged_to": str(main_path)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/sandbox/{project_id}/task/{task_id}/rollback")
+async def sandbox_rollback(project_id: str, task_id: str):
+    """回滚沙箱工作区"""
+    try:
+        sandbox = SandboxController(config)
+        task = {"task_id": task_id, "task_dir": os.path.join("data", "sandbox", project_id, task_id), "role": "director"}
+        sandbox.rollback(task)
+        return {"ok": True}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/sandbox/{project_id}/status")
+async def sandbox_status(project_id: str):
+    """查询沙箱状态"""
+    try:
+        sandbox = SandboxController(config)
+        return sandbox.status(project_id=project_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def start_server(host: Optional[str] = None, port: Optional[int] = None, workers: int = 1):
