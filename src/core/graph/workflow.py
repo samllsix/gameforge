@@ -895,7 +895,7 @@ class GameDevWorkflow:
             editor = GodotEditor(sandbox_cfg or self.config)
             valid, _editor_msg = editor.validate()
             if valid:
-                await self._try_godot_pipeline_headless(state, event_callback, editor, use_sandbox=use_sandbox)
+                await self._try_godot_pipeline_headless(state, event_callback, editor)
                 return
             if compile_mode == "headless":
                 await event_callback("scene_skipped", {
@@ -992,7 +992,7 @@ class GameDevWorkflow:
             })
 
     async def _try_godot_pipeline_headless(
-        self, state: GameDevState, event_callback, editor, use_sandbox: bool = False
+        self, state: GameDevState, event_callback, editor
     ) -> None:
         """一键构建的 headless 实现（无需 Godot 编辑器 GUI）
 
