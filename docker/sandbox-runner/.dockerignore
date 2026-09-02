@@ -1,0 +1,17 @@
+# Sandbox runner image build context
+**/__pycache__
+**/*.pyc
+.git
+.github
+.vscode
+.idea
+*.md
+!README.md
+docs/
+tests/
+static/
+projects/
+data/
+docker-compose*.yml
+Dockerfile
+docker/
