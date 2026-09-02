@@ -68,7 +68,10 @@ class GameDevWorkflow:
 
         # Sandbox 平台集成（Phase 1）
         self.sandbox = SandboxController(config)
-        self.sandbox_enabled = config.get("sandbox", {}).get("enabled", False)
+        sandbox_cfg = config.get("sandbox", {})
+        self.sandbox_enabled = sandbox_cfg.get("enabled", False)
+        self.sandbox_auto_merge = sandbox_cfg.get("auto_merge", True)
+        self.sandbox_auto_rollback = sandbox_cfg.get("auto_rollback", True)
 
         self.graph = self._build_graph()
 
@@ -1381,7 +1384,7 @@ class GameDevWorkflow:
         # P1 语义级复用：命中已验证配方 → 快速路径直接返回
         recipe_state = await self._run_recipe(state, None)
         if recipe_state is not None:
-            if sandbox_task and self.sandbox_enabled:
+            if sandbox_task and self.sandbox_enabled and self.sandbox_auto_merge:
                 try:
                     self.sandbox.merge(sandbox_task)
                 except Exception as e:
@@ -1432,7 +1435,7 @@ class GameDevWorkflow:
             _success = False
             # 主图已失败，取消仍在后台运行的场景生成任务，避免任务泄漏
             scene_task.cancel()
-            if sandbox_task and self.sandbox_enabled:
+            if sandbox_task and self.sandbox_enabled and self.sandbox_auto_rollback:
                 try:
                     self.sandbox.rollback(sandbox_task)
                 except Exception as e:
@@ -1449,7 +1452,7 @@ class GameDevWorkflow:
             await self._try_godot_pipeline(state, lambda *a, **kw: asyncio.sleep(0))
 
         # Sandbox：成功则合并回主线
-        if sandbox_task and self.sandbox_enabled:
+        if sandbox_task and self.sandbox_enabled and self.sandbox_auto_merge:
             try:
                 self.sandbox.merge(sandbox_task)
             except Exception as e:
@@ -1581,7 +1584,7 @@ class GameDevWorkflow:
         except Exception as e:
             _success = False
             await event_callback("error", {"message": f"生成过程出错: {str(e)}"})
-            if sandbox_task and self.sandbox_enabled:
+            if sandbox_task and self.sandbox_enabled and self.sandbox_auto_rollback:
                 try:
                     self.sandbox.rollback(sandbox_task)
                 except Exception as rollback_error:
@@ -1663,7 +1666,7 @@ class GameDevWorkflow:
         })
 
         # Sandbox：成功则合并回主线
-        if sandbox_task and self.sandbox_enabled:
+        if sandbox_task and self.sandbox_enabled and self.sandbox_auto_merge:
             try:
                 self.sandbox.merge(sandbox_task)
             except Exception as e:

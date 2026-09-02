@@ -182,3 +182,5 @@ sandbox:
   cpu_time_seconds: 120
   timeout_seconds: 120
   process_limit: 32
+  auto_merge: true
+  auto_rollback: true
