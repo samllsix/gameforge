@@ -28,10 +28,8 @@ from src.agents.scene_generator import SceneGeneratorAgent
 from src.agents.game_designer import GameDesignerAgent
 from src.agents.refactor import RefactorAgent
 from src.agents.main_reviewer import MainReviewerAgent
-from src.agents.reflector import ReflectorAgent
 from src.core.memory import MemoryManager
 from src.core.recipes import RecipeStore
-from src.core.dialogue.review_refactor_negotiation import run_review_refactor_dialogue
 
 
 class GameDevWorkflow:
@@ -59,7 +57,6 @@ class GameDevWorkflow:
         self.scene_generator = SceneGeneratorAgent(config)
         self.refactor_agent = RefactorAgent(config)
         self.main_reviewer = MainReviewerAgent(config)
-        self.reflector = ReflectorAgent(config)
 
         # 记忆系统 — 让 Agent 有上下文记忆
         self.memory = MemoryManager()
@@ -67,26 +64,6 @@ class GameDevWorkflow:
         # P1 语义级复用：已验证配方库。命中则整体复用，绕过 LLM 主流水线。
         self.recipe_store = RecipeStore()
         self.recipe_enabled = config.get("recipes", {}).get("enabled", True)
-
-        # 多智能体改造第一步：审查↔重构对话协商开关（默认关闭，保持原流水线行为）
-        self.dialogue_enabled = (
-            config.get("agents", {})
-            .get("review_refactor", {})
-            .get("dialogue_enabled", False)
-        )
-        self.dialogue_max_rounds = (
-            config.get("agents", {})
-            .get("review_refactor", {})
-            .get("max_rounds", 3)
-        )
-
-        # 多智能体改造第二步：反思回环开关（默认关闭，保持原流水线行为）
-        self.reflector_enabled = (
-            config.get("agents", {}).get("reflector", {}).get("enabled", False)
-        )
-        self.max_reflections = (
-            config.get("agents", {}).get("reflector", {}).get("max_reflections", 1)
-        )
 
         self.graph = self._build_graph()
 
@@ -132,10 +109,6 @@ class GameDevWorkflow:
         workflow.add_node("test_generator", self._test_generator_node)
         workflow.add_node("debugger", self._debugger_node)
         workflow.add_node("main_reviewer", self._main_reviewer_node)
-        # 对话协商节点（仅在开启时挂到主路径，常驻定义不影响旧行为）
-        workflow.add_node("review_refactor_dialogue", self._review_refactor_dialogue_node)
-        # 反思节点（多智能体改造第二步，常驻定义，仅在开启时接入主路径）
-        workflow.add_node("reflector", self._reflector_node)
 
         # 入口点
         workflow.set_entry_point("game_designer")
@@ -144,24 +117,11 @@ class GameDevWorkflow:
         workflow.add_edge("game_designer", "planner")
         workflow.add_edge("planner", "orchestrator")
         workflow.add_edge("code_generator", "code_reviewer")
+        workflow.add_edge("code_reviewer", "refactor")
+        workflow.add_edge("refactor", "test_generator")
         workflow.add_edge("test_generator", "main_reviewer")
+        workflow.add_edge("main_reviewer", "orchestrator")
         workflow.add_edge("debugger", "orchestrator")
-
-        # 多智能体改造第二步：开启反思时，main_reviewer -> reflector -> orchestrator
-        if self.reflector_enabled:
-            workflow.add_edge("main_reviewer", "reflector")
-            workflow.add_edge("reflector", "orchestrator")
-        else:
-            workflow.add_edge("main_reviewer", "orchestrator")
-
-        if self.dialogue_enabled:
-            # 多智能体模式：审查与重构通过多轮对话协商，而非单向交接
-            workflow.add_edge("code_reviewer", "review_refactor_dialogue")
-            workflow.add_edge("review_refactor_dialogue", "test_generator")
-        else:
-            # 原流水线：审查 → 重构 → 测试
-            workflow.add_edge("code_reviewer", "refactor")
-            workflow.add_edge("refactor", "test_generator")
 
         # 条件边：orchestrator 根据当前状态路由到不同节点
         workflow.add_conditional_edges(
@@ -171,7 +131,6 @@ class GameDevWorkflow:
                 "code_generator": "code_generator",
                 "test_generator": "test_generator",
                 "debugger": "debugger",
-                "planner": "planner",  # 多智能体改造第二步：反思触发重规划
                 END: END,
             },
         )
@@ -305,33 +264,6 @@ class GameDevWorkflow:
         except Exception as e:
             return {"error_log": [f"Refactor failed: {e}"], "current_phase": "error"}
 
-    async def _review_refactor_dialogue_node(self, state: GameDevState) -> Dict[str, Any]:
-        """审查↔重构 对话协商节点（多智能体改造第一步）
-
-        调用 DialogueSession 让 code_reviewer(指导者) 与 refactor(助手) 多轮协商，
-        直至审查通过或达到 max_rounds。全程 transcript 写回 state，使协作可见。
-        """
-        try:
-            result = await run_review_refactor_dialogue(
-                self.code_reviewer,
-                self.refactor_agent,
-                state,
-                max_rounds=self.dialogue_max_rounds,
-            )
-            return result
-        except Exception as e:
-            # 兜底：对话失败不阻断主流程，退化为旧行为（仅审查，不重构）
-            self.logger.error("review_refactor_dialogue_failed", error=str(e))
-            try:
-                review_result = await self.code_reviewer.review(state)
-            except Exception:
-                review_result = {}
-            return {
-                "current_phase": "code_reviewed",
-                "review_result": review_result,
-                "error_log": [f"review_refactor_dialogue failed: {e}"],
-            }
-
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """测试生成节点 — 为 GDScript 代码生成 GUT 测试用例"""
         try:
@@ -395,31 +327,8 @@ class GameDevWorkflow:
                 "current_phase": "main_review_error",
             }
 
-    async def _reflector_node(self, state: GameDevState) -> Dict[str, Any]:
-        """反思节点（多智能体改造第二步）
-
-        在 main_reviewer 之后复盘整次运行，判断是否需要重规划。
-        结果写入 reflection_result / reflection_count，由 _route_next 决定是否回到 planner。
-        """
-        try:
-            result = await self.reflector.execute(state)
-            count = state.get("reflection_count", 0) + 1
-            return {
-                "reflection_result": result,
-                "reflection_count": count,
-                "current_phase": "reflected",
-            }
-        except Exception as e:
-            self.logger.error("reflector_failed", error=str(e))
-            return {
-                "reflection_result": {"verdict": "ok", "replan_needed": False, "error": str(e)},
-                "reflection_count": state.get("reflection_count", 0) + 1,
-                "current_phase": "reflected",
-                "error_log": [f"Reflector failed: {e}"],
-            }
-
     async def _debugger_node(self, state: GameDevState) -> Dict[str, Any]:
-        """调试节点 — 分析 GDScript 错误并生成修复"""
+        """调试节点 — 分析 GDScript 错误并生成修复（委托 code_generator 修复能力）"""
         try:
             error_log = state.get("error_log", [])
             fix_result = await self.debugger.analyze_and_fix(state, error_log)
@@ -439,16 +348,6 @@ class GameDevWorkflow:
         # 工作流完成
         if current_phase == "workflow_complete" or state.get("is_complete"):
             return END
-
-        # 多智能体改造第二步：反思判定需要重规划，且未超过最大反思次数 → 回到 planner
-        refl = state.get("reflection_result") or {}
-        if (
-            self.reflector_enabled
-            and refl.get("replan_needed")
-            and current_phase == "reflected"
-            and state.get("reflection_count", 0) < self.max_reflections
-        ):
-            return "planner"
 
         # 需要修复 → debugger
         if current_phase == "needs_fix":
@@ -519,6 +418,34 @@ class GameDevWorkflow:
 
     # ========== 场景生成（与主图并行） ==========
 
+    def _persist_scene_ir(self, state: GameDevState, scene_ir) -> None:
+        """把工作流生成的 Scene IR 落盘到 projects/<pid>/.scene_ir.json。
+
+        预览端点（/api/v1/preview/frame）优先读取该文件构建场景，
+        替代旧的硬编码 default_scene_ir 抢跑（P0-1）。
+        requirements 一并落盘，供美术指导器按需求关键词匹配主题包。
+        """
+        if scene_ir is None:
+            return
+        pid = self._resolve_preview_project_id(state)
+        if not pid:
+            return
+        try:
+            ir_data = scene_ir.model_dump() if hasattr(scene_ir, "model_dump") else dict(scene_ir)
+            payload = {
+                "project_id": pid,
+                "requirements": (state.get("project_context", {}) or {}).get("requirements", ""),
+                "scene_ir": ir_data,
+            }
+            proj_dir = os.path.join("projects", pid)
+            os.makedirs(proj_dir, exist_ok=True)
+            ir_path = os.path.join(proj_dir, ".scene_ir.json")
+            with open(ir_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            self.log_action("scene_ir_persisted", {"path": ir_path, "genre": ir_data.get("genre")})
+        except Exception as e:  # noqa: BLE001
+            self.log_error("scene_ir_persist_failed", {"error": str(e)})
+
     async def _run_scene_generation(self, state: GameDevState, event_callback):
         """并行运行场景生成（与代码生成同时进行）"""
         await event_callback("scene_start", {"message": "正在生成 Godot 场景..."})
@@ -529,6 +456,11 @@ class GameDevWorkflow:
             state["scene_description"] = result.get("scene_description")
             state["scene_path"] = result.get("scene_path", "")
             state["scene_error"] = result.get("scene_error")
+
+            # IR 落盘须先于 scene_complete 事件：前端收到 project_id 才开始轮询预览
+            scene_ir_obj = result.get("scene_ir")
+            if scene_ir_obj is not None:
+                await asyncio.to_thread(self._persist_scene_ir, state, scene_ir_obj)
 
             if result.get("compile_errors"):
                 state.setdefault("scene_compile_errors", []).extend(result["compile_errors"])
@@ -1199,9 +1131,6 @@ class GameDevWorkflow:
             "file_metadata": {},
             "validation_result": None,
             "warnings": [],
-            # 多智能体改造：反思回环 + 消息总线初始值
-            "reflection_result": None,
-            "reflection_count": 0,
             "message_bus": [],
         }
 

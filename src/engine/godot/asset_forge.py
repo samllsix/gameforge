@@ -148,7 +148,7 @@ def _smart_prompt(scene_ir: Any, role: str, fallback: str, entity_name: str) -> 
         )
         reply = client.chat_sync(
             messages=[{"role": "user", "content": user}],
-            max_tokens=48,
+            max_tokens=512,
             temperature=0.7,
         )
         text = (reply or "").strip().strip('"').strip()

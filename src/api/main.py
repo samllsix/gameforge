@@ -235,8 +235,6 @@ class StaticCacheMiddleware(BaseHTTPMiddleware):
         if path.startswith("/static/"):
             # 开发阶段：每次验证，避免 HTML/JS 版本不一致
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
-        elif path == "/app":
-            response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 
 
@@ -246,19 +244,10 @@ if os.path.isdir(_static_dir):
 app.add_middleware(StaticCacheMiddleware)
 
 
-@app.get("/app")
-async def serve_frontend():
-    """旧版聊天界面（兼容旧路径）"""
-    return FileResponse(
-        os.path.join(_static_dir, "index.html"),
-        headers={"Cache-Control": "no-cache, must-revalidate"},
-    )
-
-
-# ========== 数字生命驾驶舱主入口（替换旧聊天 UI） ==========
+# ========== 数字生命驾驶舱主入口 ==========
 
 def _digital_life_html_path() -> str:
-    """返回驾驶舱 HTML 的绝对路径，文件不存在时降级到旧 /app。"""
+    """返回驾驶舱 HTML 的绝对路径。"""
     project_root = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     )
@@ -673,7 +662,6 @@ async def list_agents():
         {"name": "test_generator", "description": "测试生成Agent - 生成测试用例"},
         {"name": "debugger", "description": "调试Agent - 分析错误并生成修复方案"},
         {"name": "refactor", "description": "重构Agent - 分析代码质量并优化重构"},
-        {"name": "reflector", "description": "反思Agent - 复盘运行并决定是否重规划（多智能体改造第二步）"},
         {"name": "scene_generator", "description": "场景生成Agent - 生成 Godot 场景"},
         {"name": "main_reviewer", "description": "主审查Agent - 终审与设计审查"},
     ]
@@ -684,7 +672,7 @@ async def list_agents():
 async def debug_feature(request: Dict[str, Any]):
     """调试端点：在浏览器中实测多智能体改造的每一项新能力（无需 LLM / 无需 Godot）。
 
-    请求体：{"feature": "reflect" | "bus" | "delegate" | "engine", "state": {...可选覆盖}}
+    请求体：{"feature": "bus" | "delegate" | "engine", "state": {...可选覆盖}}
     仅用于验证功能，不参与真实生成流水线。生产环境返回 404。
     """
     if IS_PRODUCTION:
@@ -704,12 +692,6 @@ async def debug_feature(request: Dict[str, Any]):
         "code_generated": state.get("code_generated", {}),
         "message_bus": state.get("message_bus", []),
     }
-
-    if feature == "reflect":
-        from src.agents.reflector import ReflectorAgent
-        agent = ReflectorAgent(config)
-        result = await agent.execute(base_state)
-        return {"feature": "reflect", "reflection": result}
 
     if feature == "bus":
         from src.core.state.bus import publish, messages_for, latest
@@ -873,6 +855,14 @@ _PREVIEW_PROJECT_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
 # scene 必须是 res:// 开头的项目内相对路径（正则只允许安全字符，另显式拒绝 ".."）
 _PREVIEW_SCENE_RE = re.compile(r"^res://[A-Za-z0-9_\-\.]+(/[A-Za-z0-9_\-\.]+)*$")
 
+# 每项目构建锁：250ms 轮询叠加分钟级构建必须按项目串行化，否则并发请求
+# 重复扣 AI 调用、清素材目录互相踩（P0-1）
+_PREVIEW_BUILD_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+class _PreviewBuiltByOtherRequest(Exception):
+    """并发轮询时场景已被其他请求构建完成，当前请求跳过构建直接取帧。"""
+
 
 def _resolve_preview_project(project_id: str) -> str:
     """把 project_id 解析为 projects/<project_id> 绝对路径，校验防路径穿越。"""
@@ -891,6 +881,29 @@ def _resolve_preview_project(project_id: str) -> str:
 def _projects_root() -> Path:
     """返回仓库内 projects/ 目录的绝对路径。"""
     return Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "projects"
+
+
+def _load_project_scene_ir(project_path: str):
+    """读取工作流落盘的 .scene_ir.json，返回 (SceneIR|None, requirements)。
+
+    P0-1：预览优先使用工作流真实 Scene IR；文件缺失/损坏时返回 (None, "")，
+    调用方回退 default_scene_ir（仅供无工作流的直接预览场景）。
+    """
+    ir_file = os.path.join(project_path, ".scene_ir.json")
+    if not os.path.isfile(ir_file):
+        return None, ""
+    try:
+        with open(ir_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        ir_data = payload.get("scene_ir") or {}
+        from src.agents.scene_ir import SceneIR
+
+        scene_ir = SceneIR(**ir_data)
+        requirements = str(payload.get("requirements") or "")
+        return scene_ir, requirements
+    except Exception as e:
+        logger.warning("preview.scene_ir_load_failed", error=str(e))
+        return None, ""
 
 
 @app.get("/api/v1/preview/frame")
@@ -922,31 +935,77 @@ async def preview_frame(
     # 2.0 自动建场景：如果项目下没有 project.godot + scenes/main.tscn，
     # 用 scene_to_godot 自动写一份场景（默认带 AI 生成的星露谷风像素素材，
     # 无 key / 关闭开关 / 失败时自动回退纯色块视觉），含视差背景、玩家、敌人、金币、HUD、粒子
+    project_rebuilt = False
     if not legacy_only:
         try:
-            main_tscn = os.path.join(project_path, "scenes", "main.tscn")
-            if not os.path.isfile(main_tscn):
-                from src.engine.godot.asset_forge import forge_assets
-                from src.engine.godot.scene_to_godot import (
-                    default_scene_ir, write_project,
-                )
-                scene_ir = default_scene_ir(theme="sky_blue", genre="platformer")
-                assets_on = (config or {}).get("assets", {}).get("ai_generated", True)
+            def _need_build() -> bool:
+                main_tscn = os.path.join(project_path, "scenes", "main.tscn")
+                if not os.path.isfile(main_tscn):
+                    return True
+                ir_file = os.path.join(project_path, ".scene_ir.json")
+                # IR 比场景新（工作流刚落盘）→ 重建，保证预览与需求一致
+                return os.path.isfile(ir_file) and \
+                    os.path.getmtime(ir_file) > os.path.getmtime(main_tscn)
 
-                def _build_project_files() -> None:
-                    # 主题驱动的美术指导书（一次 LLM 规划全部素材方向，失败回落母题模板）
-                    from src.agents.art_director import plan_art
+            if _need_build():
+                # 250ms 轮询 + 分钟级构建：必须按项目串行化，否则并发请求
+                # 重复扣 AI 调用、清素材目录互相踩
+                build_lock = _PREVIEW_BUILD_LOCKS.setdefault(project_id, asyncio.Lock())
+                async with build_lock:
+                    if not _need_build():
+                        raise _PreviewBuiltByOtherRequest
+                    from src.engine.godot.asset_forge import forge_assets
+                    from src.engine.godot.scene_to_godot import (
+                        default_scene_ir, write_project,
+                    )
 
-                    art_prompts = plan_art(scene_ir) if assets_on else None
-                    # forge_assets 内部有同项目锁 + 文件缓存，轮询重试不会重复扣 AI 调用
-                    assets = forge_assets(scene_ir, project_path, art_prompts=art_prompts) if assets_on else {}
-                    # 布局种子按 project_id 稳定散列：同项目重建布局一致，不同项目不重样
-                    layout_seed = abs(hash(project_id)) % (2 ** 31)
-                    write_project(project_path, scene_ir, width=width, height=height,
-                                  assets=assets, layout_seed=layout_seed)
+                    # P0-1：优先用工作流落盘的真实 Scene IR（需求一致），
+                    # 仅在无 IR 文件时回退默认 IR（供无工作流的直接预览）
+                    scene_ir, ir_requirements = _load_project_scene_ir(project_path)
+                    if scene_ir is None:
+                        scene_ir = default_scene_ir(theme="sky_blue", genre="platformer")
+                    assets_on = (config or {}).get("assets", {}).get("ai_generated", True)
 
-                await asyncio.to_thread(_build_project_files)
-                logger.info("preview.scene_auto_generated", project_id=project_id)
+                    def _build_project_files() -> None:
+                        # IR 更新触发的重建：清掉上一代 AI 素材缓存，避免旧主题素材复用
+                        gen_dir = os.path.join(project_path, "assets", "gen")
+                        if os.path.isdir(gen_dir):
+                            import shutil
+
+                            shutil.rmtree(gen_dir, ignore_errors=True)
+                        # 主题驱动的美术指导书（一次 LLM 规划全部素材方向，失败回落母题模板）
+                        from src.agents.art_director import plan_art
+
+                        art_prompts = (
+                            plan_art(scene_ir, requirements=ir_requirements) if assets_on else None
+                        )
+                        # forge_assets 内部有同项目锁 + 文件缓存，轮询重试不会重复扣 AI 调用
+                        assets = forge_assets(scene_ir, project_path, art_prompts=art_prompts) if assets_on else {}
+                        # 布局种子按 project_id 稳定散列：同项目重建布局一致，不同项目不重样
+                        layout_seed = abs(hash(project_id)) % (2 ** 31)
+                        write_project(project_path, scene_ir, width=width, height=height,
+                                      assets=assets, layout_seed=layout_seed)
+
+                        # 重建写入的新 PNG/WAV 必须重新 import：supervisor 只在 .godot
+                        # 缺失时预导入，旧缓存 + 新素材会导致场景加载失败 → 预览崩溃循环
+                        editor_path = (config or {}).get("godot", {}).get("editor_path", "") \
+                            or os.getenv("GODOT_EDITOR_PATH", "")
+                        if editor_path and os.path.isfile(editor_path):
+                            from src.engine.godot.export_kit import ensure_imported
+
+                            ensure_imported(project_path, editor_path)
+
+                    await asyncio.to_thread(_build_project_files)
+                    project_rebuilt = True
+                    logger.info(
+                        "preview.scene_auto_generated",
+                        project_id=project_id,
+                        source="workflow_ir" if os.path.isfile(
+                            os.path.join(project_path, ".scene_ir.json")
+                        ) else "default_ir",
+                    )
+        except _PreviewBuiltByOtherRequest:
+            pass
         except Exception as e:
             logger.warning("preview.scene_auto_gen_failed", error=str(e))
 
@@ -957,6 +1016,9 @@ async def preview_frame(
         # 2.0 长驻进程路径：真窗口 + mss 截图
         from src.engine.godot import GodotSupervisor, GodotTimeout, GodotCrashed
         supervisor = await GodotSupervisor.get_instance(config)
+        if project_rebuilt:
+            # 项目文件已重建：停掉跑旧场景的长驻进程，下面按新场景重新拉起
+            await supervisor.stop(project_id)
         if not await supervisor.is_alive(project_id):
             try:
                 await supervisor.start(project_id, project_path, scene_path=scene)
@@ -1061,7 +1123,7 @@ async def preview_stats():
     """查看 supervisor 当前所有 Godot 进程状态"""
     from src.engine.godot import GodotSupervisor
     sup = await GodotSupervisor.get_instance(config)
-    return sup.stats()
+    return await sup.stats()
 
 
 # ========== 一键发布：验收门禁 → 导出 → 可玩链接 ==========

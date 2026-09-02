@@ -66,7 +66,8 @@ class SnapshotManager:
             raise SnapshotError(f"任务工作区不存在: {task_dir}")
         project_id, task_id = self._ids(task_dir)
 
-        snap_id = f"snap_{int(time.time())}_{os.urandom(2).hex()}"
+        # 纳秒时间戳：秒级会同一秒内随机排序，破坏"新的在前"语义（list/prune 按名排序）
+        snap_id = f"snap_{time.time_ns()}_{os.urandom(2).hex()}"
         snap_dir = self._snap_root(project_id, task_id) / snap_id
         files_dir = snap_dir / "files"
         files_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +109,7 @@ class SnapshotManager:
             return None
 
         project_id, task_id = self._ids(task_dir)
-        snap_id = f"file_{int(time.time())}_{os.urandom(2).hex()}"
+        snap_id = f"file_{time.time_ns()}_{os.urandom(2).hex()}"
         snap_dir = self._snap_root(project_id, task_id) / snap_id / "files"
         dst = snap_dir / rel_path
         dst.parent.mkdir(parents=True, exist_ok=True)

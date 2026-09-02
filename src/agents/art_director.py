@@ -62,24 +62,99 @@ _THEME_NOUNS: Dict[str, Dict[str, str]] = {
 }
 
 
-def _find_theme_pack(theme: Optional[str]) -> Optional[Dict[str, str]]:
-    """按 SceneIR.theme 匹配主题包（palette_base 或 id）。"""
-    if not theme:
-        return None
+# 需求关键词 → 主题包（顺序即优先级，具体主题在前）。
+# P0-1：SceneIR.theme 可能是游戏标题（模板路径）或与包不符的调色板名，
+# 需求关键词是主题包匹配的最终兜底（太空→space_night，深海→ocean）。
+_KEYWORD_THEMES = (
+    (("太空", "宇宙", "星际", "飞船", "外星", "陨石", "space", "spaceship", "alien", "galaxy", "starship"), "space_night"),
+    (("深海", "海洋", "海底", "水下", "潜水", "鲨鱼", "ocean", "underwater", "diver"), "ocean"),
+    (("农场", "种植", "种田", "牧场", "farm", "farmer", "ranch"), "farm"),
+    (("赛博", "霓虹", "黑客", "cyber", "neon", "hacker"), "neon_city"),
+    (("地牢", "地下城", "迷宫", "宝箱", "dungeon"), "dungeon"),
+    (("丛林", "雨林", "神庙", "藤蔓", "jungle", "temple"), "jungle"),
+    (("雪原", "雪", "冰雪", "极光", "冰洞", "snow", "ice", "frozen"), "snow"),
+    (("沙漠", "绿洲", "金字塔", "desert", "oasis"), "desert"),
+    (("火山", "熔岩", "岩浆", "volcano", "lava", "magma"), "volcano"),
+    (("蒸汽", "齿轮", "飞艇", "steampunk", "airship"), "steampunk"),
+    (("中世纪", "骑士", "王国", "城堡", "medieval", "knight", "kingdom"), "medieval"),
+    (("童话", "精灵", "公主", "fairy"), "fairy_tale"),
+    (("石器", "原始", "恐龙", "部落", "穴居", "stone age", "dinosaur", "tribal"), "stone_age"),
+    (("废土", "末日", "辐射", "荒漠废墟", "wasteland", "apocalypse"), "wasteland"),
+    (("空岛", "浮空", "天空岛", "sky island", "floating island"), "sky_islands"),
+    (("昆虫", "虫子", "蚂蚁", "蜜蜂", "bug", "insect", "ant"), "bug_world"),
+    (("西部", "牛仔", "wild west", "cowboy"), "wild_west"),
+    (("武侠", "江湖", "仙侠", "剑客", "大侠", "wuxia", "swordsman"), "wuxia"),
+    (("墓地", "坟墓", "幽灵", "僵尸", "恐怖", "惊悚", "graveyard", "ghost", "zombie", "horror"), "graveyard"),
+    (("校园", "学校", "学生", "教室", "campus", "school"), "campus"),
+    (("拉面", "料理", "美食", "厨师", "餐厅", "ramen", "cooking", "chef"), "ramen"),
+    (("埃及", "法老", "木乃伊", "egypt", "pharaoh", "mummy"), "egypt"),
+    (("赛车", "竞速", "赛道", "racing", "race"), "racing_circuit"),
+    (("烘焙", "面包", "蛋糕", "糕点", "bakery", "bread", "cake"), "bakery"),
+    (("格斗", "竞技场", "擂台", "arena", "fighting"), "classic_arena"),
+)
+
+# 品类 → 默认主题包（主题与需求都给不出线索时的最后兜底）
+_GENRE_DEFAULT_PACK: Dict[str, str] = {
+    "shooter": "space_night",
+    "rpg": "dungeon",
+    "runner": "neon_city",
+    "tower_defense": "medieval",
+}
+
+
+def _pack_by_id(pack_id: str) -> Optional[Dict[str, str]]:
     from src.agents.genre_fusion import THEME_PACKS
 
     for pack in THEME_PACKS:
-        if pack["id"] == theme or pack["palette_base"] == theme:
+        if pack["id"] == pack_id:
             return pack
     return None
 
 
-def _fallback_plan(scene_ir: Any) -> Dict[str, str]:
+def _find_pack_by_keywords(text: Optional[str]) -> Optional[Dict[str, str]]:
+    """按需求文本关键词匹配主题包（首个命中优先）。"""
+    if not text:
+        return None
+    lowered = text.lower()
+    for keywords, pack_id in _KEYWORD_THEMES:
+        if any(kw in lowered for kw in keywords):
+            return _pack_by_id(pack_id)
+    return None
+
+
+def _resolve_pack(scene_ir: Any, requirements: Optional[str] = None) -> Optional[Dict[str, str]]:
+    """主题包三级解析：
+
+    1. SceneIR.theme 精确命中包 id（显式指定，最可信）
+    2. 需求关键词命中（theme 常为游戏标题或歧义调色板名，关键词可纠偏）
+    3. SceneIR.theme 命中 palette_base（sky_blue 等被多个包共享，歧义最低优先）
+    4. 品类默认包（shooter→space_night）
+    """
+    theme = getattr(scene_ir, "theme", None)
+    if theme:
+        pack = _pack_by_id(theme)
+        if pack:
+            return pack
+    pack = _find_pack_by_keywords(requirements)
+    if pack:
+        return pack
+    if theme:
+        from src.agents.genre_fusion import THEME_PACKS
+
+        for p in THEME_PACKS:
+            if p["palette_base"] == theme:
+                return p
+    genre = getattr(scene_ir, "genre", None)
+    default_id = _GENRE_DEFAULT_PACK.get(genre or "")
+    return _pack_by_id(default_id) if default_id else None
+
+
+def _fallback_plan(scene_ir: Any, requirements: Optional[str] = None) -> Dict[str, str]:
     """母题组合模板：主题包名词/母题词填槽（零 LLM，依旧主题化）。
 
     槽位名词表（char/foe/item/ground...）优先，剩余槽位用母题词补位。
     """
-    pack = _find_theme_pack(getattr(scene_ir, "theme", None))
+    pack = _resolve_pack(scene_ir, requirements)
     nouns = _THEME_NOUNS.get(pack["id"], {}) if pack else {}
     motifs = (pack["motifs"].split() if pack else [])
     m1 = nouns.get("char") or (motifs[0] if motifs else "cozy village")
@@ -105,24 +180,27 @@ def _fallback_plan(scene_ir: Any) -> Dict[str, str]:
     return plan
 
 
-def plan_art(scene_ir: Any) -> Dict[str, str]:
+def plan_art(scene_ir: Any, requirements: Optional[str] = None) -> Dict[str, str]:
     """规划整份美术指导书：{素材槽位: 英文生图提示}。
+
+    requirements 为原始需求文本：当 SceneIR.theme 无法命中主题包时
+    （theme 常为游戏标题），按需求关键词匹配主题包纠偏。
 
     LLM 一次调用产出全部槽位（比逐槽 smart_prompt 便宜 9 倍），
     输出缺槽/解析失败 → 按槽回落母题组合模板，保证恒有可用方案。
     风格约束（星露谷像素风）不在这里写——由生图漏斗统一追加。
     """
-    fallback = _fallback_plan(scene_ir)
+    fallback = _fallback_plan(scene_ir, requirements)
     if os.getenv("GAMEFORGE_SMART_PROMPTS", "1").strip().lower() in {"0", "false", "no"}:
         return fallback
 
-    pack = _find_theme_pack(getattr(scene_ir, "theme", None))
+    pack = _resolve_pack(scene_ir, requirements)
     motifs = pack["motifs"] if pack else "cozy village"
     genre = getattr(scene_ir, "genre", "platformer")
     try:
         from src.utils.llm_client import get_llm_client
 
-        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         import yaml
 
         cfg_path = os.path.join(repo_root, "config", "config.yaml")
@@ -139,7 +217,7 @@ def plan_art(scene_ir: Any) -> Dict[str, str]:
                 f'{{"background":"...","player":"...","enemy":"...","pickup":"...",'
                 f'"ground":"...","platform":"...","decoration":"...","npc":"...","icon":"..."}}'
             )}],
-            max_tokens=300,
+            max_tokens=2000,
             temperature=0.8,
         )
         import json

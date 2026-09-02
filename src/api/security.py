@@ -182,12 +182,25 @@ class SecurityHeadersMiddleware:
         (b"x-frame-options", b"DENY"),
         (b"x-xss-protection", b"1; mode=block"),
         (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
-        (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"),
         (b"referrer-policy", b"strict-origin-when-cross-origin"),
         (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
         (b"cache-control", b"no-store, no-cache, must-revalidate"),
         (b"pragma", b"no-cache"),
     ]
+
+    # API/JSON 等非渲染响应：严格 CSP（无 inline script）
+    CSP_STRICT = b"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+    # 后端自渲染的 HTML UI（/dashboard /app /demo）：内联脚本 + blob 预览帧 + Google Fonts
+    # 这些页面是第一方可信内容（随服务端一起发布），非用户生成，放开 inline 不引入注入面
+    CSP_HTML = (
+        b"default-src 'self'; "
+        b"script-src 'self' 'unsafe-inline'; "
+        b"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        b"font-src 'self' data: https://fonts.gstatic.com; "
+        b"img-src 'self' data: blob:; "
+        b"connect-src 'self' blob:; "
+        b"frame-ancestors 'none'"
+    )
 
     def __init__(self, app):
         self.app = app
@@ -203,6 +216,12 @@ class SecurityHeadersMiddleware:
                 # 添加安全头
                 for key, value in self.HEADERS:
                     headers.append((key, value))
+                # HTML 文档放宽 CSP（UI 内联脚本/预览 blob 帧），其余响应保持严格
+                content_type = next(
+                    (v for k, v in headers if k.lower() == b"content-type"), b""
+                )
+                csp = self.CSP_HTML if b"text/html" in content_type else self.CSP_STRICT
+                headers.append((b"content-security-policy", csp))
                 # 移除服务器指纹
                 headers = [(k, v) for k, v in headers if k != b"server"]
                 message["headers"] = headers
@@ -362,7 +381,6 @@ class APIKeyAuthMiddleware:
 
     PUBLIC_PATHS = {
         "/",
-        "/app",
         "/dashboard",
         "/digital",
         "/demo",
@@ -433,7 +451,7 @@ class APIKeyAuthMiddleware:
 class InputValidationMiddleware:
     """输入验证中间件 — 自动检测并拦截恶意请求（纯ASGI）"""
 
-    SKIP_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/stats", "/app"}
+    SKIP_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/stats", "/dashboard", "/digital"}
 
     def __init__(self, app):
         self.app = app

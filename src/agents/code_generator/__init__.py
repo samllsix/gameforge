@@ -142,6 +142,124 @@ class CodeGeneratorAgent(BaseAgent):
 
 
 
+    async def fix_code(
+        self, state: GameDevState, error_log: List[str]
+    ) -> Dict[str, Any]:
+        """修复生成的代码（原 debugger 职能并入）。
+
+        Args:
+            state: 当前游戏开发状态
+            error_log: 编译/冒烟测试错误列表
+
+        Returns:
+            {"code_generated": 更新后的文件, "fix_history": [...], "fix_attempts": N}
+        """
+        self.log_action("fix_code", {"error_count": len(error_log)})
+
+        if not error_log:
+            return {
+                "fix_history": state.get("fix_history", []),
+                "fix_attempts": state.get("fix_attempts", 0),
+            }
+
+        code_generated = state.get("code_generated", {})
+        code_context = ""
+        for path, content in code_generated.items():
+            if path.endswith(".gd"):
+                code_context += f"\n### {path}\n```gdscript\n{content}\n```\n"
+
+        error_text = "\n".join(error_log)
+        requirements = state.get("project_context", {}).get("requirements", "")
+        gdm = state.get("game_design_model") or {}
+
+        system_prompt = self.get_prompt_template("code_generator_system")
+        user_prompt = f"""以下 Godot 4.x GDScript 代码存在错误，请修复。
+
+## 原始用户需求（修复后必须继续满足）
+{requirements}
+
+## 游戏设计锚点
+- 类型: {gdm.get('genre', '')}
+- 核心循环: {gdm.get('core_loop', '')}
+
+## 错误信息
+```
+{error_text}
+```
+
+## 相关代码
+{code_context}
+
+要求：
+1. 修复所有列出的错误，保持其余逻辑不变。
+2. 严格遵循 Godot 4.x GDScript 语法（snake_case、class_name、extends、signal、@export）。
+3. 禁止使用 C# / Unity 语法。
+
+请直接输出修复后的完整文件，格式如下：
+```gdscript
+# 文件: res://scripts/[Module]/[Name].gd
+extends CharacterBody2D
+...
+```
+每个文件用单独的代码块。"""
+
+        try:
+            response = await self.llm.chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=self.llm_config.get("temperature", 0.2),
+                max_tokens=self.llm_config.get("max_tokens", 8192),
+            )
+
+            artifacts = self._parse_code_response(response, task={"id": "fix", "name": "fix", "type": "code", "description": "修复编译错误"}, engine="godot")
+            if not artifacts:
+                self.log_error("fix_code_no_output", {"response_preview": response[:200]})
+                return self._fix_fallback(state, error_log)
+
+            updated_code = dict(code_generated)
+            for art in artifacts:
+                fp = art["file_path"]
+                # 修复输出可能是相对名，尝试对齐已有文件
+                if fp not in updated_code:
+                    matches = [k for k in updated_code if k.endswith(fp) or fp.endswith(k)]
+                    if matches:
+                        fp = matches[0]
+                updated_code[fp] = art["content"]
+
+            fix_record = {
+                "error_type": "compile_error",
+                "error_message": error_text[:200],
+                "root_cause": "code_generator fix_code",
+                "fixes_applied": [a["file_path"] for a in artifacts],
+                "success": True,
+            }
+            return {
+                "code_generated": updated_code,
+                "fix_history": state.get("fix_history", []) + [fix_record],
+                "fix_attempts": state.get("fix_attempts", 0) + 1,
+            }
+
+        except Exception as e:
+            self.log_error("fix_code_llm_error", {"error": str(e)})
+            return self._fix_fallback(state, error_log)
+
+    def _fix_fallback(self, state: GameDevState, error_log: List[str]) -> Dict[str, Any]:
+        """LLM 修复失败时的兜底（记录失败，不改动代码）"""
+        fix_record = {
+            "error_type": "unknown",
+            "error_message": " ".join(error_log)[:200],
+            "fix_description": "自动修复失败，需要人工介入",
+            "success": False,
+        }
+        return {
+            "code_generated": state.get("code_generated", {}),
+            "fix_history": state.get("fix_history", []) + [fix_record],
+            "fix_attempts": state.get("fix_attempts", 0) + 1,
+        }
+
     async def generate(self, state: GameDevState, task: Dict[str, Any]) -> List[Dict[str, Any]]:
         self.log_action("generate_code", {"task_id": task.get("id")})
 

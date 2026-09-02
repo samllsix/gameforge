@@ -566,7 +566,7 @@
         <div class="proc-item" data-phase="complete"><div class="hex">⏶</div><div class="in"><b>系统整合员</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
       </div>
     </div>
-    <div class="prev"><div class="ph">实时预览 <span class="en">LIVE</span> <span class="fps" id="prevFps">--</span></div><div class="prev-box"><canvas id="prevCanvas"></canvas><span class="tag" id="prevTag">GAME</span></div></div>
+    <div class="prev"><div class="ph">实时预览 <span class="en">LIVE</span> <span class="fps" id="prevFps">--</span></div><div class="prev-box"><canvas id="prevCanvas"></canvas><span class="tag" id="prevTag">IDLE</span></div></div>
     <div class="logbox"><div class="ph">系统日志 <span class="en">SYS LOG</span></div><div id="log"></div></div>
   </aside>
 
@@ -855,6 +855,10 @@ const pv=document.getElementById('prevCanvas'),pvx=pv.getContext('2d');sizeC(pv)
 const prevTag=document.getElementById('prevTag'),prevFps=document.getElementById('prevFps');
 /* 真实后端的项目 ID，由 SSE complete / scene_complete 事件注入；为空时走 demo 兜底 */
 let PREVIEW_PROJECT_ID=null;
+/* 无任务即停预览：仅任务运行期间轮询帧；停止后后端 supervisor 空闲超时自动释放 Godot 进程 */
+let previewTaskActive=false;
+let previewStopTimer=null;
+let streamDone=false; /* 本次流是否正常 complete；异常断流时立即停预览 */
 const PREVIEW_FALLBACK_PID='demo_jump_v2';
 // 后端 base URL：
 // 1) location.protocol==='file:' 时直接走 127.0.0.1:8000，避免 file:// 下 fetch 退化成 file:///D:/api/...
@@ -896,7 +900,7 @@ async function autoPublish(pid){
 }
 
 async function fetchPreviewFrame(){
-  if(prevBusy)return;
+  if(prevBusy||!previewTaskActive)return;
   prevBusy=true;
   const frameCtrl=new AbortController();
   const frameTimer=setTimeout(()=>frameCtrl.abort(),5000); /* 单帧拉取超时：防止 fetch 永久挂起把 prevBusy 卡死 */
@@ -922,6 +926,7 @@ async function fetchPreviewFrame(){
     else if(prevFallback && !live){prevFallback=false;pushLog('实时预览接通（'+tagText+'）');}
   }catch(e){
     prevFail++;
+    if(!previewTaskActive)return; /* 停止后在途请求失败：不覆盖 IDLE 标签 */
     if(prevTag && prevTag.textContent!=='SIM')prevTag.textContent='SIM';
     if(prevFail>=3 && !prevFallback){prevFallback=true;pushLog('预览失败，已降级到模拟（'+e.message+'）');}
     else if(prevFallback===false && prevFail===1){prevFallback=true;}
@@ -1200,6 +1205,9 @@ async function startGeneration(requirements) {
     return;
   }
   isGenerating = true;
+  streamDone = false;
+  previewTaskActive = true; /* 任务启动：预览开始轮询（场景就绪前走 demo 兜底画面） */
+  if(previewStopTimer){clearTimeout(previewStopTimer);previewStopTimer=null;}
   resetProcs();
   setWelcome('正在构建你的世界…');
   document.getElementById('buildBtn').textContent = '构建中 ⏳';
@@ -1254,6 +1262,7 @@ async function startGeneration(requirements) {
     clearTimeout(connectTimer);
     isGenerating = false;
     _abortCtrl.ctrl = null;
+    if(!streamDone)stopPreviewPolling(); /* 失败/中止/异常断流：立即停预览 */
     const btn = document.getElementById('buildBtn');
     btn.textContent = '开始构建 ➤';
     btn.disabled = false;
@@ -1317,13 +1326,18 @@ function handleStreamEvent(data) {
       break;
     case 'complete':
       setPhaseDone('complete');
+      streamDone = true;
       pushLog('代码生成完成！' + (data.task_count || 0) + ' 任务', 'ok');
       setWelcome('构建完成 ✓');
       if (data.project_id) startLivePreview(data.project_id);
       if (data.project_id) autoPublish(data.project_id);
+      /* 任务结束：8 秒成品展示后停止预览轮询，后端空闲超时自动释放 Godot 进程 */
+      if(previewStopTimer)clearTimeout(previewStopTimer);
+      previewStopTimer=setTimeout(stopPreviewPolling,8000);
       break;
     case 'error':
       pushLog('错误：' + (data.message || '未知错误'), 'err');
+      stopPreviewPolling(); /* 任务失败：立即停止预览 */
       break;
     case 'compile_result':
       pushLog('编译：' + (data.status || ''), data.status === 'success' ? 'ok' : 'wa');
@@ -1334,9 +1348,21 @@ function handleStreamEvent(data) {
 }
 
 /* 中央大图 + 右侧小图同步拉真实帧 */
+function stopPreviewPolling(){
+  previewTaskActive=false;
+  if(previewStopTimer){clearTimeout(previewStopTimer);previewStopTimer=null;}
+  prevFallback=true; /* 回落本地模拟动画 */
+  if(prevTag && prevTag.textContent!=='IDLE'){
+    prevTag.textContent='IDLE';
+    pushLog('任务结束，预览已停止（空闲后自动释放 Godot 进程）','');
+  }
+}
+
 function startLivePreview(projectId) {
   if (!projectId) return;
   PREVIEW_PROJECT_ID = projectId;
+  previewTaskActive = true; /* 场景就绪事件可能晚于上一次 complete 的停轮询定时器 */
+  if(previewStopTimer){clearTimeout(previewStopTimer);previewStopTimer=null;}
   pushLog('实时预览已连接：' + projectId, 'ok');
   heroFrame.src = `${PREVIEW_BACKEND}/api/v1/preview/frame?project_id=${encodeURIComponent(projectId)}&width=640&height=360&frame=0&t=${Date.now()}`;
   heroFrame.style.opacity = '1';

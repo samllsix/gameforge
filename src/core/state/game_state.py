@@ -64,7 +64,6 @@ class AgentType(str, Enum):
     REFACTOR = "refactor"
     SCENE_GENERATOR = "scene_generator"
     MAIN_REVIEWER = "main_reviewer"
-    REFLECTOR = "reflector"  # 多智能体改造第二步：反思回环
 
 
 class Task(BaseModel):
@@ -184,13 +183,6 @@ class GameDevState(TypedDict):
 
     # 警告 — reducer: 列表追加
     warnings: Annotated[List[str], add]
-
-    # 审查-重构对话协商记录（让 agent 协作可见；多智能体改造第一步）
-    review_dialogue_transcript: Optional[Dict[str, Any]]
-
-    # 反思回环结果（多智能体改造第二步）
-    reflection_result: Optional[Dict[str, Any]]
-    reflection_count: int
 
     # 消息总线（多智能体改造第三步）：发布-订阅，解耦硬编码边
     message_bus: Annotated[List[Dict[str, Any]], append_to_bus]
