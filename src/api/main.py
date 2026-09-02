@@ -1341,7 +1341,7 @@ async def sandbox_modify(project_id: str, task_id: str, rel_path: str, content: 
     """修改沙箱工作区文件"""
     try:
         sandbox = SandboxController(config)
-        task_dir = os.path.join("data", "sandbox", project_id, "tasks", task_id)
+        task_dir = str(sandbox.workspace.task_path(project_id, task_id))
         task = {"task_id": task_id, "task_dir": task_dir, "role": "director"}
         snap_id = sandbox.modify(task, rel_path, content)
         return {"ok": True, "snap_id": snap_id}
@@ -1354,7 +1354,7 @@ async def sandbox_merge(project_id: str, task_id: str):
     """合并沙箱工作区到主线"""
     try:
         sandbox = SandboxController(config)
-        task_dir = os.path.join("data", "sandbox", project_id, "tasks", task_id)
+        task_dir = str(sandbox.workspace.task_path(project_id, task_id))
         task = {"task_id": task_id, "task_dir": task_dir, "role": "director"}
         main_path = sandbox.merge(task)
         return {"ok": True, "merged_to": str(main_path)}
@@ -1367,7 +1367,7 @@ async def sandbox_rollback(project_id: str, task_id: str):
     """回滚沙箱工作区"""
     try:
         sandbox = SandboxController(config)
-        task_dir = os.path.join("data", "sandbox", project_id, "tasks", task_id)
+        task_dir = str(sandbox.workspace.task_path(project_id, task_id))
         task = {"task_id": task_id, "task_dir": task_dir, "role": "director"}
         sandbox.rollback(task)
         return {"ok": True}
