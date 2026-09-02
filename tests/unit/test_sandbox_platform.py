@@ -3,10 +3,12 @@
 覆盖：权限系统 / 工作区生命周期 / 快照回滚 / 资源笼执行 / Controller 全流程。
 """
 
+import asyncio
 import os
 import sys
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -316,3 +318,75 @@ class TestController:
         # 新策略生效于 execute
         out = sb.execute(task, [sys.executable, "-c", "print('ok')"])
         assert out.success
+
+
+# ---------------------------------------------------------------------------
+# Workflow <-> Sandbox 集成测试
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_wrap_code_node_syncs_to_sandbox(tmp_path):
+    """代码生成节点包装后，应将新增文件同步到沙箱工作区。"""
+    from src.core.graph.workflow import GameDevWorkflow
+
+    wf = GameDevWorkflow.__new__(GameDevWorkflow)
+    wf.config = {"sandbox": {"enabled": True}}
+    wf.sandbox_enabled = True
+    wf.logger = MagicMock()
+
+    fake_task = {"task_id": "t1", "task_dir": str(tmp_path), "role": "director"}
+    fake_sandbox = MagicMock()
+    wf.sandbox = fake_sandbox
+
+    async def fake_node(state):
+        return {"code_generated": {"scripts/player.gd": "extends Node\n"}}
+
+    # 使用真实节点名，然后 monkey-patch 该方法
+    wf._code_generator_node = fake_node
+    wrapped = wf._wrap_code_node("code_generator")
+
+    state = {"sandbox": {"task": fake_task}}
+
+    async def run():
+        return await wrapped(state)
+
+    result = asyncio.run(run())
+
+    assert result["code_generated"]["scripts/player.gd"] == "extends Node\n"
+    fake_sandbox.modify.assert_called_once_with(
+        fake_task, "scripts/player.gd", "extends Node\n"
+    )
+
+
+def test_workflow_sandbox_project_config_returns_task_dir():
+    """启用沙箱时，_sandbox_project_config 应返回指向任务工作区的配置。"""
+    from src.core.graph.workflow import GameDevWorkflow
+
+    wf = GameDevWorkflow.__new__(GameDevWorkflow)
+    wf.config = {
+        "sandbox": {"enabled": True},
+        "godot": {"editor_path": "/tmp/godot", "project_path": "/tmp/main"},
+    }
+    wf.sandbox_enabled = True
+
+    task_dir = "/tmp/sandbox/proj/task_1"
+    state = {"sandbox": {"task": {"task_dir": task_dir, "role": "director"}}}
+
+    cfg = wf._sandbox_project_config(state)
+
+    assert cfg is not None
+    assert cfg["godot"]["project_path"] == task_dir
+    assert cfg["godot"]["editor_path"] == "/tmp/godot"
+
+
+def test_workflow_sandbox_project_config_none_when_disabled():
+    """沙箱禁用时，_sandbox_project_config 应返回 None。"""
+    from src.core.graph.workflow import GameDevWorkflow
+
+    wf = GameDevWorkflow.__new__(GameDevWorkflow)
+    wf.config = {"sandbox": {"enabled": False}}
+    wf.sandbox_enabled = False
+
+    state = {"sandbox": {"task": {"task_dir": "/tmp/x", "role": "director"}}}
+
+    assert wf._sandbox_project_config(state) is None
