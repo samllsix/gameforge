@@ -184,6 +184,9 @@ class GameDevState(TypedDict):
     # 警告 — reducer: 列表追加
     warnings: Annotated[List[str], add]
 
+    # 沙箱平台（Phase 1 集成）
+    sandbox: Optional[Dict[str, Any]]
+
     # 消息总线（多智能体改造第三步）：发布-订阅，解耦硬编码边
     message_bus: Annotated[List[Dict[str, Any]], append_to_bus]
 
