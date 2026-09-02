@@ -200,6 +200,48 @@ class SandboxController:
             }
         return out
 
+    def cleanup(self, project_id: str, keep_last: int = 5, max_age_hours: Optional[int] = 168) -> Dict[str, Any]:
+        """清理旧沙箱任务工作区，保留最近 N 个且未超龄的任务。
+
+        - keep_last: 至少保留最近完成/创建的 N 个任务
+        - max_age_hours: 超过该小时数的任务直接清理（默认 7 天）
+        """
+        import time
+        tasks = self.workspace.list_tasks(project_id)
+        if not tasks:
+            return {"removed": 0, "kept": 0, "tasks": []}
+
+        def _mtime(task_dir: Path) -> float:
+            try:
+                return task_dir.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        now = time.time()
+        cutoff = now - (max_age_hours * 3600) if max_age_hours else None
+
+        # 按修改时间降序排列
+        task_dirs = []
+        for t in tasks:
+            td = self.workspace.task_path(project_id, t["task_id"])
+            task_dirs.append((t, td, _mtime(td)))
+        task_dirs.sort(key=lambda x: x[2], reverse=True)
+
+        to_remove = []
+        to_keep = []
+        for idx, (t, td, mtime) in enumerate(task_dirs):
+            if cutoff is not None and mtime < cutoff:
+                to_remove.append(t["task_id"])
+            elif idx >= keep_last:
+                to_remove.append(t["task_id"])
+            else:
+                to_keep.append(t["task_id"])
+
+        for tid in to_remove:
+            self.workspace.discard_task(project_id, tid)
+
+        return {"removed": len(to_remove), "kept": len(to_keep), "tasks": to_keep}
+
     # ── 内部 ──
     @staticmethod
     def _project_of(task: Dict[str, str]) -> str:

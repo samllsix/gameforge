@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import contextlib
 import os
 import sys
 import time
@@ -11,6 +12,22 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+
+@contextlib.contextmanager
+def tmp_path_context(tmp_path=None):
+    """确定性临时目录上下文：先清残留，保证隔离。"""
+    import shutil
+    base = tmp_path if tmp_path is not None else Path(__file__).parent / "tmp_sandbox"
+    base = Path(base)
+    if base.exists():
+        shutil.rmtree(base, ignore_errors=True)
+    base.mkdir(parents=True, exist_ok=True)
+    try:
+        yield base
+    finally:
+        if base.exists():
+            shutil.rmtree(base, ignore_errors=True)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -390,3 +407,77 @@ def test_workflow_sandbox_project_config_none_when_disabled():
     state = {"sandbox": {"task": {"task_dir": "/tmp/x", "role": "director"}}}
 
     assert wf._sandbox_project_config(state) is None
+
+
+def test_sandbox_cleanup_removes_old_tasks(tmp_path, monkeypatch):
+    """cleanup 应移除超龄任务，保留最新任务。"""
+    import time
+    import shutil
+    from src.sandbox.controller import SandboxController
+
+    monkeypatch.setenv("GAMEFORGE_PROJECTS_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setenv("GAMEFORGE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    ctrl = SandboxController({})
+    project_id = "proj_cleanup"
+    # 创建主线项目（create_task 需要）
+    main_dir = tmp_path / "projects" / project_id
+    if main_dir.exists():
+        shutil.rmtree(main_dir)
+    main_dir.mkdir(parents=True)
+    (main_dir / "project.godot").write_text("[application]\n", encoding="utf-8")
+
+    # 清理遗留任务（pytest tmp_path 可能跨次运行复用）
+    for leftover in ctrl.workspace.list_tasks(project_id):
+        ctrl.workspace.discard_task(project_id, leftover["task_id"])
+    now = time.time()
+    for age_hours in [0, 10, 200]:
+        task = ctrl.create(project_id, role="director")
+        task_dir = Path(task["task_dir"])
+        # 修改任务目录及其内部 state.json 的时间戳，确保 cleanup 能识别
+        mtime = now - (age_hours * 3600)
+        os.utime(task_dir, (mtime, mtime))
+        state_file = task_dir / ".sandbox" / "state.json"
+        if state_file.exists():
+            os.utime(state_file, (mtime, mtime))
+
+    result = ctrl.cleanup(project_id, keep_last=2, max_age_hours=168)
+    assert result["removed"] == 1
+    assert result["kept"] == 2
+    remaining = ctrl.workspace.list_tasks(project_id)
+    assert len(remaining) == 2
+
+
+def test_sandbox_cleanup_keeps_recent_tasks(tmp_path, monkeypatch):
+    """cleanup 应至少保留 keep_last 个最新任务。"""
+    import time
+    import shutil
+    from src.sandbox.controller import SandboxController
+
+    monkeypatch.setenv("GAMEFORGE_PROJECTS_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setenv("GAMEFORGE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    ctrl = SandboxController({})
+    project_id = "proj_keep"
+    main_dir = tmp_path / "projects" / project_id
+    if main_dir.exists():
+        shutil.rmtree(main_dir)
+    main_dir.mkdir(parents=True)
+    (main_dir / "project.godot").write_text("[application]\n", encoding="utf-8")
+
+    # 清理遗留任务（pytest tmp_path 可能跨次运行复用）
+    for leftover in ctrl.workspace.list_tasks(project_id):
+        ctrl.workspace.discard_task(project_id, leftover["task_id"])
+
+    now = time.time()
+    for i in range(4):
+        task = ctrl.create(project_id, role="director")
+        task_dir = Path(task["task_dir"])
+        mtime = now - (i * 3600)
+        os.utime(task_dir, (mtime, mtime))
+        state_file = task_dir / ".sandbox" / "state.json"
+        if state_file.exists():
+            os.utime(state_file, (mtime, mtime))
+
+    # max_age_hours=0.5 表示只保留 30 分钟内的任务；keep_last=3 仍优先保留最新
+    result = ctrl.cleanup(project_id, keep_last=3, max_age_hours=0.5)
+    assert result["removed"] == 3
+    assert result["kept"] == 1

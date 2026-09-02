@@ -1396,6 +1396,17 @@ async def sandbox_destroy(project_id: str, task_id: str):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/api/v1/sandbox/{project_id}/cleanup")
+async def sandbox_cleanup(project_id: str, keep_last: int = 5, max_age_hours: Optional[int] = 168):
+    """清理旧沙箱任务，保留最近 N 个且未超龄的任务。"""
+    try:
+        sandbox = SandboxController(config)
+        result = sandbox.cleanup(project_id, keep_last=keep_last, max_age_hours=max_age_hours)
+        return {"ok": True, **result}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 def start_server(host: Optional[str] = None, port: Optional[int] = None, workers: int = 1):
     """启动服务器"""
     resolved_host = host or DEFAULT_HOST
