@@ -1,4 +1,4 @@
-﻿"""GameForge - 场景生成Agent
+"""GameForge - 场景生成Agent
 
 分析游戏需求和任务计划，生成 Godot 场景描述并发送到 Godot Editor 构建场景。
 与代码生成并行执行，不阻塞主workflow。
@@ -89,10 +89,14 @@ class SceneGeneratorAgent(BaseAgent):
 
             if tscn_text:
                 import os
-                godot_config = self.config.get("godot", {})
-                project_path = godot_config.get("project_path", "")
-                if not project_path or project_path.startswith("${"):
-                    project_path = os.getenv("GODOT_PROJECT_PATH", os.getcwd())
+                sandbox_task = state.get("sandbox", {}).get("task")
+                if sandbox_task:
+                    project_path = sandbox_task.get("task_dir", "")
+                else:
+                    godot_config = self.config.get("godot", {})
+                    project_path = godot_config.get("project_path", "")
+                    if not project_path or project_path.startswith("${"):
+                        project_path = os.getenv("GODOT_PROJECT_PATH", os.getcwd())
                 scenes_dir = os.path.join(project_path, "scenes")
                 os.makedirs(scenes_dir, exist_ok=True)
                 scene_name = scene_desc.get("scene_name", "GameScene")
@@ -105,7 +109,8 @@ class SceneGeneratorAgent(BaseAgent):
                     with open(main_tscn_path, "w", encoding="utf-8") as f:
                         f.write(tscn_text)
 
-                    self._ensure_script_stubs(scene_desc, project_path)
+                    if not sandbox_task:
+                        self._ensure_script_stubs(scene_desc, project_path)
 
                     self.log_action("scene_tscn_written_to_disk", {
                         "path": tscn_path, "size": len(tscn_text),
