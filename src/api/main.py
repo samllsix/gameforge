@@ -867,10 +867,16 @@ class _PreviewBuiltByOtherRequest(Exception):
     """并发轮询时场景已被其他请求构建完成，当前请求跳过构建直接取帧。"""
 
 
-def _resolve_preview_project(project_id: str) -> str:
-    """把 project_id 解析为 projects/<project_id> 绝对路径，校验防路径穿越。"""
+def _resolve_preview_project(project_id: str, task_id: Optional[str] = None) -> str:
+    """把 project_id 解析为项目绝对路径；提供 task_id 时解析到沙箱任务工作区。"""
     if not project_id or not _PREVIEW_PROJECT_RE.match(project_id):
         raise HTTPException(status_code=400, detail="project_id 非法（仅允许字母数字_-.)")
+    if task_id is not None:
+        task_dir = os.path.join("data", "sandbox", project_id, "tasks", task_id)
+        abs_root = os.path.abspath(task_dir)
+        if not os.path.isdir(abs_root):
+            raise HTTPException(status_code=404, detail="沙箱任务工作区不存在")
+        return abs_root
     projects_root = _projects_root().resolve()
     abs_root = (projects_root / project_id).resolve()
     # 防止 project_id 含 ".." 越界：resolved 必须仍在 projects 根下
@@ -916,6 +922,7 @@ async def preview_frame(
     width: int = Query(default=640, ge=160, le=1920),
     height: int = Query(default=360, ge=90, le=1080),
     frame: int = Query(default=0, ge=0),
+    task_id: Optional[str] = Query(default=None),
 ):
     """用 Godot 长驻进程渲染指定项目指定场景，返回 PNG 字节流。
 
@@ -925,8 +932,10 @@ async def preview_frame(
       3) HTTP GET http://127.0.0.1:8769/screenshot?frame=N 拿 PNG
       4) 加上 X-Preview-Source=godot-live 头返回浏览器
     1.0 fallback：通过 GODOT_PREVIEW_LEGACY_ONLY=1 仍可走一次性脚本。
+
+    沙箱支持：提供 task_id 时，直接预览该沙箱任务工作区（未合并前）。
     """
-    project_path = _resolve_preview_project(project_id)
+    project_path = _resolve_preview_project(project_id, task_id=task_id)
 
     if scene is not None and (".." in scene or not _PREVIEW_SCENE_RE.match(scene)):
         raise HTTPException(status_code=400, detail="scene 非法（须为 res:// 开头的项目内相对路径）")

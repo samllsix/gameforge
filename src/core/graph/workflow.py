@@ -103,6 +103,27 @@ class GameDevWorkflow:
             return sanitized
         return ""
 
+    def _resolve_preview_task_id(self, state: "GameDevState") -> Optional[str]:
+        """若当前处于沙箱任务工作区，返回 task_id；否则返回 None。"""
+        task = (state.get("sandbox") or {}).get("task")
+        if not task:
+            return None
+        task_id = task.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            return task_id
+        return None
+
+    def _preview_meta(self, state: "GameDevState") -> Dict[str, str]:
+        """构造预览事件共用的 project_id/task_id 字典。"""
+        pid = self._resolve_preview_project_id(state)
+        tid = self._resolve_preview_task_id(state)
+        out: Dict[str, str] = {}
+        if pid:
+            out["project_id"] = pid
+        if tid:
+            out["task_id"] = tid
+        return out
+
     def _build_graph(self):
         """构建LangGraph状态图，返回编译后的可执行图"""
         workflow = StateGraph(GameDevState)
@@ -472,9 +493,9 @@ class GameDevWorkflow:
     # ========== 场景生成（与主图并行） ==========
 
     def _persist_scene_ir(self, state: GameDevState, scene_ir) -> None:
-        """把工作流生成的 Scene IR 落盘到 projects/<pid>/.scene_ir.json。
+        """把工作流生成的 Scene IR 落盘到 projects/<pid>/.scene_ir.json 或沙箱任务工作区。
 
-        预览端点（/api/v1/preview/frame）优先读取该文件构建场景，
+        预览端点（/api/v1/preview/frame?task_id=...）优先读取该文件构建场景，
         替代旧的硬编码 default_scene_ir 抢跑（P0-1）。
         requirements 一并落盘，供美术指导器按需求关键词匹配主题包。
         """
@@ -490,9 +511,14 @@ class GameDevWorkflow:
                 "requirements": (state.get("project_context", {}) or {}).get("requirements", ""),
                 "scene_ir": ir_data,
             }
-            proj_dir = os.path.join("projects", pid)
-            os.makedirs(proj_dir, exist_ok=True)
-            ir_path = os.path.join(proj_dir, ".scene_ir.json")
+            # 沙箱优先：写入任务工作区，便于预览端点按 task_id 直接读取
+            task = (state.get("sandbox") or {}).get("task")
+            if task and task.get("task_dir"):
+                ir_path = os.path.join(task["task_dir"], ".scene_ir.json")
+            else:
+                proj_dir = os.path.join("projects", pid)
+                os.makedirs(proj_dir, exist_ok=True)
+                ir_path = os.path.join(proj_dir, ".scene_ir.json")
             with open(ir_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             self.log_action("scene_ir_persisted", {"path": ir_path, "genre": ir_data.get("genre")})
@@ -534,21 +560,22 @@ class GameDevWorkflow:
 
             if status == "built":
                 msg = "Godot 场景已生成！请在 Godot Editor 中查看"
-                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "message": msg,
                     "scene_path": result.get("scene_path", ""),
                     "object_count": len(scene_desc.get("game_objects", [])) if scene_desc else 0,
-                    **({"project_id": pid} if pid else {}),
+                    **self._preview_meta(state),
                 })
             elif status == "skipped":
                 await event_callback("scene_skipped", {
                     "message": result.get("message", "场景描述已生成，Godot 未构建"),
                     "reason": result.get("scene_skip_reason", "unknown"),
+                    **self._preview_meta(state),
                 })
             else:
                 await event_callback("scene_error", {
                     "message": result.get("scene_error", "场景生成失败"),
+                    **self._preview_meta(state),
                 })
         except Exception as e:
             state["scene_status"] = "error"
@@ -703,13 +730,12 @@ class GameDevWorkflow:
                 )
                 state["scene_status"] = "success"
                 state["scene_path"] = f"res://scenes/{name}.tscn"
-                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": name,
                     "scene_path": state["scene_path"],
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "headless",
-                    **({"project_id": pid} if pid else {}),
+                    **self._preview_meta(state),
                 })
             except Exception as e:
                 self.log_error("headless_scene_build_failed", {"error": str(e)})
@@ -904,6 +930,7 @@ class GameDevWorkflow:
                 await event_callback("scene_skipped", {
                     "reason": "godot_unavailable",
                     "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法使用 headless 构建",
+                    **self._preview_meta(state),
                 })
                 return
             if use_sandbox:
@@ -911,6 +938,7 @@ class GameDevWorkflow:
                 await event_callback("scene_skipped", {
                     "reason": "sandbox_headless_unavailable",
                     "message": "沙箱模式需要 headless Godot（设置 godot.editor_path），HTTP 模式会修改主线，已跳过",
+                    **self._preview_meta(state),
                 })
                 return
 
@@ -921,6 +949,7 @@ class GameDevWorkflow:
             await event_callback("scene_skipped", {
                 "reason": "godot_http_unavailable",
                 "message": "Godot Editor HTTP Server 未运行，跳过自动构建",
+                **self._preview_meta(state),
             })
             return
 
@@ -974,18 +1003,18 @@ class GameDevWorkflow:
             if scene_result.get("status") == "success":
                 state["scene_status"] = "success"
                 state["scene_path"] = scene_result.get("scene_path", "")
-                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": scene_desc.get("scene_name", "GameScene"),
                     "scene_path": scene_result.get("scene_path", ""),
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "success" if not errors else "with_errors",
-                    **({"project_id": pid} if pid else {}),
+                    **self._preview_meta(state),
                 })
             else:
                 state["scene_status"] = "error"
                 await event_callback("scene_error", {
                     "message": scene_result.get("error", "场景构建失败"),
+                    **self._preview_meta(state),
                 })
 
         if not errors:
@@ -1042,13 +1071,12 @@ class GameDevWorkflow:
                 )
                 state["scene_status"] = "success"
                 state["scene_path"] = f"res://scenes/{name}.tscn"
-                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": name,
                     "scene_path": state["scene_path"],
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "headless",
-                    **({"project_id": pid} if pid else {}),
+                    **self._preview_meta(state),
                 })
             except Exception as e:
                 self.log_error("headless_scene_build_failed", {"error": str(e)})
@@ -1650,7 +1678,6 @@ class GameDevWorkflow:
         except Exception:  # noqa: BLE001
             pass
 
-        pid = self._resolve_preview_project_id(state)
         await event_callback("complete", {
             "phase": "complete",
             "message": "代码生成完成！",
@@ -1663,7 +1690,7 @@ class GameDevWorkflow:
             "runtime_smoke_errors": smoke_summary.get("runtime_smoke_errors", [])[:5],
             "runtime_smoke_skipped": smoke_summary.get("runtime_smoke_skipped", False),
             "warnings": state.get("warnings", []),
-            **({"project_id": pid} if pid else {}),
+            **self._preview_meta(state),
         })
 
         # Sandbox：成功则合并回主线
