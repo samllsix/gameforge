@@ -579,32 +579,14 @@ class GameDevWorkflow:
                     "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法使用 headless 编译",
                 })
                 return
-        # 以下为原 8765 编辑器插件路径
-
-        client = GodotHTTPClient()
-        if not await client.check_health():
-            await event_callback("compile_result", {
-                "status": "skipped",
-                "message": "Godot Editor 未启动，跳过编译闭环",
-            })
-            return
-
-        code_files = state.get("code_generated", {})
-        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
-        if not gd_files:
-            return
-
-        if use_sandbox:
-            await event_callback("phase_start", {"phase": "compiling", "message": "正在写入沙箱工作区..."})
-            task = state.get("sandbox", {}).get("task")
-            for rel_path, content in gd_files.items():
-                if task:
-                    self.sandbox.modify(task, rel_path, content)
-            await event_callback("compile_result", {
-                "status": "success",
-                "message": f"已写入沙箱工作区 {len(gd_files)} 个文件",
-            })
-            return
+            if use_sandbox:
+                # 沙箱模式下不可退回 HTTP（会污染主线），直接跳过
+                await event_callback("compile_result", {
+                    "status": "skipped",
+                    "message": "沙箱模式需要 headless Godot（设置 godot.editor_path），HTTP 模式会修改主线，已跳过",
+                })
+                return
+        # 以下为原 8765 编辑器插件路径（仅非沙箱模式）
 
         await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
         import_result = await client.import_files(gd_files)
@@ -731,7 +713,7 @@ class GameDevWorkflow:
 
         # 3) 校验闭环
         import os as _os
-        _proj = self.config.get("godot", {}).get("project_path", "") or _os.getcwd()
+        _proj = (sandbox_cfg or self.config).get("godot", {}).get("project_path", "") or _os.getcwd()
         res_paths = []
         for k in gd_files.keys():
             clean = k.removeprefix("res://").removeprefix("res:/")
@@ -917,6 +899,13 @@ class GameDevWorkflow:
                     "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法使用 headless 构建",
                 })
                 return
+            if use_sandbox:
+                # 沙箱模式下不可退回 HTTP（会污染主线），直接跳过
+                await event_callback("scene_skipped", {
+                    "reason": "sandbox_headless_unavailable",
+                    "message": "沙箱模式需要 headless Godot（设置 godot.editor_path），HTTP 模式会修改主线，已跳过",
+                })
+                return
 
         from src.engine.godot.godot_http_client import GodotHTTPClient
 
@@ -931,18 +920,6 @@ class GameDevWorkflow:
         code_files = state.get("code_generated", {})
         gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
         if not gd_files:
-            return
-
-        if use_sandbox:
-            await event_callback("phase_start", {"phase": "compiling", "message": "正在写入沙箱工作区..."})
-            task = state.get("sandbox", {}).get("task")
-            for rel_path, content in gd_files.items():
-                if task:
-                    self.sandbox.modify(task, rel_path, content)
-            await event_callback("compile_result", {
-                "status": "success",
-                "message": f"已写入沙箱工作区 {len(gd_files)} 个文件",
-            })
             return
 
         # 非沙箱模式：原 HTTP 编辑器导入
@@ -1024,22 +1001,6 @@ class GameDevWorkflow:
         gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
         if not gd_files:
             return
-
-        if use_sandbox:
-            await event_callback("phase_start", {
-                "phase": "compiling",
-                "message": "正在写入沙箱工作区...",
-            })
-            task = state.get("sandbox", {}).get("task")
-            for rel_path, content in gd_files.items():
-                self.sandbox.modify(task, rel_path, content)
-            await event_callback("compile_result", {
-                "status": "success",
-                "message": f"已写入沙箱工作区 {len(gd_files)} 个文件",
-            })
-            return
-
-        # 非沙箱模式：原有 headless 写盘逻辑
         # 1) 写入 GDScript 到项目磁盘
         await event_callback("phase_start", {
             "phase": "compiling",
