@@ -797,8 +797,11 @@ class GameDevWorkflow:
                 "runtime_smoke_skipped": True,
             }
 
+        sandbox_cfg = self._sandbox_project_config(state)
+        use_sandbox = sandbox_cfg is not None
+        runtime_config = sandbox_cfg or self.config
         from src.engine.godot.runtime_smoke import GodotRuntimeSmoke
-        smoke = GodotRuntimeSmoke(self.config)
+        smoke = GodotRuntimeSmoke(runtime_config)
         for attempt in range(max_fix_attempts + 1):
             await event_callback("phase_start", {
                 "phase": "runtime_smoke",
@@ -854,7 +857,7 @@ class GameDevWorkflow:
             # 重新落盘 debugger 修改的脚本
             try:
                 from src.engine.godot import GodotEditor
-                editor = GodotEditor(self.config)
+                editor = GodotEditor(runtime_config)
                 updated_gd = {
                     k: v for k, v in state.get("code_generated", {}).items()
                     if k.endswith(".gd")
