@@ -108,11 +108,11 @@ class GameDevWorkflow:
         workflow.add_node("game_designer", self._game_designer_node)
         workflow.add_node("planner", self._planner_node)
         workflow.add_node("orchestrator", self._orchestrator_node)
-        workflow.add_node("code_generator", self._code_generator_node)
+        workflow.add_node("code_generator", self._wrap_code_node("code_generator"))
         workflow.add_node("code_reviewer", self._code_reviewer_node)
-        workflow.add_node("refactor", self._refactor_node)
-        workflow.add_node("test_generator", self._test_generator_node)
-        workflow.add_node("debugger", self._debugger_node)
+        workflow.add_node("refactor", self._wrap_code_node("refactor"))
+        workflow.add_node("test_generator", self._wrap_code_node("test_generator"))
+        workflow.add_node("debugger", self._wrap_code_node("debugger"))
         workflow.add_node("main_reviewer", self._main_reviewer_node)
 
         # 入口点
@@ -141,6 +141,35 @@ class GameDevWorkflow:
         )
 
         return workflow.compile()
+
+    # ── Sandbox 自动同步 ──
+
+    def _wrap_code_node(self, node_name: str):
+        """包装代码生成类节点，执行后自动同步新增/修改文件到沙箱工作区。"""
+        real_method = getattr(self, f"_{node_name}_node")
+
+        async def wrapper(state: GameDevState) -> Dict[str, Any]:
+            result = await real_method(state)
+            self._sandbox_sync_code_generated(state, result)
+            return result
+
+        return wrapper
+
+    def _sandbox_sync_code_generated(self, state: GameDevState, node_result: Dict[str, Any]) -> None:
+        """若启用沙箱，将 node_result 中 code_generated 的变更同步到任务工作区。"""
+        if not getattr(self, "sandbox_enabled", False):
+            return
+        task = (state.get("sandbox") or {}).get("task")
+        if not task:
+            return
+        new_files = node_result.get("code_generated") or {}
+        if not new_files:
+            return
+        for rel_path, content in new_files.items():
+            try:
+                self.sandbox.modify(task, rel_path, content)
+            except Exception as e:
+                self.logger.warning("sandbox_sync_failed", path=rel_path, error=str(e))
 
     # ========== 节点实现 ==========
 
@@ -490,6 +519,10 @@ class GameDevWorkflow:
             if scene_desc:
                 scene_json = json.dumps(scene_desc, indent=2, ensure_ascii=False)
                 state["code_generated"]["scenes/scene_description.json"] = scene_json
+                # Sandbox：同步场景描述到任务工作区
+                self._sandbox_sync_code_generated(state, {
+                    "code_generated": {"scenes/scene_description.json": scene_json}
+                })
 
             # 场景生成后立即执行人物、环境和玩法闭环审查。
             design_review = self.main_reviewer.review_game_design(state)
