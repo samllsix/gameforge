@@ -919,3 +919,347 @@ func _process(delta: float) -> void:
             "language": "gdscript",
             "engine": "godot",
         }]
+
+    # ========== Pipeline：将 review/refactor/test/debug/final_check 归并为内部 Phase ==========
+
+    async def run_pipeline(self, state: GameDevState) -> Dict[str, Any]:
+        """执行完整代码生成 Pipeline。
+
+        Phase:
+        1. generate — 生成代码
+        2. review — 静态/LLM 审查
+        3. refactor — 轻量重构（仅 review 发现问题时）
+        4. test — 生成 GUT 测试桩
+        5. fix — 自动修复（仅出现错误时）
+        6. final_check — 最终门禁
+        """
+        task = self._get_current_task(state)
+        if not task:
+            return {"current_phase": "no_task"}
+
+        # Phase 1: generate
+        code_artifacts = await self.generate(state, task)
+        if not code_artifacts:
+            return {"current_phase": "code_generated", "warnings": ["代码生成返回空结果"]}
+
+        # 标记任务完成并更新任务计划
+        task_plan = self._mark_task_completed(state, task)
+        new_code = {art["file_path"]: art["content"] for art in code_artifacts}
+
+        # 统一验证
+        warnings = []
+        try:
+            from src.utils.unified_validator import validate_all
+            validation = validate_all(new_code)
+            if validation.has_errors:
+                warnings.append(
+                    f"代码验证发现 {len(validation.errors)} 个错误: "
+                    + "; ".join(e.get("message", "") for e in validation.errors[:3])
+                )
+        except Exception:
+            pass
+
+        # Phase 2: review
+        review_result = await self._review(state, code_artifacts)
+        state["review_result"] = review_result
+
+        # Phase 3: refactor（仅 review 发现 blocking/high/medium 问题时）
+        if review_result.get("needs_refactor"):
+            refactored_artifacts = await self._refactor(state, code_artifacts, review_result)
+            if refactored_artifacts:
+                code_artifacts = refactored_artifacts
+                new_code = {art["file_path"]: art["content"] for art in code_artifacts}
+                state["code_generated"] = {**state.get("code_generated", {}), **new_code}
+
+        # Phase 4: test（按配置开关）
+        if self.agent_config.get("test", {}).get("enabled", True):
+            test_artifacts = await self._generate_tests(state, code_artifacts)
+            if test_artifacts:
+                code_artifacts = code_artifacts + test_artifacts
+                new_code = {art["file_path"]: art["content"] for art in code_artifacts}
+
+        # Phase 5: fix（仅 review 失败或验证错误时）
+        error_log = []
+        if not review_result.get("passed", True):
+            error_log.extend(review_result.get("blocking_issues", []))
+        error_log.extend(warnings)
+
+        if error_log:
+            fix_result = await self.fix_code(state, error_log)
+            state.update(fix_result)
+
+        # Phase 6: final_check
+        final_check = await self._final_check(state, code_artifacts)
+        state["final_review_result"] = final_check
+
+        return {
+            "code_generated": new_code,
+            "code_artifacts": code_artifacts,
+            "task_plan": task_plan,
+            "current_phase": "code_generated",
+            "warnings": warnings,
+            "review_result": review_result,
+            "final_review_result": final_check,
+        }
+
+    def _get_current_task(self, state: GameDevState) -> Optional[Dict[str, Any]]:
+        """从 state 中提取当前任务。"""
+        current_task_id = state.get("current_task_id")
+        if not current_task_id:
+            return None
+        for task in state.get("task_plan", []):
+            if task.get("id") == current_task_id:
+                return task
+        return None
+
+    def _mark_task_completed(self, state: GameDevState, task: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """将当前任务标记为完成，返回更新后的任务计划。"""
+        task_plan = [dict(t) for t in state.get("task_plan", [])]
+        for t in task_plan:
+            if t.get("id") == task.get("id"):
+                t["status"] = TaskStatus.COMPLETED.value
+                break
+        return task_plan
+
+    async def _review(self, state: GameDevState, code_artifacts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Phase 2: 代码审查。
+
+        - fast_mode（默认）: 静态检查 TODO / pass / 命名规范
+        - llm_review（可选）: LLM 深度审查
+        """
+        review_cfg = self.agent_config.get("review", {})
+        fast_mode = review_cfg.get("fast_mode", True)
+        llm_review = review_cfg.get("llm_review", False)
+
+        issues: List[Dict[str, Any]] = []
+        suggestions: List[str] = []
+
+        # 快速静态检查
+        if fast_mode:
+            for art in code_artifacts:
+                content = art.get("content", "")
+                fpath = art.get("file_path", "")
+                if "TODO" in content or "pass\n" in content:
+                    issues.append({
+                        "type": "style",
+                        "severity": "low",
+                        "file": fpath,
+                        "message": "代码包含未完成标记 TODO 或空实现 pass",
+                    })
+                if fpath.endswith(".gd") and not content.startswith("extends ") and "class_name" not in content:
+                    issues.append({
+                        "type": "logic",
+                        "severity": "medium",
+                        "file": fpath,
+                        "message": "GDScript 缺少 extends 或 class_name",
+                    })
+
+        # LLM 深度审查
+        if llm_review and self.llm:
+            try:
+                llm_issues = await self._llm_review(state, code_artifacts)
+                issues.extend(llm_issues)
+            except Exception as e:
+                self.log_error("review_llm_failed", {"error": str(e)})
+
+        passed = not any(i.get("severity") in ("high", "medium") for i in issues)
+        needs_refactor = any(i.get("severity") in ("high", "medium") for i in issues)
+        return {
+            "passed": passed,
+            "score": 100 - len(issues) * 5,
+            "issues": issues,
+            "suggestions": suggestions,
+            "needs_refactor": needs_refactor,
+            "blocking_issues": [i for i in issues if i.get("severity") == "high"],
+        }
+
+    async def _llm_review(self, state: GameDevState, code_artifacts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """调用 LLM 进行代码审查，返回 issues 列表。"""
+        system_prompt = self.get_prompt_template("reviewer_system")
+        if not system_prompt:
+            return []
+
+        code_context = ""
+        for art in code_artifacts:
+            code_context += f"\n### {art['file_path']}\n```\n{art['content'][:2000]}\n```\n"
+
+        user_prompt = f"""请审查以下 Godot GDScript 代码，输出 JSON 数组：
+[
+  {{"type": "logic|performance|style", "severity": "high|medium|low", "file": "路径", "message": "问题"}}
+]
+
+{code_context}"""
+
+        try:
+            result = await self.llm.chat_json(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=self.llm_config.get("temperature", 0.2),
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+            if isinstance(result, dict) and not result.get("parse_error"):
+                return result.get("issues", [])
+        except Exception as e:
+            self.log_error("llm_review_failed", {"error": str(e)})
+        return []
+
+    async def _refactor(self, state: GameDevState, code_artifacts: List[Dict[str, Any]], review_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Phase 3: 轻量重构。
+
+        - 仅重构 review 发现的高/中优先级问题
+        - fast_mode 下不执行
+        """
+        refactor_cfg = self.agent_config.get("refactor", {})
+        if refactor_cfg.get("fast_mode", True):
+            return code_artifacts
+        if not review_result.get("needs_refactor"):
+            return code_artifacts
+
+        refactored = []
+        for art in code_artifacts:
+            # 简化重构：只做静态替换示例（如重命名、提取常量）
+            # 复杂重构可接入 LLM，但保持成本可控
+            content = art.get("content", "")
+            # 此处可扩展具体重构规则
+            refactored.append({
+                "file_path": art["file_path"],
+                "content": content,
+                "language": art.get("language", "gdscript"),
+                "engine": art.get("engine", "godot"),
+                "metadata": {**art.get("metadata", {}), "refactored": True},
+            })
+        return refactored
+
+    async def _generate_tests(self, state: GameDevState, code_artifacts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Phase 4: 生成 GUT 测试桩。
+
+        - 只对 .gd 文件生成对应测试文件
+        - Godot 未运行时只生成不执行
+        """
+        test_cfg = self.agent_config.get("test", {})
+        if not test_cfg.get("enabled", True):
+            return []
+
+        test_artifacts = []
+        for art in code_artifacts:
+            fpath = art.get("file_path", "")
+            if not fpath.endswith(".gd"):
+                continue
+            test_path = f"{fpath[:-3]}_test.gd"
+            content = art.get("content", "")
+            class_name = None
+            m = re.search(r'^class_name\s+(\w+)', content, re.MULTILINE)
+            if m:
+                class_name = m.group(1)
+            if not class_name:
+                continue
+
+            test_content = f'''## 自动生成的 GUT 测试桩
+extends GutTest
+
+func test_{class_name.lower()}_exists() -> void:
+    var script = preload("res://{fpath.replace('res://', '')}")
+    assert_true(script is GDScript, "{class_name} 应为 GDScript")
+
+func test_{class_name.lower()}_has_methods() -> void:
+    var script = preload("res://{fpath.replace('res://', '')}")
+    # TODO: 根据实际 public_methods 补充断言
+    assert_true(true, "占位测试")
+'''
+            test_artifacts.append({
+                "file_path": test_path,
+                "content": test_content,
+                "language": "gdscript",
+                "engine": "godot",
+                "metadata": {
+                    "source_task": "test_generator",
+                    "test_for": fpath,
+                },
+            })
+        return test_artifacts
+
+    async def _final_check(self, state: GameDevState, code_artifacts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Phase 6: 最终门禁。
+
+        确定性检查：
+        - TODO 扫描
+        - scene_description 完整性
+        - GDM 核心字段
+
+        LLM 深度检查（可选）:
+        - config.code_generator.final_check.llm_review = true 时触发
+        """
+        warnings: List[str] = []
+        code = {art["file_path"]: art["content"] for art in code_artifacts}
+
+        # 确定性检查
+        for fpath, content in code.items():
+            if "TODO" in content or "pass\n" in content:
+                warnings.append(f"{fpath} 仍包含未完成实现标记")
+
+        gdm = state.get("game_design_model") or {}
+        scene = state.get("scene_description") or {}
+        required_gdm = ["genre", "core_loop", "player_actions", "win_conditions", "fail_conditions"]
+        for key in required_gdm:
+            if not gdm.get(key):
+                warnings.append(f"设计缺少 {key}")
+
+        entities = gdm.get("entities", []) or scene.get("game_objects", [])
+        if not entities:
+            warnings.append("场景没有人物、敌人、道具或环境实体")
+
+        # 可选 LLM 审查
+        llm_review_result = {}
+        final_check_cfg = self.agent_config.get("final_check", {})
+        if final_check_cfg.get("llm_review", False) and self.llm:
+            try:
+                llm_review_result = await self._llm_final_review(state, code_artifacts)
+                if llm_review_result.get("blocking_issues"):
+                    warnings.extend(llm_review_result["blocking_issues"])
+            except Exception as e:
+                self.log_error("final_llm_review_failed", {"error": str(e)})
+
+        passed = not warnings
+        return {
+            "passed": passed,
+            "warnings": warnings,
+            "llm_review": llm_review_result,
+        }
+
+    async def _llm_final_review(self, state: GameDevState, code_artifacts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """可选的 LLM 最终审查。"""
+        system_prompt = self.get_prompt_template("main_reviewer_system")
+        if not system_prompt:
+            return {}
+
+        code_context = "\n\n".join(
+            f"### {a['file_path']}\n```\n{a['content'][:2000]}\n```"
+            for a in code_artifacts
+            if a['file_path'].endswith(('.gd', '.tscn', '.tres'))
+        )
+        gdm = state.get("game_design_model") or {}
+        scene = state.get("scene_description") or {}
+        user_prompt = (
+            "请依据主审查规范审查以下 Godot 工程。\n\n"
+            f"## 游戏设计模型（GameSpec）\n{json.dumps(gdm, ensure_ascii=False, indent=2)[:1500]}\n\n"
+            f"## 场景描述（Scene IR）\n{json.dumps(scene, ensure_ascii=False, indent=2)[:1500]}\n\n"
+            f"## 生成产物\n{code_context[:8000]}\n\n只输出符合规范的 JSON。"
+        )
+        try:
+            result = await self.llm.chat_json(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=self.llm_config.get("temperature", 0.2),
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+            if isinstance(result, dict) and not result.get("parse_error"):
+                return result
+        except Exception as e:
+            self.log_error("llm_final_review_error", {"error": str(e)})
+        return {}

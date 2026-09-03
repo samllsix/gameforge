@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>GameForge · 数字生命驾驶舱预览（基于真实 UI + 参考图）</title>
+<style>
+/* === 复用真实 style.css 的 token === */
+:root {
+    --bg: #0a0e17;
+    --surface: rgba(15, 22, 41, 0.85);
+    --surface-solid: #0f1629;
+    --surface-hover: rgba(20, 30, 55, 0.9);
+    --border: rgba(56, 72, 110, 0.35);
+    --border-hover: rgba(88, 166, 255, 0.45);
+    --text: #e8edf5;
+    --text-secondary: #7b8ba8;
+    --accent: #6c8cff;
+    --accent-light: #8aabff;
+    --accent-glow: rgba(108, 140, 255, 0.25);
+    --accent-gradient: linear-gradient(135deg,#6c8cff 0%,#a78bfa 50%,#f472b6 100%);
+    --success: #34d399;
+    --warning: #fbbf24;
+    --error: #f87171;
+    --purple: #a78bfa;
+    --pink: #f472b6;
+    --radius: 16px;
+    --radius-sm: 10px;
+    --radius-xs: 6px;
+    --shadow-glow: 0 0 20px rgba(108, 140, 255, 0.15);
+    --transition: 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+    font-family:'Inter',-apple-system,'Segoe UI',sans-serif;
+    background:#03060d; color:var(--text);
+    min-height:100vh;
+    background-image:
+        radial-gradient(ellipse at 50% 35%, rgba(108,140,255,0.18) 0%, transparent 55%),
+        radial-gradient(ellipse at 15% 85%, rgba(167,139,250,0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 85% 15%, rgba(244,114,182,0.06) 0%, transparent 45%),
+        var(--bg-grad, linear-gradient(135deg,#03060d,#0a0e17));
+    overflow-x:hidden;
+}
+
+/* === 顶部（保留真实 header 结构，仅换文案/装饰） === */
+header {
+    background:rgba(15, 22, 41, 0.92);
+    backdrop-filter:blur(16px);
+    border-bottom:1px solid var(--border);
+    padding:14px 24px;
+    display:flex; align-items:center; justify-content:space-between;
+    position:relative; z-index:10;
+}
+header::after { content:''; position:absolute; bottom:0; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,rgba(108,140,255,0.4),transparent); }
+.header-brand h1 {
+    font-size:22px; font-weight:800; letter-spacing:-.3px;
+    background:var(--accent-gradient); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+}
+.header-brand .subtitle { font-size:12px; color:var(--text-secondary); margin-left:8px; }
+.header-title {
+    text-align:center; font-size:15px; font-weight:700; color:var(--text); letter-spacing:.5px;
+}
+.header-title .accent { color:var(--accent-light); font-weight:800; }
+.header-status { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--text-secondary); }
+.header-status .tag { padding:2px 8px; border-radius:8px; background:rgba(108,140,255,.1); border:1px solid rgba(108,140,255,.25); color:var(--accent-light); }
+.header-status .tag.green { background:rgba(52,211,153,.1); border-color:rgba(52,211,153,.3); color:var(--success); }
+.header-status .tag.pink { background:rgba(244,114,182,.1); border-color:rgba(244,114,182,.3); color:var(--pink); }
+
+/* === 主框架：左/右 sidebar + 中央星云 + 底栏 === */
+.app {
+    display:grid;
+    grid-template-columns: 220px 1fr 280px;
+    gap:12px; padding:12px;
+    min-height:calc(100vh - 60px);
+}
+
+/* sidebar cards（沿用真实 .scene-info-card 视觉规范：bg + border + radius-sm） */
+.sidebar { display:flex; flex-direction:column; gap:12px; min-height:0; }
+.panel-card {
+    background:rgba(10, 14, 23, 0.55);
+    border:1px solid var(--border);
+    border-radius:var(--radius-sm);
+    backdrop-filter:blur(8px);
+    overflow:hidden;
+    position:relative;
+}
+.panel-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:var(--accent-gradient); opacity:.5; }
+.panel-card h4 {
+    font-size:11px; font-weight:700; color:var(--text-secondary);
+    text-transform:uppercase; letter-spacing:.8px;
+    padding:10px 12px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; gap:6px;
+}
+.panel-card h4::before { content:''; width:4px; height:12px; background:var(--accent-gradient); border-radius:2px; }
+
+/* left menu list（沿用真实 .tree-file 风格 + task-item 卡片感） */
+.menu-list { display:flex; flex-direction:column; padding:6px; gap:3px; }
+.menu-item {
+    display:flex; align-items:center; gap:8px;
+    padding:7px 10px; border-radius:var(--radius-xs);
+    font-size:12px; font-weight:500; color:var(--text-secondary);
+    cursor:pointer; transition:var(--transition);
+    position:relative;
+}
+.menu-item .icon {
+    width:22px; height:22px; border-radius:6px;
+    background:rgba(108,140,255,.12); color:var(--accent-light);
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:800;
+}
+.menu-item:hover { background:rgba(108,140,255,.08); color:var(--text); }
+.menu-item.active { background:rgba(108,140,255,.15); color:var(--accent); }
+.menu-item.active::before { content:''; position:absolute; left:0; top:6px; bottom:6px; width:2px; background:var(--accent); border-radius:2px; }
+.menu-item .sub { font-size:9px; color:var(--text-secondary); margin-left:auto; opacity:.7; }
+
+/* mini stat bar */
+.mini-bar { padding:10px 12px; border-top:1px solid rgba(56,72,110,.2); }
+.mini-bar .row { display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:3px 0; }
+.mini-bar .row .lbl { color:var(--text-secondary); }
+.mini-bar .row .val { color:var(--text); font-family:'JetBrains Mono',monospace; font-weight:700; }
+.mini-bar .bar { height:3px; background:rgba(56,72,110,.4); border-radius:2px; margin-top:3px; overflow:hidden; }
+.mini-bar .bar i { display:block; height:100%; background:var(--accent-gradient); border-radius:2px; }
+.mini-bar .bar.green i { background:linear-gradient(90deg,#34d399,#6ee7b7); }
+
+/* 中央星云 */
+.center {
+    display:grid; grid-template-rows: 1fr auto auto;
+    gap:12px; min-height:0;
+}
+.hero {
+    position:relative; border-radius:var(--radius); overflow:hidden;
+    background:radial-gradient(ellipse at 50% 50%, rgba(108,140,255,0.25) 0%, rgba(10,14,23,0.6) 60%, #03060d 100%);
+    border:1px solid var(--border);
+    min-height:300px;
+    display:flex; align-items:center; justify-content:center;
+}
+.hero::before { content:''; position:absolute; top:0; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,rgba(108,140,255,.5),transparent); }
+
+/* 螺旋星云（CSS 多层） */
+.nebula {
+    position:relative; width:520px; height:520px; max-width:90%; max-height:90%;
+    display:flex; align-items:center; justify-content:center;
+}
+.nebula .ring { position:absolute; inset:0; border-radius:50%; border:1px solid rgba(108,140,255,.2); animation:rotate 30s linear infinite; }
+.nebula .ring:nth-child(1){transform:scale(.35);border-color:rgba(255,255,255,.15)}
+.nebula .ring:nth-child(2){transform:scale(.55);border-color:rgba(167,139,250,.25)}
+.nebula .ring:nth-child(3){transform:scale(.78);border-color:rgba(108,140,255,.25)}
+.nebula .ring:nth-child(4){transform:scale(1); border-color:rgba(244,114,182,.15)}
+.nebula .ring:nth-child(5){transform:scale(1.2);border-color:rgba(108,140,255,.1)}
+.nebula .core {
+    width:120px; height:120px; border-radius:50%;
+    background:radial-gradient(circle at 50% 50%, #fff 0%, var(--accent) 30%, transparent 70%);
+    filter:blur(8px); animation:pulseCore 3s ease-in-out infinite;
+}
+.nebula .particle {
+    position:absolute; width:3px; height:3px; background:#fff; border-radius:50%;
+    box-shadow:0 0 8px #fff; opacity:.7;
+    animation:particleMove 6s ease-in-out infinite;
+}
+@keyframes rotate { from{transform:rotate(0deg) scale(var(--s,.78))} to{transform:rotate(360deg) scale(var(--s,.78))} }
+@keyframes pulseCore { 0%,100%{transform:scale(1);opacity:.9} 50%{transform:scale(1.1);opacity:1} }
+@keyframes particleMove { 0%,100%{transform:translate(0,0)} 25%{transform:translate(40px,-30px)} 50%{transform:translate(0,-50px)} 75%{transform:translate(-40px,-30px)} }
+
+/* 中心提示 */
+.hero-caption {
+    position:absolute; top:18px; left:50%; transform:translateX(-50%);
+    text-align:center; color:var(--text);
+}
+.hero-caption h2 { font-size:18px; font-weight:800; letter-spacing:.5px; }
+.hero-caption .sub { font-size:12px; color:var(--text-secondary); margin-top:4px; }
+.hero-caption .sub::before { content:'◆ '; color:var(--accent); }
+
+/* 四角的设定卡片（沿用真实 .scene-info-card 风格） */
+.corner-cards {
+    position:absolute; inset:0; pointer-events:none;
+}
+.corner-card {
+    position:absolute;
+    background:rgba(8, 12, 22, 0.78);
+    border:1px solid var(--border);
+    border-radius:var(--radius-sm);
+    padding:10px 12px; min-width:170px;
+    backdrop-filter:blur(8px);
+    pointer-events:auto;
+    transition:var(--transition);
+}
+.corner-card:hover { border-color:var(--border-hover); transform:translateY(-1px); box-shadow:var(--shadow-glow); }
+.corner-card .ct-title {
+    display:flex; align-items:center; gap:6px;
+    font-size:12px; font-weight:700; color:var(--accent-light);
+    margin-bottom:6px;
+}
+.corner-card .ct-title::before {
+    content:''; width:6px; height:6px; border-radius:50%;
+    background:var(--accent); box-shadow:0 0 6px var(--accent);
+}
+.corner-card .ct-row { display:flex; gap:8px; font-size:11px; padding:2px 0; }
+.corner-card .ct-row .lbl { color:var(--text-secondary); }
+.corner-card .ct-row .val { color:var(--text); font-family:'JetBrains Mono',monospace; font-weight:600; margin-left:auto; }
+
+.cc-tl { top:80px; left:18px; }
+.cc-tr { top:80px; right:18px; }
+.cc-bl { bottom:18px; left:18px; }
+.cc-br { bottom:18px; right:18px; }
+
+/* 底部输入区 */
+.prompt {
+    background:rgba(10, 14, 23, 0.6);
+    border:1px solid var(--border); border-radius:var(--radius);
+    padding:14px 18px; display:flex; align-items:center; gap:12px;
+    transition:var(--transition);
+}
+.prompt:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+.prompt .ptext { flex:1; color:var(--text-secondary); font-size:14px; }
+.prompt .ptext b { color:var(--accent-light); font-weight:700; }
+.prompt .send {
+    background:var(--accent-gradient); border:none; border-radius:var(--radius-sm);
+    color:#fff; padding:9px 18px; font-weight:700; font-size:13px; cursor:pointer;
+    box-shadow:0 2px 8px rgba(108,140,255,.3); transition:var(--transition);
+}
+.prompt .send:hover { transform:scale(1.04); box-shadow:0 4px 16px rgba(108,140,255,.4); }
+
+/* 快捷模板 */
+.templates { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; }
+.template-card {
+    height:60px; border-radius:var(--radius-xs); border:1px solid var(--border);
+    background:linear-gradient(135deg, rgba(108,140,255,.15), rgba(167,139,250,.05));
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:700; color:var(--accent-light);
+    cursor:pointer; transition:var(--transition);
+    position:relative; overflow:hidden;
+}
+.template-card::before { content:'+'; position:absolute; top:6px; left:8px; opacity:.5; }
+.template-card:hover { border-color:var(--accent); transform:translateY(-2px); box-shadow:var(--shadow-glow); }
+.tc-1{background:linear-gradient(135deg,rgba(108,140,255,.2),rgba(167,139,250,.08))}
+.tc-2{background:linear-gradient(135deg,rgba(167,139,250,.2),rgba(244,114,182,.08))}
+.tc-3{background:linear-gradient(135deg,rgba(244,114,182,.18),rgba(251,191,36,.05))}
+.tc-4{background:linear-gradient(135deg,rgba(52,211,153,.18),rgba(108,140,255,.05))}
+.tc-5{background:linear-gradient(135deg,rgba(108,140,255,.15),rgba(52,211,153,.05))}
+.tc-6{background:linear-gradient(135deg,rgba(248,113,113,.15),rgba(167,139,250,.05))}
+
+/* === 右侧：进程/日志双栏 === */
+.progress-list { padding:6px; display:flex; flex-direction:column; gap:4px; }
+.progress-row {
+    display:grid; grid-template-columns:16px 1fr auto; gap:8px; align-items:center;
+    font-size:11px; padding:5px 8px; border-radius:var(--radius-xs);
+    transition:var(--transition);
+}
+.progress-row:hover { background:rgba(108,140,255,.06); }
+.progress-row .ico {
+    width:16px; height:16px; border-radius:50%;
+    background:rgba(108,140,255,.12); color:var(--accent-light);
+    display:inline-flex; align-items:center; justify-content:center; font-size:9px; font-weight:700;
+}
+.progress-row .name { font-weight:600; color:var(--text); font-size:11px; }
+.progress-row .pct { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--accent-light); font-weight:700; }
+.progress-row .bar { grid-column:1 / -1; height:2px; background:rgba(56,72,110,.4); border-radius:1px; margin-top:3px; overflow:hidden; }
+.progress-row .bar i { display:block; height:100%; background:var(--accent-gradient); border-radius:1px; }
+.progress-row.done .ico { background:rgba(52,211,153,.15); color:var(--success); }
+
+/* log list (real) */
+.log-list { padding:6px 8px; font-family:'JetBrains Mono',monospace; font-size:11px; line-height:1.7; }
+.log-entry { color:var(--text-secondary); padding:2px 0; display:grid; grid-template-columns:50px 40px 1fr; gap:6px; align-items:center; }
+.log-entry .t { color:var(--text-secondary); opacity:.45; }
+.log-entry .lvl { font-size:9px; padding:1px 5px; border-radius:4px; font-weight:700; text-align:center;}
+.log-entry .lvl.info{background:rgba(108,140,255,.15);color:var(--accent)}
+.log-entry .lvl.ok{background:rgba(52,211,153,.15);color:var(--success)}
+.log-entry .lvl.warn{background:rgba(251,191,36,.15);color:var(--warning)}
+.log-entry .lvl.err{background:rgba(248,113,113,.15);color:var(--error)}
+.log-entry .msg { color:var(--text); }
+.log-entry .msg b { color:var(--accent-light); }
+
+/* 底部状态条 */
+.statusbar {
+    background:rgba(10, 14, 23, 0.6); border-top:1px solid var(--border);
+    padding:6px 16px; display:flex; justify-content:space-between; align-items:center;
+    font-size:11px; color:var(--text-secondary); font-family:'JetBrains Mono',monospace;
+}
+.statusbar .left, .statusbar .right { display:flex; gap:18px; }
+.statusbar b { color:var(--accent-light); }
+
+/* 注释 */
+.note { max-width:1280px; margin:8px 16px 24px; padding:12px 16px; font-size:11px; color:var(--text-secondary); background:rgba(10,14,23,.5); border:1px solid var(--border); border-radius:var(--radius-sm); }
+.note b { color:var(--accent-light); }
+.note .marker { color:var(--warning); font-weight:700; }
+
+</style>
+</head>
+<body>
+
+<!-- 顶部 header（基于真实 index.html 的 header 结构） -->
+<header>
+    <div class="header-brand" style="display:flex;align-items:baseline;">
+        <h1>GameForge</h1>
+        <span class="subtitle">AI 游戏研发 · 全流程协作平台</span>
+    </div>
+    <div class="header-title">Gameforge · <span class="accent">数字生命系统</span></div>
+    <div class="header-status">
+        <span class="tag">Godot 4.2</span>
+        <span class="tag green">● 系统在线</span>
+        <span class="tag pink">1201/2000</span>
+    </div>
+</header>
+
+<div class="app">
+
+    <!-- 左侧菜单 -->
+    <aside class="sidebar">
+        <div class="panel-card">
+            <h4>系统菜单</h4>
+            <div class="menu-list">
+                <div class="menu-item active"><span class="icon">◆</span><span>世界观设定</span><span class="sub">世界观/叙事</span></div>
+                <div class="menu-item"><span class="icon">⚙</span><span>任务规划</span><span class="sub">Task</span></div>
+                <div class="menu-item"><span class="icon">⚛</span><span>角色设定</span><span class="sub">NPC</span></div>
+                <div class="menu-item"><span class="icon">⚒</span><span>代码生成</span><span class="sub">生成式 AI</span></div>
+                <div class="menu-item"><span class="icon">▣</span><span>场景构建</span><span class="sub">场景文件生成</span></div>
+                <div class="menu-item"><span class="icon">♪</span><span>资产库</span><span class="sub">音乐/UI/3D 资源</span></div>
+                <div class="menu-item"><span class="icon">⌬</span><span>测试审查</span><span class="sub">测试验证</span></div>
+                <div class="menu-item"><span class="icon">▤</span><span>修复发布</span><span class="sub">环境/配置</span></div>
+                <div class="menu-item"><span class="icon">✦</span><span>系统日志</span><span class="sub">实时监控</span></div>
+            </div>
+        </div>
+
+        <div class="panel-card">
+            <h4>系统状态</h4>
+            <div style="padding:8px 12px;font-size:11px;color:var(--success);font-weight:700;">
+                <span style="display:inline-block;width:6px;height:6px;background:var(--success);border-radius:50%;margin-right:6px;box-shadow:0 0 6px var(--success);"></span>
+                稳定运行中 · AI System Online
+            </div>
+            <div class="mini-bar">
+                <div class="row"><span class="lbl">核心</span><span class="val">77%</span></div>
+                <div class="bar"><i style="width:77%"></i></div>
+                <div class="row" style="margin-top:6px;"><span class="lbl">内存</span><span class="val">64%</span></div>
+                <div class="bar green"><i style="width:64%"></i></div>
+                <div class="row" style="margin-top:6px;"><span class="lbl">线程</span><span class="val">33/42</span></div>
+                <div class="bar"><i style="width:78%"></i></div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- 中央：星云 + 输入 + 模板 -->
+    <section class="center">
+        <div class="hero">
+            <div class="hero-caption">
+                <h2>欢迎回来，开发者</h2>
+                <div class="sub">在数字蓝图中书写你的传奇</div>
+            </div>
+
+            <div class="nebula">
+                <div class="ring"></div>
+                <div class="ring"></div>
+                <div class="ring"></div>
+                <div class="ring"></div>
+                <div class="ring"></div>
+                <div class="core"></div>
+                <div class="particle" style="top:10%;left:50%;"></div>
+                <div class="particle" style="top:30%;left:80%;animation-delay:.5s"></div>
+                <div class="particle" style="top:70%;left:75%;animation-delay:1.2s"></div>
+                <div class="particle" style="top:80%;left:25%;animation-delay:1.8s"></div>
+                <div class="particle" style="top:20%;left:20%;animation-delay:2.4s"></div>
+                <div class="particle" style="top:55%;left:90%;animation-delay:3s"></div>
+            </div>
+
+            <!-- 四角卡片 -->
+            <div class="corner-cards">
+                <div class="corner-card cc-tl">
+                    <div class="ct-title">世界观设定</div>
+                    <div class="ct-row"><span class="lbl">种类</span><span class="val">国漫</span></div>
+                    <div class="ct-row"><span class="lbl">特征</span><span class="val">能力 / 历史</span></div>
+                </div>
+                <div class="corner-card cc-tr">
+                    <div class="ct-title">角色设定</div>
+                    <div class="ct-row"><span class="lbl">主角</span><span class="val">防御</span></div>
+                    <div class="ct-row"><span class="lbl">关系</span><span class="val">剧情故事</span></div>
+                </div>
+                <div class="corner-card cc-bl">
+                    <div class="ct-title">核心玩法</div>
+                    <div class="ct-row"><span class="lbl">战斗</span><span class="val">探索 / 成长</span></div>
+                    <div class="ct-row"><span class="lbl">任务</span><span class="val">交易 / 制造</span></div>
+                </div>
+                <div class="corner-card cc-br">
+                    <div class="ct-title">系统规则</div>
+                    <div class="ct-row"><span class="lbl">数值</span><span class="val">包含</span></div>
+                    <div class="ct-row"><span class="lbl">物理</span><span class="val">包含</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 输入栏（沿用真实 input-wrapper 风格） -->
+        <div class="prompt">
+            <span class="ptext">⚡ 输入你的<b>游戏创意</b>，AI 将为你生成完整的游戏世界</span>
+            <button class="send">开始构建 ▶</button>
+        </div>
+
+        <!-- 快捷模板 -->
+        <div class="templates">
+            <div class="template-card tc-1">3D平台冒险</div>
+            <div class="template-card tc-2">开放世界RPG</div>
+            <div class="template-card tc-3">回合战斗</div>
+            <div class="template-card tc-4">科幻射击</div>
+            <div class="template-card tc-5">模拟经营</div>
+            <div class="template-card tc-6">竞速赛艇</div>
+        </div>
+    </section>
+
+    <!-- 右侧：系统进程 + 日志 -->
+    <aside class="sidebar">
+        <div class="panel-card">
+            <h4>系统进程</h4>
+            <div style="padding:0 12px 8px;font-size:10px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;">AGENT OPS · 99.81 FPS</div>
+            <div class="progress-list">
+                <div class="progress-row done"><span class="ico">✓</span><span class="name">世界观设定</span><span class="pct">21%</span><div class="bar"><i style="width:21%"></i></div></div>
+                <div class="progress-row done"><span class="ico">✓</span><span class="name">任务规划师</span><span class="pct">43%</span><div class="bar"><i style="width:43%"></i></div></div>
+                <div class="progress-row done"><span class="ico">✓</span><span class="name">代码工程师</span><span class="pct">68%</span><div class="bar"><i style="width:68%"></i></div></div>
+                <div class="progress-row done"><span class="ico">✓</span><span class="name">代码审查员</span><span class="pct">12%</span><div class="bar"><i style="width:12%"></i></div></div>
+                <div class="progress-row"><span class="ico">▶</span><span class="name">测试工程师</span><span class="pct">—</span><div class="bar"><i style="width:0%"></i></div></div>
+                <div class="progress-row"><span class="ico">▶</span><span class="name">场景审查员</span><span class="pct">—</span><div class="bar"><i style="width:0%"></i></div></div>
+                <div class="progress-row"><span class="ico">▶</span><span class="name">系统整合</span><span class="pct">—</span><div class="bar"><i style="width:0%"></i></div></div>
+            </div>
+            <div style="padding:8px 12px;border-top:1px solid var(--border);font-size:11px;color:var(--text-secondary);">
+                实时预览 <span style="font-family:'JetBrains Mono',monospace;color:var(--accent-light);margin-left:6px;">LIVE</span>
+                <span style="float:right;color:var(--pink);font-family:'JetBrains Mono',monospace;">#/1971543724+</span>
+            </div>
+            <div style="padding:0 12px 12px;font-size:10px;color:var(--text-secondary);">
+                <div style="display:inline-block;padding:2px 6px;background:rgba(108,140,255,.1);border-radius:4px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--accent-light);">62M</div>
+                <span style="margin-left:8px;">小游戏</span>
+            </div>
+        </div>
+
+        <div class="panel-card" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+            <h4>系统日志</h4>
+            <div class="log-list" style="overflow-y:auto;flex:1;">
+                <div class="log-entry"><span class="t">11:38:38</span><span class="lvl info">INFO</span><span class="msg">代码工程师：模块编译 <b>通过</b></span></div>
+                <div class="log-entry"><span class="t">11:38:42</span><span class="lvl info">INFO</span><span class="msg">生成器：神经平衡 <b>稳定</b></span></div>
+                <div class="log-entry"><span class="t">11:38:45</span><span class="lvl info">INFO</span><span class="msg">生成器：地形平衡 <b>稳定</b></span></div>
+                <div class="log-entry"><span class="t">11:38:49</span><span class="lvl info">INFO</span><span class="msg">生成器：经济系统 <b>通过</b></span></div>
+                <div class="log-entry"><span class="t">11:38:51</span><span class="lvl ok">OK</span><span class="msg">思考设计师：名称生成 <b>完成</b></span></div>
+                <div class="log-entry"><span class="t">11:38:53</span><span class="lvl ok">OK</span><span class="msg">任务规划师：整合方案 <b>通过</b></span></div>
+                <div class="log-entry"><span class="t">11:38:56</span><span class="lvl ok">OK</span><span class="msg">任务规划师：场景策划 <b>完成</b></span></div>
+                <div class="log-entry"><span class="t">11:38:57</span><span class="lvl info">INFO</span><span class="msg">代码工程师：模块拼接 <b>通过</b></span></div>
+                <div class="log-entry"><span class="t">11:38:59</span><span class="lvl warn">WARN</span><span class="msg">资产优化师：场景压缩 <b>处理</b></span></div>
+                <div class="log-entry"><span class="t">11:39:00</span><span class="lvl info">INFO</span><span class="msg">系统优化师：微服务负载 <b>检查</b></span></div>
+            </div>
+        </div>
+
+        <!-- 底部动力学 -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+            <div class="panel-card" style="padding:8px 10px;">
+                <div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;font-weight:700;">World Dynamics</div>
+                <div style="font-size:11px;color:var(--accent-light);margin-top:4px;">◇ 生命主因发生震荡</div>
+                <div style="font-size:11px;color:var(--text);margin-top:2px;">◇ 系统协同微</div>
+                <div style="font-size:11px;color:var(--text);margin-top:2px;">◇ 系统防护核心完成</div>
+            </div>
+            <div class="panel-card" style="padding:8px 10px;">
+                <div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;font-weight:700;">Energy Core</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                    <div style="width:38px;height:38px;border-radius:50%;background:conic-gradient(var(--accent) 0 73%, rgba(56,72,110,.3) 73% 100%);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:var(--accent-light);">
+                        <div style="width:28px;height:28px;background:var(--surface-solid);border-radius:50%;display:flex;align-items:center;justify-content:center;">73%</div>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-secondary);">能级激活态</div>
+                </div>
+            </div>
+            <div class="panel-card" style="padding:8px 10px;">
+                <div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;font-weight:700;">Data Flow</div>
+                <svg viewBox="0 0 120 30" style="width:100%;height:30px;margin-top:4px;"><path d="M0,20 Q20,5 40,18 T80,15 T120,8" fill="none" stroke="url(#g)" stroke-width="2"/><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6c8cff"/><stop offset="1" stop-color="#f472b6"/></linearGradient></defs></svg>
+            </div>
+        </div>
+    </aside>
+
+</div>
+
+<!-- 状态栏 -->
+<div class="statusbar">
+    <div class="left">
+        <span>Gametype 数字生命系统 v1.00</span>
+        <span>● 在数据的流动中，生命得以诞生，世界由此书写</span>
+    </div>
+    <div class="right">
+        <span><b style="color:var(--success);">任务完成</b></span>
+        <span>Gameforge AI Lab</span>
+    </div>
+</div>
+
+<div class="note">
+    <b>融合说明</b>（数字生命驾驶舱风 + 真实 <code>static/</code> 资源）：<br>
+    <span class="marker">①</span> 完全沿用 <code>--accent / --border / --text / --radius</code> 等真实 CSS 变量 — 与现网 UI 完全同色同形<br>
+    <span class="marker">②</span> 顶部 header、面板卡片、菜单列表、进度条、日志条、模板卡 — 全部复刻真实组件类（<code>.panel-card ≈ .scene-info-card</code>，<code>.menu-item ≈ .tree-file</code>，<code>.progress-row ≈ .code-tab</code>，<code>.log-entry</code> 复用真实 log 风格）<br>
+    <span class="marker">③</span> <b>中央螺旋星云</b>为视觉中心，CSS 多层 ring + 粒子 — 仅作 hero 占位，落地时与实时 Godot 画面接入<br>
+    <span class="marker">④</span> 四角"世界观/角色/玩法/规则"卡片 — 对应参考图；对应原 <code>app.js</code> 的 <code>game_design</code> 事件数据结构（<code>genre / systems / entities / camera_mode</code>）<br>
+    <span class="marker">⑤</span> 右侧"系统进程"7 条 + 进度 — 100% 对应真实 <code>_phaseMap</code> 的 7 阶段（设计/规划/生成/审查/测试/场景/完成），可直接接管 <code>updatePhaseTimeline</code><br>
+    <span class="marker">⑥</span> 底部输入栏、6 张模板卡 — 与原真实 <code>input-wrapper</code> + <code>.example-btn</code> 同源
+</div>
+
+</body>
+</html>

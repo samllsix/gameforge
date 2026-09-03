@@ -94,7 +94,7 @@ class RolePolicies:
         """把 Agent 类名/实例名映射到角色。
 
         约定：CodeGeneratorAgent → code_agent；无映射的未知 Agent → 只读。
-        大小写/下划线不敏感（TestGeneratorAgent 与 test_generator 等价）。
+        
         """
         name = (agent_name or "").lower().replace("_", "")
         mapping = {
@@ -104,10 +104,6 @@ class RolePolicies:
             "scenegenerator": "scene_agent",
             "scene": "scene_agent",
             "qa": "qa_agent",
-            "testgenerator": "qa_agent",
-            "reviewer": "qa_agent",
-            "debugger": "repair_agent",
-            "refactor": "repair_agent",
             "orchestrator": "director",
             "director": "director",
         }
@@ -141,3 +137,4 @@ def describe_role(role: str) -> Dict[str, object]:
         "allow": list(p.allow),
         "deny": list(p.deny),
     }
+

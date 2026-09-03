@@ -1,0 +1,67 @@
+{
+  "project_id": "GameForge_Project",
+  "requirements": "创建一个恐怖解谜游戏，玩家在废弃医院探索，收集线索解开谜团",
+  "scene_ir": {
+    "scene_name": "AbandonedHospitalScene",
+    "genre": "puzzle",
+    "layout": "room_based",
+    "difficulty": "medium",
+    "camera": {
+      "mode": "3d_first_person",
+      "follow_target": "Player",
+      "background": "dungeon_dark"
+    },
+    "entities": [
+      {
+        "name": "Player",
+        "role": "player",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "PlayerController"
+      },
+      {
+        "name": "GameManager",
+        "role": "manager",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "GameManager"
+      },
+      {
+        "name": "ClueItem",
+        "role": "pickup",
+        "count": 6,
+        "spawn_zone": "random",
+        "script": "CluePickup"
+      },
+      {
+        "name": "HospitalObstacle",
+        "role": "obstacle",
+        "count": 15,
+        "spawn_zone": "random",
+        "script": null
+      },
+      {
+        "name": "HospitalDecoration",
+        "role": "decoration",
+        "count": 25,
+        "spawn_zone": "random",
+        "script": null
+      },
+      {
+        "name": "RoomBoundary",
+        "role": "boundary",
+        "count": 12,
+        "spawn_zone": "random",
+        "script": null
+      },
+      {
+        "name": "HospitalGhost",
+        "role": "enemy",
+        "count": 3,
+        "spawn_zone": "random",
+        "script": "EnemyController"
+      }
+    ],
+    "theme": "废弃医院"
+  }
+}

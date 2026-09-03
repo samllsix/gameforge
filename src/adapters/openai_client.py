@@ -35,13 +35,10 @@ def _infer_action_type(observation: Observation, response_text: str) -> ActionTy
     # 1. 先看 agent_type 直接映射
     agent_map = {
         "code_generator": ActionType.GENERATE_CODE,
-        "code_reviewer": ActionType.REVIEW_CODE,
-        "debugger": ActionType.FIX_CODE,
         "planner": ActionType.PLAN_TASK,
         "game_designer": ActionType.DESIGN_GAME,
         "scene_generator": ActionType.GENERATE_SCENE,
-        "test_generator": ActionType.GENERATE_TEST,
-        "refactor": ActionType.REFACTOR,
+        "requirement_analyzer": ActionType.CHAT,
     }
     agent_type = observation.agent_type.lower()
     if agent_type in agent_map:

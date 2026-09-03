@@ -21,13 +21,9 @@ from src.core.state.game_state import GameDevState, TaskStatus, TaskType, AgentT
 from src.agents.orchestrator import OrchestratorAgent
 from src.agents.planner import PlannerAgent
 from src.agents.code_generator import CodeGeneratorAgent
-from src.agents.code_reviewer import CodeReviewerAgent
-from src.agents.test_generator import TestGeneratorAgent
-from src.agents.debugger import DebuggerAgent
 from src.agents.scene_generator import SceneGeneratorAgent
 from src.agents.game_designer import GameDesignerAgent
-from src.agents.refactor import RefactorAgent
-from src.agents.main_reviewer import MainReviewerAgent
+from src.agents.requirement_analyzer import RequirementAnalyzerAgent
 from src.core.memory import MemoryManager
 from src.core.recipes import RecipeStore
 from src.sandbox.controller import SandboxController
@@ -52,12 +48,8 @@ class GameDevWorkflow:
         self.game_designer = GameDesignerAgent(config)
         self.planner = PlannerAgent(config)
         self.code_generator = CodeGeneratorAgent(config)
-        self.code_reviewer = CodeReviewerAgent(config)
-        self.test_generator = TestGeneratorAgent(config)
-        self.debugger = DebuggerAgent(config)
         self.scene_generator = SceneGeneratorAgent(config)
-        self.refactor_agent = RefactorAgent(config)
-        self.main_reviewer = MainReviewerAgent(config)
+        self.requirement_analyzer = RequirementAnalyzerAgent(config)
 
         # 记忆系统 — 让 Agent 有上下文记忆
         self.memory = MemoryManager()
@@ -65,6 +57,13 @@ class GameDevWorkflow:
         # P1 语义级复用：已验证配方库。命中则整体复用，绕过 LLM 主流水线。
         self.recipe_store = RecipeStore()
         self.recipe_enabled = config.get("recipes", {}).get("enabled", True)
+
+        # 增量生成：基于影响分析只重新生成变化的文件
+        self.incremental_enabled = config.get("incremental", {}).get("enabled", False)
+        self.incremental = None
+        if self.incremental_enabled:
+            from src.core.incremental import IncrementalGenerator
+            self.incremental = IncrementalGenerator()
 
         # Sandbox 平台集成（Phase 1）
         self.sandbox = SandboxController(config)
@@ -141,6 +140,18 @@ class GameDevWorkflow:
                 if project_hint:
                     scan_dir = os.path.join("projects", project_hint)
             if scan_dir and os.path.isdir(scan_dir):
+                # 项目尚未落盘（无 project.godot 且无任何 .gd）时没有可扫对象，
+                # 跳过本次扫描；导出阶段的发布门禁会对完整项目再做一次 gd-guard 扫描。
+                # 否则会把"缺少 project.godot"误判为 block，提前终止整条工作流。
+                has_project = os.path.isfile(os.path.join(scan_dir, "project.godot"))
+                has_gd = False
+                for _root, _dirs, files in os.walk(scan_dir):
+                    if any(f.endswith(".gd") for f in files):
+                        has_gd = True
+                        break
+                if not has_project and not has_gd:
+                    logger.info("gd_guard.skipped_unmaterialized", scan_dir=scan_dir)
+                    return False
                 guard = _gd_guard.scan_project(scan_dir)
                 if guard["available"] and guard["verdict"] == "block":
                     findings = guard["findings"][:5]
@@ -158,38 +169,28 @@ class GameDevWorkflow:
         """构建LangGraph状态图，返回编译后的可执行图"""
         workflow = StateGraph(GameDevState)
 
-        # 添加所有节点
+        # 添加所有节点（精简为 6 个核心节点）
+        workflow.add_node("requirement_analyzer", self._requirement_analyzer_node)
         workflow.add_node("game_designer", self._game_designer_node)
         workflow.add_node("planner", self._planner_node)
         workflow.add_node("orchestrator", self._orchestrator_node)
-        workflow.add_node("code_generator", self._wrap_code_node("code_generator"))
-        workflow.add_node("code_reviewer", self._code_reviewer_node)
-        workflow.add_node("refactor", self._wrap_code_node("refactor"))
-        workflow.add_node("test_generator", self._wrap_code_node("test_generator"))
-        workflow.add_node("debugger", self._wrap_code_node("debugger"))
-        workflow.add_node("main_reviewer", self._main_reviewer_node)
+        workflow.add_node("code_generator", self._code_generator_node)
 
-        # 入口点
-        workflow.set_entry_point("game_designer")
+        # 入口点：需求解析 → 游戏设计
+        workflow.set_entry_point("requirement_analyzer")
+        workflow.add_edge("requirement_analyzer", "game_designer")
 
         # 固定边：线性流水线段
         workflow.add_edge("game_designer", "planner")
         workflow.add_edge("planner", "orchestrator")
-        workflow.add_edge("code_generator", "code_reviewer")
-        workflow.add_edge("code_reviewer", "refactor")
-        workflow.add_edge("refactor", "test_generator")
-        workflow.add_edge("test_generator", "main_reviewer")
-        workflow.add_edge("main_reviewer", "orchestrator")
-        workflow.add_edge("debugger", "orchestrator")
+        workflow.add_edge("orchestrator", "code_generator")
 
-        # 条件边：orchestrator 根据当前状态路由到不同节点
+        # 条件边：code_generator 完成后回到 orchestrator，orchestrator 决定继续还是结束
         workflow.add_conditional_edges(
-            "orchestrator",
-            self._route_next,
+            "code_generator",
+            self._route_after_code_generator,
             {
-                "code_generator": "code_generator",
-                "test_generator": "test_generator",
-                "debugger": "debugger",
+                "continue": "orchestrator",
                 END: END,
             },
         )
@@ -206,9 +207,6 @@ class GameDevWorkflow:
             result = await real_method(state)
             self._sandbox_sync_code_generated(state, result)
             return result
-
-        return wrapper
-
     def _sandbox_sync_code_generated(self, state: GameDevState, node_result: Dict[str, Any]) -> None:
         """若启用沙箱，将 node_result 中 code_generated 的变更同步到任务工作区。"""
         if not getattr(self, "sandbox_enabled", False):
@@ -225,7 +223,69 @@ class GameDevWorkflow:
             except Exception as e:
                 self.logger.warning("sandbox_sync_failed", path=rel_path, error=str(e))
 
+    # ========== 增量生成 ==========
+
+    def _apply_incremental_scope(self, state: GameDevState) -> None:
+        """若启用增量生成且检测到 GDM 变更，过滤任务计划与代码生成范围。"""
+        if not getattr(self, "incremental_enabled", False) or not self.incremental:
+            return
+
+        project_name = state.get("project_context", {}).get("project_name", "default")
+        try:
+            previous_context = self.memory.project_memory.get_relevant_context(project_name)
+        except Exception:
+            previous_context = {}
+
+        old_gdm = (previous_context.get("game_design_model") or {}) if isinstance(previous_context, dict) else {}
+        new_gdm = state.get("game_design_model") or {}
+
+        if not old_gdm or old_gdm == new_gdm:
+            return
+
+        needed, changed = self.incremental.should_regenerate(
+            {"game_design_model": old_gdm},
+            {"game_design_model": new_gdm},
+        )
+        if not needed or not changed:
+            return
+
+        impacted = self.incremental.compute_impact(list(changed))
+        state["incremental_scope"] = {
+            "impacted_files": sorted(impacted),
+            "changed_files": sorted(changed),
+        }
+
+        filtered_tasks = self.incremental.filter_task_plan(state.get("task_plan", []), impacted)
+        if filtered_tasks:
+            state["task_plan"] = filtered_tasks
+
+        filtered_code = self.incremental.filter_code_generated(state.get("code_generated", {}), impacted)
+        if filtered_code:
+            state["code_generated"] = filtered_code
+
+        self.logger.info(
+            "incremental_scope_applied",
+            changed=len(changed),
+            impacted=len(impacted),
+            tasks=len(filtered_tasks),
+        )
+
     # ========== 节点实现 ==========
+
+    async def _requirement_analyzer_node(self, state: GameDevState) -> Dict[str, Any]:
+        """需求解析节点 — 将自然语言需求转化为结构化 Game Spec"""
+        try:
+            result = await self.requirement_analyzer.execute(state)
+            spec = result.get("game_spec")
+            if spec:
+                self.log_action("requirement_analyzed", {"genre": spec.get("game", {}).get("genre", "")})
+            return {
+                "game_spec": spec,
+                "current_phase": "requirement_analyzed",
+            }
+        except Exception as e:
+            self.logger.warning("requirement_analyzer_failed", error=str(e))
+            return {"current_phase": "requirement_analyzed"}
 
     async def _game_designer_node(self, state: GameDevState) -> Dict[str, Any]:
         """游戏设计节点 — 生成 Game Design Model"""
@@ -241,6 +301,7 @@ class GameDevWorkflow:
     async def _planner_node(self, state: GameDevState) -> Dict[str, Any]:
         """规划节点 — 解析需求并生成任务计划"""
         try:
+            self._apply_incremental_scope(state)
             plan_result = await self.planner.plan(state)
             is_dict = isinstance(plan_result, dict)
             task_plan = plan_result.get("tasks", []) if is_dict else plan_result
@@ -260,134 +321,21 @@ class GameDevWorkflow:
             return {"error_log": [f"Planner failed: {e}"], "current_phase": "error"}
 
     async def _code_generator_node(self, state: GameDevState) -> Dict[str, Any]:
-        """代码生成节点 — 根据当前任务生成 GDScript 代码
+        """代码生成节点 — 执行完整 Pipeline：generate → review → refactor → test → fix → final_check
 
-        只返回新生成的代码，code_generated 的合并由 reducer 自动完成。
+        内部由 CodeGeneratorAgent.run_pipeline() 协调各 Phase，
+        只返回一个汇总结果，code_generated 的合并由 reducer 自动完成。
         """
         try:
-            current_task_id = state.get("current_task_id")
-            task_plan = state.get("task_plan", [])
-
-            current_task = None
-            for task in task_plan:
-                if task.get("id") == current_task_id:
-                    current_task = task
-                    break
-
-            if not current_task:
-                return {"current_phase": "no_task"}
-
-            # 注入记忆上下文
-            memory_context = self.memory.get_context_for_agent(
-                "code_generator", query=current_task.get("name", "")
-            )
-            if memory_context:
-                state = {**state, "_memory_context": memory_context}
-
-            code_artifacts = await self.code_generator.generate(state, current_task)
-
-            # 标记任务完成
-            updated_plan = [dict(t) for t in task_plan]
-            for task in updated_plan:
-                if task.get("id") == current_task_id:
-                    task["status"] = TaskStatus.COMPLETED.value
-                    break
-
-            # 只返回新代码，reducer 自动合并到 code_generated
-            new_code = {art["file_path"]: art["content"] for art in code_artifacts}
-
-            # 统一验证 — GDScript 语法检查
-            warnings = []
-            try:
-                from src.utils.unified_validator import validate_all
-                validation = validate_all(new_code)
-                if validation.has_errors:
-                    warnings.append(
-                        f"代码验证发现 {len(validation.errors)} 个错误: "
-                        + "; ".join(e.get("message", "") for e in validation.errors[:3])
-                    )
-            except Exception:
-                pass
-
-            return {
-                "code_generated": new_code,
-                "code_artifacts": code_artifacts,
-                "task_plan": updated_plan,
-                "current_phase": "code_generated",
-                "warnings": warnings,
-            }
+            pipeline_result = await self.code_generator.run_pipeline(state)
+            return pipeline_result
         except Exception as e:
-            return {"error_log": [f"Code generator failed: {e}"], "current_phase": "error"}
-
-    async def _code_reviewer_node(self, state: GameDevState) -> Dict[str, Any]:
-        """代码审查节点 — 审查生成的 GDScript 代码"""
-        try:
-            review_result = await self.code_reviewer.review(state)
-            return {"current_phase": "code_reviewed", "review_result": review_result}
-        except Exception as e:
-            return {"error_log": [f"Code reviewer failed: {e}"], "current_phase": "error"}
-
-    async def _refactor_node(self, state: GameDevState) -> Dict[str, Any]:
-        """重构节点 — 分析代码质量并重构"""
-        try:
-            result = await self.refactor_agent.execute(state)
-
-            # 重构后验证
-            refactored_code = result.get("code_generated", {})
-            if refactored_code:
-                try:
-                    from src.utils.unified_validator import validate_all
-                    validation = validate_all(refactored_code)
-                    if validation.has_errors:
-                        original_code = state.get("code_generated", {})
-                        result["code_generated"] = original_code
-                        result.setdefault("warnings", []).append(
-                            f"重构后验证失败（{len(validation.errors)}个错误），已回退: "
-                            + "; ".join(e.get("message", "") for e in validation.errors[:3])
-                        )
-                except Exception:
-                    pass
-
-            return result
-        except Exception as e:
-            return {"error_log": [f"Refactor failed: {e}"], "current_phase": "error"}
-
-    async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
-        """测试生成节点 — 为 GDScript 代码生成 GUT 测试用例"""
-        try:
-            current_task_id = state.get("current_task_id")
-            task_plan = state.get("task_plan", [])
-            test_code = await self.test_generator.generate(state)
-
-            updated_plan = [dict(t) for t in task_plan]
-            for task in updated_plan:
-                if task.get("id") == current_task_id:
-                    task["status"] = TaskStatus.COMPLETED.value
-                    break
-
-            return {
-                "code_generated": test_code,
-                "task_plan": updated_plan,
-                "current_phase": "test_generated",
-            }
-        except Exception as e:
-            return {"error_log": [f"Test generator failed: {e}"], "current_phase": "error"}
+            return {"error_log": [f"Code generator pipeline failed: {e}"], "current_phase": "error"}
 
     async def _orchestrator_node(self, state: GameDevState) -> Dict[str, Any]:
         """编排节点 — 调度下一个任务"""
         try:
             task_plan = state.get("task_plan", [])
-            current_phase = state.get("current_phase", "")
-            fix_attempts = state.get("fix_attempts", 0)
-            max_fix = self.config.get("agents", {}).get("debugger", {}).get("max_fix_attempts", 5)
-
-            # 有错误且未超过修复次数限制 → 路由到 debugger
-            error_log = state.get("error_log", [])
-            if error_log and current_phase != "fix_applied" and fix_attempts < max_fix:
-                return {
-                    "current_phase": "needs_fix",
-                    "fix_attempts": fix_attempts + 1,
-                }
 
             # 选择下一个待执行任务
             ready_tasks = self._get_all_ready_tasks(task_plan)
@@ -403,66 +351,19 @@ class GameDevWorkflow:
         except Exception as e:
             return {"error_log": [f"Orchestrator failed: {e}"], "current_phase": "error"}
 
-    async def _main_reviewer_node(self, state: GameDevState) -> Dict[str, Any]:
-        """主审查节点：最终代码二次审查 + 场景/人物/环境设计审查。"""
-        try:
-            return await self.main_reviewer.execute(state)
-        except Exception as e:
-            return {
-                "main_review_result": {"passed": False, "error": str(e)},
-                "design_review_result": {"passed": False, "warnings": [str(e)]},
-                "error_log": [f"Main reviewer failed: {e}"],
-                "current_phase": "main_review_error",
-            }
-
-    async def _debugger_node(self, state: GameDevState) -> Dict[str, Any]:
-        """调试节点 — 分析 GDScript 错误并生成修复（委托 code_generator 修复能力）"""
-        try:
-            error_log = state.get("error_log", [])
-            fix_result = await self.debugger.analyze_and_fix(state, error_log)
-            return {
-                **fix_result,
-                "current_phase": "fix_applied",
-            }
-        except Exception as e:
-            return {"error_log": [f"Debugger failed: {e}"], "current_phase": "unrecoverable"}
-
     # ========== 路由逻辑 ==========
+
+    def _route_after_code_generator(self, state: GameDevState) -> str:
+        """code_generator 完成后的路由：继续下一个任务或结束。"""
+        if state.get("is_complete"):
+            return END
+        return "continue"
 
     def _route_next(self, state: GameDevState) -> str:
         """条件路由：根据当前状态决定下一个节点"""
-        current_phase = state.get("current_phase", "")
-
-        # 工作流完成
-        if current_phase == "workflow_complete" or state.get("is_complete"):
+        if state.get("is_complete"):
             return END
-
-        # 需要修复 → debugger
-        if current_phase == "needs_fix":
-            return "debugger"
-
-        # 任务分配 → 根据任务类型路由
-        current_task_id = state.get("current_task_id")
-        if not current_task_id:
-            return END
-
-        task_plan = state.get("task_plan", [])
-        current_task = None
-        for task in task_plan:
-            if task.get("id") == current_task_id:
-                current_task = task
-                break
-
-        if not current_task:
-            return END
-
-        task_type = current_task.get("type", "code")
-        if task_type == TaskType.TEST.value:
-            return "test_generator"
-        elif task_type in self._NON_CODE_TASK_TYPES:
-            return END
-        else:
-            return "code_generator"
+        return "code_generator"
 
     # ========== 工具方法 ==========
 
@@ -600,11 +501,6 @@ class GameDevWorkflow:
                     "code_generated": {"scenes/scene_description.json": scene_json}
                 })
 
-            # 场景生成后立即执行人物、环境和玩法闭环审查。
-            design_review = self.main_reviewer.review_game_design(state)
-            state["design_review_result"] = design_review
-            await event_callback("design_review", design_review)
-
             if status == "built":
                 msg = "Godot 场景已生成！请在 Godot Editor 中查看"
                 await event_callback("scene_complete", {
@@ -714,7 +610,7 @@ class GameDevWorkflow:
                     error_log.append(str(err))
 
             state["error_log"] = error_log
-            debug_result = await self._debugger_node(state)
+            debug_result = await self.code_generator.fix_code(state, error_log)
             state.update(debug_result)
 
             updated_files = state.get("code_generated", {})
@@ -838,7 +734,7 @@ class GameDevWorkflow:
                     error_log.append(str(err))
 
             state["error_log"] = error_log
-            debug_result = await self._debugger_node(state)
+            debug_result = await self.code_generator.fix_code(state, error_log)
             state.update(debug_result)
 
             updated_files = state.get("code_generated", {})
@@ -927,9 +823,9 @@ class GameDevWorkflow:
                 break
             state["error_log"] = error_log
             state.setdefault("warnings", []).append(
-                f"运行时冒烟失败（第{attempt + 1}次），进入 debugger 修复"
+                f"运行时冒烟失败（第{attempt + 1}次），进入 code_generator 修复"
             )
-            debug_result = await self._debugger_node(state)
+            debug_result = await self.code_generator.fix_code(state, error_log)
             state.update(debug_result)
             # 重新落盘 debugger 修改的脚本
             try:

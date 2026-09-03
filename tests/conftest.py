@@ -55,9 +55,8 @@ def sample_config():
         "agents": {
             "orchestrator": {},
             "code_generator": {"supported_engines": ["godot"]},
-            "code_reviewer": {},
-            "test_generator": {},
-            "debugger": {},
+            "scene_generator": {},
+            "requirement_analyzer": {},
         },
     }
 
@@ -96,7 +95,7 @@ def sample_game_state():
                 "status": TaskStatus.PENDING.value,
                 "priority": 3,
                 "dependencies": ["task-001", "task-002"],
-                "assigned_agent": "test_generator",
+                "assigned_agent": "code_generator",
             },
         ],
         "current_task_id": None,

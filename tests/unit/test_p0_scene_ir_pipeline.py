@@ -137,7 +137,6 @@ def test_run_scene_generation_persists_before_complete(monkeypatch, tmp_path):
         }
 
     wf.scene_generator = type("SG", (), {"execute": staticmethod(fake_execute)})()
-    wf.main_reviewer = type("MR", (), {"review_game_design": staticmethod(lambda s: {})})()
 
     ir_path = tmp_path / "projects" / "space_demo" / ".scene_ir.json"
     seen = {"file_existed_at_event": None}

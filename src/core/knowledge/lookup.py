@@ -1,8 +1,8 @@
-"""GameForge - 轻量 Godot 知识库检索（多智能体改造第四步用）
+"""GameForge - 轻量 Godot 知识库检索
 
 读取 data/ 下的 Godot 知识 JSON（godot_knowledge / godot_knowledge_extra /
-godot_knowledge_generation），按关键词重叠做轻量 RAG 检索，供 debugger 在
-遇到陌生报错时「委派调研子 agent」查知识库回收结论。
+godot_knowledge_generation），按关键词重叠做轻量 RAG 检索，供 CodeGenerator
+在遇到陌生报错时查知识库回收结论。
 
 不依赖外部向量库，纯离线、可控、可测试。
 """

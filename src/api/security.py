@@ -381,6 +381,7 @@ class APIKeyAuthMiddleware:
 
     PUBLIC_PATHS = {
         "/",
+        "/app",
         "/dashboard",
         "/digital",
         "/demo",
@@ -451,7 +452,7 @@ class APIKeyAuthMiddleware:
 class InputValidationMiddleware:
     """输入验证中间件 — 自动检测并拦截恶意请求（纯ASGI）"""
 
-    SKIP_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/stats", "/dashboard", "/digital"}
+    SKIP_PATHS = {"/", "/health", "/docs", "/openapi.json", "/redoc", "/stats", "/app", "/dashboard", "/digital"}
 
     def __init__(self, app):
         self.app = app

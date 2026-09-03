@@ -31,6 +31,18 @@ class GameDesignerAgent(BaseAgent):
         requirements = state.get("project_context", {}).get("requirements", "")
         engine = state.get("project_context", {}).get("engine", "godot")
 
+        # 优先使用 Requirement Analyzer 输出的结构化 Game Spec
+        game_spec = state.get("game_spec")
+        if game_spec:
+            self.log_action("using_game_spec", {"genre": game_spec.get("game", {}).get("genre", "")})
+            gdm = await self.generate_design_model_from_spec(game_spec, engine)
+            if gdm:
+                return {
+                    "game_design_model": gdm,
+                    "current_phase": "design_complete",
+                }
+            self.logger.warning("game_spec_to_gdm_failed", fallback="llm")
+
         gdm = await self.generate_design_model(requirements, engine)
         if not gdm:
             self.log_error("gdm_generation_failed")
@@ -91,6 +103,53 @@ class GameDesignerAgent(BaseAgent):
         except Exception as e:
             self.log_error("gdm_llm_error", {"error": str(e)})
             return self._fallback_gdm(requirements, engine)
+
+    async def generate_design_model_from_spec(self, spec: Dict, engine: str) -> Optional[Dict]:
+        """基于结构化 Game Spec 生成 GDM（减少 LLM 幻觉）"""
+        system_prompt = self._system_prompt()
+        user_prompt = f"""基于以下结构化游戏规格，生成完整的 Game Design Model JSON。
+
+游戏规格（Game Spec）:
+{json.dumps(spec, ensure_ascii=False, indent=2)}
+
+引擎: {engine}
+
+请严格按照系统提示中的 JSON Schema 输出，不要输出额外文本。"""
+
+        try:
+            response = await self.llm.chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=self.llm_config.get("temperature", 0.4),
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+
+            gdm = self._extract_json(response)
+            if gdm and any(k in gdm for k in ("game_title", "genre", "core_loop", "entities")):
+                return self._normalize_gdm(gdm, spec.get("requirements", ""), engine)
+
+            retry_response = await self.llm.chat(
+                messages=[
+                    {"role": "system", "content": "You are a Game Design Model JSON generator. Return only valid JSON with game_title, genre, engine, camera_mode, core_loop, player_actions, win_conditions, fail_conditions, main_systems, entities, scenes, code_modules, assets_needed, input_map, tags_layers, and physics_settings."},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=0.1,
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+            gdm = self._extract_json(retry_response)
+            if gdm and any(k in gdm for k in ("game_title", "genre", "core_loop", "entities")):
+                return self._normalize_gdm(gdm, spec.get("requirements", ""), engine)
+
+            self.log_error("no_valid_gdm_from_spec", {"preview": response[:300]})
+            return None
+
+        except Exception as e:
+            self.log_error("gdm_from_spec_error", {"error": str(e)})
+            return None
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """从LLM响应中提取JSON（委托给统一提取器）"""

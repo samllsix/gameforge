@@ -113,8 +113,6 @@ class TestPermission:
     def test_agent_name_resolution(self):
         assert resolve_role("CodeGeneratorAgent") == "code_agent"
         assert resolve_role("SceneGeneratorAgent") == "scene_agent"
-        assert resolve_role("TestGeneratorAgent") == "qa_agent"
-        assert resolve_role("DebuggerAgent") == "repair_agent"
         assert resolve_role("OrchestratorAgent") == "director"
         assert resolve_role("MysteryBot") == "unknown"
 

@@ -660,13 +660,10 @@ async def list_agents():
     agents = [
         {"name": "orchestrator", "description": "编排Agent - 任务调度和流程控制"},
         {"name": "planner", "description": "规划Agent - 解析需求并生成任务计划"},
-        {"name": "code_generator", "description": "代码生成Agent - 生成游戏代码"},
-        {"name": "code_reviewer", "description": "代码审查Agent - 审查代码质量"},
-        {"name": "test_generator", "description": "测试生成Agent - 生成测试用例"},
-        {"name": "debugger", "description": "调试Agent - 分析错误并生成修复方案"},
-        {"name": "refactor", "description": "重构Agent - 分析代码质量并优化重构"},
+        {"name": "game_designer", "description": "游戏设计Agent - 生成 Game Design Model"},
+        {"name": "code_generator", "description": "代码生成Agent - 生成并审查/修复/测试代码"},
         {"name": "scene_generator", "description": "场景生成Agent - 生成 Godot 场景"},
-        {"name": "main_reviewer", "description": "主审查Agent - 终审与设计审查"},
+        {"name": "requirement_analyzer", "description": "需求解析Agent - 标准化用户需求"},
     ]
     return AgentListResponse(agents=agents)
 
@@ -675,7 +672,7 @@ async def list_agents():
 async def debug_feature(request: Dict[str, Any]):
     """调试端点：在浏览器中实测多智能体改造的每一项新能力（无需 LLM / 无需 Godot）。
 
-    请求体：{"feature": "bus" | "delegate" | "engine", "state": {...可选覆盖}}
+    请求体：{"feature": "bus", "state": {...可选覆盖}}
     仅用于验证功能，不参与真实生成流水线。生产环境返回 404。
     """
     if IS_PRODUCTION:
@@ -684,46 +681,26 @@ async def debug_feature(request: Dict[str, Any]):
     feature = request.get("feature")
     state = request.get("state", {}) or {}
 
-    # 构造最小可用 state
-    base_state = {
+    if feature != "bus":
+        raise HTTPException(status_code=400, detail=f"未知 feature: {feature}")
+
+    from src.core.state.bus import publish, messages_for, latest
+    bus_state = {
         "task_plan": state.get("task_plan", []),
         "error_log": state.get("error_log", []),
         "warnings": state.get("warnings", []),
-        "main_review_result": state.get("main_review_result", {}),
-        "design_review_result": state.get("design_review_result", {}),
-        "validation_result": state.get("validation_result", {}),
         "code_generated": state.get("code_generated", {}),
         "message_bus": state.get("message_bus", []),
     }
-
-    if feature == "bus":
-        from src.core.state.bus import publish, messages_for, latest
-        # 模拟 main_reviewer 发布一条重规划消息，debugger 读取
-        bus_state = dict(base_state)
-        pub = publish("replan", sender="main_reviewer", content="设计有坑，建议重排", recipient="planner")
-        bus_state["message_bus"] = bus_state.get("message_bus", []) + pub["message_bus"]
-        received = messages_for(bus_state, topic="replan", recipient="planner")
-        return {
-            "feature": "bus",
-            "published": pub["message_bus"][0],
-            "planner_inbox": received,
-            "latest_for_planner": latest(bus_state, recipient="planner"),
-        }
-
-    if feature == "delegate":
-        from src.agents.debugger import DebuggerAgent
-        agent = DebuggerAgent(config)
-        error = state.get("error", "Parser Error: Expected ':' in godot script at line 12")
-        result = agent.delegate_to_research(error)
-        return {"feature": "delegate", "result": result}
-
-    if feature == "engine":
-        from src.agents.test_generator import TestGeneratorAgent
-        agent = TestGeneratorAgent(config)
-        result = await agent.read_engine_feedback()
-        return {"feature": "engine", "result": result}
-
-    raise HTTPException(status_code=400, detail=f"未知 feature: {feature}")
+    pub = publish("replan", sender="orchestrator", content="建议重排任务", recipient="planner")
+    bus_state["message_bus"] = bus_state.get("message_bus", []) + pub["message_bus"]
+    received = messages_for(bus_state, topic="replan", recipient="planner")
+    return {
+        "feature": "bus",
+        "published": pub["message_bus"][0],
+        "planner_inbox": received,
+        "latest_for_planner": latest(bus_state, recipient="planner"),
+    }
 
 
 

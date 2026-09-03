@@ -132,13 +132,9 @@ class LocalMockClient(ILLMClient):
         agent_type = observation.agent_type.lower()
         content_templates = {
             "code_generator": f'# Generated GDScript (mock)\nextends Node\n\nfunc _ready():\n\tprint("Hello from mock")\n',
-            "code_reviewer": '{"score": 8, "issues": [], "suggestions": ["Mock review: looks good"]}',
-            "debugger": '{"root_cause": "Mock: no real error", "fix": "Mock fix applied"}',
             "planner": '{"tasks": [{"id": "task_1", "name": "Mock task", "type": "code"}]}',
             "game_designer": '{"title": "Mock Game", "genre": "platformer", "mechanics": ["jump"]}',
             "scene_generator": '{"nodes": [{"type": "Node2D", "name": "Root"}]}',
-            "test_generator": 'func test_mock():\n\tassert_true(true, "Mock test passed")\n',
-            "refactor": '{"refactored_code": "// mock refactored", "changes": []}',
         }
 
         content = content_templates.get(
@@ -149,13 +145,9 @@ class LocalMockClient(ILLMClient):
         # 推断 action_type
         agent_action_map = {
             "code_generator": ActionType.GENERATE_CODE,
-            "code_reviewer": ActionType.REVIEW_CODE,
-            "debugger": ActionType.FIX_CODE,
             "planner": ActionType.PLAN_TASK,
             "game_designer": ActionType.DESIGN_GAME,
             "scene_generator": ActionType.GENERATE_SCENE,
-            "test_generator": ActionType.GENERATE_TEST,
-            "refactor": ActionType.REFACTOR,
         }
         action_type = agent_action_map.get(agent_type, self._default_action_type)
 

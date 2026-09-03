@@ -186,47 +186,7 @@ def status(ctx):
     click.echo(f"\n日志文件: {logger.get_log_file()}")
 
 
-@cli.command()
-@click.option("--input", "-i", "input_dir", required=True, help="代码目录路径")
-@click.option("--output", "-o", "output_dir", default=None, help="输出目录（默认覆盖原文件）")
-@click.pass_context
-def refactor(ctx, input_dir, output_dir):
-    """重构代码目录中的C#文件"""
-    reset_logger()
-    logger = get_logger(prefix="refactor")
 
-    config = ctx.obj["config"]
-
-    logger.section("GameForge 代码重构")
-    logger.result("输入目录", input_dir)
-
-    from src.agents.refactor import RefactorAgent
-    from src.core.tools import list_files, read_file, write_file
-
-    agent = RefactorAgent(config)
-
-    cs_files = list_files(input_dir, [".cs"])
-    logger.result("找到文件", str(len(cs_files)))
-
-    if not cs_files:
-        logger.warning("未找到C#文件")
-        return
-
-    refactored_count = 0
-    for file_path in cs_files:
-        content = read_file(file_path)
-        if not content:
-            continue
-
-        logger.subsection(f"分析: {file_path}")
-        quality = agent.analyze_code_quality(content)
-        logger.result("质量分数", str(quality["score"]))
-
-        if quality["score"] < 70:
-            logger.result("问题", ", ".join(quality["issues"][:3]))
-
-    logger.section("重构完成")
-    logger.success(f"日志已保存: {logger.get_log_file()}")
 
 
 
@@ -298,3 +258,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

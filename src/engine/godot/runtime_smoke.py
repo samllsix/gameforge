@@ -116,7 +116,7 @@ class GodotRuntimeSmoke:
         if result.runnable:
             ...  # 通过
         else:
-            ...  # 把 result.errors 喂给 DebuggerAgent
+            ...  # 把 result.errors 喂给 code_generator.fix_code()
     """
 
     DEFAULT_FRAMES = 60   # 60 帧 ≈ 1 秒 @ 60 FPS，足够暴露 _ready/_process 错误
