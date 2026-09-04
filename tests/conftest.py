@@ -11,6 +11,8 @@ os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGSMITH_TRACING"] = "false"
 os.environ.pop("LANGCHAIN_API_KEY", None)
 os.environ.pop("LANGSMITH_API_KEY", None)
+# 音频单测统一走程序化合成，不加载 AI 模型（保持快速且离线）
+os.environ.setdefault("GAMEFORGE_AUDIO_BACKEND", "procedural")
 
 # 确保项目根目录在 sys.path 中
 PROJECT_ROOT = Path(__file__).parent.parent

@@ -242,6 +242,217 @@
   .toast{position:fixed;left:50%;top:74px;transform:translateX(-50%);z-index:40;padding:9px 22px;border-radius:6px;font-size:12.5px;color:var(--white);
     background:rgba(16,22,50,.95);border:1px solid rgba(150,120,255,.5);box-shadow:0 0 16px rgba(140,110,255,.35);opacity:0;transition:.35s;pointer-events:none}
   .toast.show{opacity:1;top:86px}
+
+  /* ========== V2 美化升级 ========== */
+
+  /* 星系整体更亮更透，增加星云弥漫感 */
+  .galaxy-wrap::before{
+    content:"";position:absolute;inset:-8%;z-index:1;pointer-events:none;
+    background:
+      radial-gradient(60% 45% at 50% 50%,rgba(180,220,255,.22),transparent 70%),
+      radial-gradient(35% 30% at 30% 65%,rgba(160,100,255,.16),transparent 70%),
+      radial-gradient(40% 35% at 72% 35%,rgba(80,180,255,.14),transparent 70%);
+    filter:blur(8px);
+  }
+  /* 星点背景层 */
+  .galaxy-wrap::after{
+    content:"";position:absolute;inset:0;z-index:1;pointer-events:none;opacity:.7;
+    background-image:
+      radial-gradient(1px 1px at 20% 30%,#fff 50%,transparent 100%),
+      radial-gradient(1px 1px at 60% 70%,#dff 50%,transparent 100%),
+      radial-gradient(1.5px 1.5px at 80% 20%,#fff 50%,transparent 100%),
+      radial-gradient(1px 1px at 35% 85%,#cef 50%,transparent 100%),
+      radial-gradient(1px 1px at 75% 55%,#fdf 50%,transparent 100%),
+      radial-gradient(1px 1px at 15% 60%,#fff 50%,transparent 100%),
+      radial-gradient(1.2px 1.2px at 45% 15%,#eef 50%,transparent 100%),
+      radial-gradient(1px 1px at 90% 80%,#cff 50%,transparent 100%);
+    background-size:100% 100%;
+  }
+
+  /* 四节点卡片 V2：右侧功能图标 + 呼吸外发光 */
+  .fcard{width:180px;padding:10px 12px;}
+  .fcard::before{box-shadow:none}
+  .fcard::after{box-shadow:none}
+  .fcard{
+    box-shadow:
+      0 16px 40px rgba(0,0,0,.55),
+      0 0 30px rgba(150,110,255,.28),
+      inset 0 1px 0 rgba(255,255,255,.12),
+      inset 0 0 40px rgba(120,90,255,.06);
+  }
+  .fcard:hover{
+    box-shadow:
+      0 20px 50px rgba(0,0,0,.6),
+      0 0 40px rgba(150,110,255,.5),
+      inset 0 1px 0 rgba(255,255,255,.18);
+  }
+  .fcard .hd b{font-size:13px;letter-spacing:.6px}
+  /* 功能图标：圆形发光底 + SVG 图标 */
+  .f-icon{
+    width:38px;height:38px;flex:0 0 38px;border-radius:50%;
+    display:grid;place-items:center;
+    background:radial-gradient(circle,rgba(140,200,255,.25),rgba(100,80,200,.08) 70%);
+    border:1px solid rgba(140,200,255,.4);
+    box-shadow:0 0 12px rgba(100,180,255,.45),inset 0 0 10px rgba(140,200,255,.2);
+    margin-left:auto;
+  }
+  .f-icon svg{width:20px;height:20px;filter:drop-shadow(0 0 3px rgba(140,220,255,.8))}
+  .fcard .brow{gap:10px}
+  .fcard .tags{font-size:9px;line-height:1.7;letter-spacing:.5px}
+
+  /* 快速模板 V2：彩色渐变 + 中心光点 */
+  .qt .t{height:96px;border:1px solid rgba(120,160,230,.25);}
+  .qt .t .art canvas{display:none}
+  .qt .t .art{
+    position:absolute;inset:0;overflow:hidden;
+  }
+  .qt .t .art::before{
+    content:"";position:absolute;inset:0;
+    transition:.25s;
+  }
+  .qt .t .art::after{
+    content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:24px;height:24px;border-radius:50%;
+    background:radial-gradient(circle,rgba(255,255,255,.9),rgba(255,255,255,.3) 40%,transparent 70%);
+    box-shadow:0 0 20px rgba(255,255,255,.6);
+    opacity:.85;
+    transition:.25s;
+  }
+  .qt .t:hover .art::after{
+    width:32px;height:32px;
+    box-shadow:0 0 30px rgba(255,255,255,.8);
+  }
+  /* 6 个模板各自配色 */
+  .qt .t:nth-child(1) .art::before{background:linear-gradient(160deg,#6a2eb8 0%,#2d1b5e 55%,#1a0f3c 100%)}
+  .qt .t:nth-child(2) .art::before{background:linear-gradient(160deg,#8b4a2a 0%,#4a2a18 55%,#2a160d 100%)}
+  .qt .t:nth-child(3) .art::before{background:linear-gradient(160deg,#1a4f6e 0%,#0e2e42 55%,#081925 100%)}
+  .qt .t:nth-child(4) .art::before{background:linear-gradient(160deg,#5a2a8e 0%,#2a184a 55%,#180d2a 100%)}
+  .qt .t:nth-child(5) .art::before{background:linear-gradient(160deg,#1e6b4a 0%,#0f3d2c 55%,#081f17 100%)}
+  .qt .t:nth-child(6) .art::before{background:linear-gradient(160deg,#6b1e3f 0%,#3d0f24 55%,#220711 100%)}
+
+  .qt .t .lb{
+    padding:6px 8px 7px;
+    font-size:10px;letter-spacing:.4px;font-weight:600;
+    background:linear-gradient(transparent,rgba(5,8,20,.92) 60%);
+  }
+  .qt .t .lb::before{
+    width:22px;height:2px;margin-bottom:3px;
+  }
+
+  /* 能量核心 V2：环形数字仪表 */
+  .energy-c{gap:14px}
+  .energy-gauge{
+    position:relative;width:56px;height:56px;flex:0 0 56px;
+  }
+  .energy-gauge svg{width:100%;height:100%;transform:rotate(-90deg);filter:drop-shadow(0 0 6px rgba(96,200,255,.5))}
+  .energy-gauge .g-val{
+    position:absolute;inset:0;display:grid;place-items:center;
+    font-family:var(--mono);font-size:13px;font-weight:700;color:#d6f0ff;
+    text-shadow:0 0 8px rgba(100,200,255,.7);
+  }
+  .energy-c .et b{font-size:16px;color:#e0f0ff}
+  .energy-c .et small{font-size:8px;margin-top:2px}
+  .energy-c .et .st{
+    font-size:8.5px;color:#8ff0ff;letter-spacing:.5px;
+    padding:2px 7px;border-radius:4px;
+    background:rgba(96,200,255,.1);border:1px solid rgba(96,200,255,.25);
+    display:inline-block;margin-top:3px;
+  }
+
+  /* 系统提示 V2：图标条 */
+  .tips{gap:5px;display:flex;flex-direction:column}
+  .tip{
+    display:flex;align-items:center;gap:7px;padding:4px 7px;border-radius:6px;
+    background:rgba(20,30,58,.5);border:1px solid rgba(120,160,220,.15);
+    transition:.2s;
+  }
+  .tip:hover{background:rgba(30,45,80,.6);border-color:rgba(120,180,240,.3)}
+  .tip i{
+    width:20px;height:20px;flex:0 0 20px;border-radius:5px;
+    display:grid;place-items:center;font-size:10px;font-style:normal;font-weight:700;
+  }
+  .tip.ok i{background:rgba(54,224,170,.15);color:#36e0aa;border:1px solid rgba(54,224,170,.35)}
+  .tip.info i{background:rgba(96,180,255,.15);color:#5db7ff;border:1px solid rgba(96,180,255,.35)}
+  .tip.warn i{background:rgba(255,180,84,.15);color:#ffb454;border:1px solid rgba(255,180,84,.35)}
+  .tip.err i{background:rgba(255,93,108,.15);color:#ff5d6c;border:1px solid rgba(255,93,108,.35)}
+  .tip .tt{flex:1;min-width:0}
+  .tip .tt b{display:block;font-size:10px;color:#dde8ff;font-weight:600;letter-spacing:.3px}
+  .tip .tt small{display:block;font-size:8px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* 实时预览 V2：彩色剪影占位 */
+  .prev-box{position:relative;border-radius:8px;overflow:hidden;border:1px solid rgba(120,160,220,.25)}
+  .prev-box .placeholder{
+    position:absolute;inset:0;
+    background:
+      linear-gradient(180deg,#1a1a3e 0%,#2d1f4e 50%,#3d2a5e 100%);
+    display:none;
+  }
+  .prev-box:has(canvas:empty) .placeholder{display:block}
+
+  /* 日志 V2：时间戳对齐 + 等级色条 */
+  #log{gap:3px}
+  #log .log-item{
+    display:flex;gap:5px;align-items:flex-start;padding:2px 0;border-bottom:1px dashed rgba(120,160,220,.08);
+  }
+  #log .log-item:last-child{border-bottom:none}
+  #log .log-time{
+    font-family:var(--mono);font-size:7.5px;color:var(--muted);flex:0 0 auto;padding-top:1px;
+    min-width:46px;text-align:right;
+  }
+  #log .log-msg{font-size:9px;color:#cdd9f2;flex:1;min-width:0;line-height:1.45}
+  #log .log-msg.ok{color:#8ef0cc}
+  #log .log-msg.err{color:#ff9da6}
+  #log .log-msg.warn{color:#ffcd8a}
+  #log .log-msg.info{color:#8fcfff}
+
+  /* 世界动态 V2：节点连线更亮 */
+  .wd-ev .ev{gap:6px}
+  .wd-ev .ev i{
+    width:8px;height:8px;border-radius:50%;
+    box-shadow:0 0 8px currentColor;
+  }
+
+  /* 数据流动 V2：增加流动条纹感 */
+  .flow-wrap{position:relative}
+  .flow-wrap::after{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(90deg,transparent 0 20px,rgba(120,200,255,.04) 20px 22px);
+    animation:flowShift 3s linear infinite;
+  }
+  @keyframes flowShift{to{transform:translateX(22px)}}
+
+  /* 欢迎语增强 */
+  .welcome h2{
+    text-shadow:
+      0 0 20px rgba(140,200,255,.6),
+      0 0 40px rgba(120,150,255,.3),
+      0 2px 4px rgba(0,0,0,.5);
+  }
+  .welcome p{
+    color:#9fb5d8;text-shadow:0 0 8px rgba(120,180,255,.25);
+  }
+
+  /* 节点卡片光晕呼吸 */
+  .fcard{animation-duration:7s;animation-iteration-count:infinite;animation-timing-function:ease-in-out;}
+  .fc1{animation-name:fy1,glowPulse}
+  .fc2{animation-name:fy2,glowPulse;animation-delay:0s,1.5s}
+  .fc3{animation-name:fy3,glowPulse;animation-delay:0s,3s}
+  .fc4{animation-name:fy4,glowPulse;animation-delay:0s,4.5s}
+  @keyframes glowPulse{
+    0%,100%{box-shadow:0 16px 40px rgba(0,0,0,.55),0 0 24px rgba(150,110,255,.28),inset 0 1px 0 rgba(255,255,255,.12),inset 0 0 40px rgba(120,90,255,.06)}
+    50%{box-shadow:0 18px 48px rgba(0,0,0,.6),0 0 40px rgba(150,110,255,.5),inset 0 1px 0 rgba(255,255,255,.18),inset 0 0 50px rgba(120,90,255,.12)}
+  }
+
+  /* 灵感按钮 V2：紫蓝渐变 */
+  #diceBtn{
+    background:linear-gradient(135deg,#4a2d8a,#2a1f5e) !important;
+    color:#e0d6ff !important;border:1px solid rgba(160,120,255,.4);
+  }
+  #diceBtn:hover{
+    border-color:rgba(180,140,255,.7) !important;
+    box-shadow:0 0 16px rgba(140,100,255,.5) !important;
+  }
+
 </style>
 </head>
 <body>
@@ -306,10 +517,27 @@
         <circle r=".7" fill="url(#dt)"><animateMotion dur="2.8s" repeatCount="indefinite" begin=".3s"><mpath href="#L3"/></animateMotion></circle>
         <circle r=".7" fill="url(#dt)"><animateMotion dur="3.3s" repeatCount="indefinite" begin=".8s"><mpath href="#L4"/></animateMotion></circle>
       </svg>
-      <div class="fcard fc1"><div class="hd"><div class="hex">◈</div><b>世界设定</b></div><div class="brow"><div class="tags"><b>种族</b> | 地理 | 历史<br><b>神话</b> | 势力 | 周期</div><canvas class="holo" data-k="world"></canvas></div></div>
-      <div class="fcard fc2"><div class="hd"><div class="hex">⬡</div><b>核心玩法</b></div><div class="brow"><div class="tags"><b>战斗</b> | 探索 | 成长<br><b>任务</b> | 交易 | 制造</div><canvas class="holo" data-k="play"></canvas></div></div>
-      <div class="fcard fc3"><div class="hd"><div class="hex">♟</div><b>角色设定</b></div><div class="brow"><div class="tags"><b>角色</b> | 技能 | 职业<br><b>关系</b> | 背景故事</div><canvas class="holo" data-k="role"></canvas></div></div>
-      <div class="fcard fc4"><div class="hd"><div class="hex">✦</div><b>系统规则</b></div><div class="brow"><div class="tags"><b>世界</b> | 天气 | 生态<br><b>物理</b> | 魔法 | 科技</div><canvas class="holo" data-k="rule"></canvas></div></div>
+      <div class="fcard fc1"><div class="hd"><div class="hex">◈</div><b>世界设定</b></div><div class="brow"><div class="tags"><b>种族</b> | 地理 | 历史<br><b>神话</b> | 势力 | 周期</div><canvas class="holo" data-k="world"></canvas><div class="f-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8ff0ff" stroke-width="1.5">
+      <ellipse cx="12" cy="12" rx="10" ry="4"/>
+      <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/>
+      <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/>
+      <circle cx="12" cy="12" r="2.5" fill="rgba(143,240,255,.3)"/>
+    </svg></div></div></div>
+      <div class="fcard fc2"><div class="hd"><div class="hex">⬡</div><b>核心玩法</b></div><div class="brow"><div class="tags"><b>战斗</b> | 探索 | 成长<br><b>任务</b> | 交易 | 制造</div><canvas class="holo" data-k="play"></canvas><div class="f-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8ff0ff" stroke-width="1.5" stroke-linejoin="round">
+      <path d="M12 3 L20 7.5 L20 16.5 L12 21 L4 16.5 L4 7.5 Z"/>
+      <path d="M12 3 L12 21"/>
+      <path d="M4 7.5 L20 7.5"/>
+      <path d="M12 12 L20 7.5 M12 12 L4 7.5 M12 12 L12 21"/>
+    </svg></div></div></div>
+      <div class="fcard fc3"><div class="hd"><div class="hex">♟</div><b>角色设定</b></div><div class="brow"><div class="tags"><b>角色</b> | 技能 | 职业<br><b>关系</b> | 背景故事</div><canvas class="holo" data-k="role"></canvas><div class="f-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8ff0ff" stroke-width="1.5">
+      <circle cx="12" cy="8" r="3.5"/>
+      <path d="M5 21 C5 16 8.5 14 12 14 C15.5 14 19 16 19 21" stroke-linecap="round"/>
+    </svg></div></div></div>
+      <div class="fcard fc4"><div class="hd"><div class="hex">✦</div><b>系统规则</b></div><div class="brow"><div class="tags"><b>世界</b> | 天气 | 生态<br><b>物理</b> | 魔法 | 科技</div><canvas class="holo" data-k="rule"></canvas><div class="f-icon"><svg viewBox="0 0 24 24" fill="none" stroke="#8ff0ff" stroke-width="1.5" stroke-linecap="round">
+      <circle cx="12" cy="12" r="8"/>
+      <path d="M12 4 L12 8 M12 16 L12 20 M4 12 L8 12 M16 12 L20 12"/>
+      <circle cx="12" cy="12" r="2.5"/>
+    </svg></div></div></div>
     </div>
     <div class="cmdbar"><span class="pr">›</span><input id="cmdInput" placeholder="输入你的游戏创意，AI 将为你生成完整的游戏世界…"><button id="diceBtn" title="灵感骰子：随机摇一个游戏概念填入" style="background:#2a1f4a">🎲 灵感</button><button id="buildBtn">开始构建 ➤</button></div>
     <div class="qt-h">快速模板</div>
@@ -338,7 +566,7 @@
         <div class="proc-item" data-phase="complete"><div class="hex">⏶</div><div class="in"><b>系统整合员</b><small class="wait">等待中…</small></div><div class="pc" style="color:var(--muted)">—</div></div>
       </div>
     </div>
-    <div class="prev"><div class="ph">实时预览 <span class="en">LIVE</span> <span class="fps" id="prevFps">--</span></div><div class="prev-box"><canvas id="prevCanvas"></canvas><span class="tag" id="prevTag">GAME</span></div></div>
+    <div class="prev"><div class="ph">实时预览 <span class="en">LIVE</span> <span class="fps" id="prevFps">--</span></div><div class="prev-box"><canvas id="prevCanvas"></canvas><span class="tag" id="prevTag">IDLE</span></div></div>
     <div class="logbox"><div class="ph">系统日志 <span class="en">SYS LOG</span></div><div id="log"></div></div>
   </aside>
 
@@ -352,15 +580,30 @@
           <div class="ev v3"><i></i><div><b>新的传送门被发现</b><small>12 分钟前</small></div></div>
         </div></div></div>
     <div class="bpanel hud"><span class="grid"></span><span class="scanln"></span><div class="ph">能量核心 <span class="en">ENERGY CORE</span></div>
-      <div class="bp-body"><div class="energy-c"><canvas id="energyCanvas"></canvas>
-        <div class="et"><b>72%</b><small>能量充能</small><div class="st">能量循环中…</div></div></div></div></div>
+      <div class="bp-body"><div class="energy-c">
+        <div class="energy-gauge">
+          <svg viewBox="0 0 36 36">
+            <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(96,180,255,.15)" stroke-width="3"/>
+            <circle cx="18" cy="18" r="15" fill="none" stroke="url(#gaugeGrad)" stroke-width="3"
+              stroke-dasharray="68 100" stroke-linecap="round"/>
+            <defs>
+              <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#43e6ff"/>
+                <stop offset="100%" stop-color="#a06bff"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <div class="g-val">71%</div>
+        </div>
+        <canvas id="energyCanvas" style="display:none"></canvas>
+        <div class="et"><b>72%</b><small>能量充能</small><div class="st">◆ 能量循环中…</div></div></div></div></div>
     <div class="bpanel hud"><span class="grid"></span><span class="scanln"></span><div class="ph">数据流动 <span class="en">DATA FLOW</span></div>
       <div class="bp-body"><div class="flow-wrap"><canvas id="flowCanvas"></canvas></div></div></div>
     <div class="bpanel hud"><span class="grid"></span><span class="scanln"></span><div class="ph">系统提示 <span class="en">SYSTEM NOTICE</span></div>
       <div class="bp-body"><div class="tips">
-        <div class="tip ok"><i>✓</i><div class="tt"><b>任务完成</b><small>世界架构搭建完成！</small></div></div>
-        <div class="tip info"><i>⌨</i><div class="tt"><b>代码生成</b><small>PlayerController.cs 生成完成</small></div></div>
-        <div class="tip warn"><i>⚠</i><div class="tt"><b>系统警告</b><small>检测到资源冲突，已自动修复</small></div></div>
+        <div class="tip ok"><i>✓</i><div class="tt"><b>任务完成</b><small>世界架构搭建完成</small></div></div>
+        <div class="tip info"><i>⌨</i><div class="tt"><b>代码生成</b><small>核心脚本生成完成</small></div></div>
+        <div class="tip warn"><i>⚠</i><div class="tt"><b>系统警告</b><small>性能资源冲突，已自动修复</small></div></div>
       </div></div></div>
   </div>
 
@@ -612,6 +855,10 @@ const pv=document.getElementById('prevCanvas'),pvx=pv.getContext('2d');sizeC(pv)
 const prevTag=document.getElementById('prevTag'),prevFps=document.getElementById('prevFps');
 /* 真实后端的项目 ID，由 SSE complete / scene_complete 事件注入；为空时走 demo 兜底 */
 let PREVIEW_PROJECT_ID=null;
+/* 无任务即停预览：仅任务运行期间轮询帧；停止后后端 supervisor 空闲超时自动释放 Godot 进程 */
+let previewTaskActive=false;
+let previewStopTimer=null;
+let streamDone=false; /* 本次流是否正常 complete；异常断流时立即停预览 */
 const PREVIEW_FALLBACK_PID='demo_jump_v2';
 // 后端 base URL：
 // 1) location.protocol==='file:' 时直接走 127.0.0.1:8000，避免 file:// 下 fetch 退化成 file:///D:/api/...
@@ -653,7 +900,7 @@ async function autoPublish(pid){
 }
 
 async function fetchPreviewFrame(){
-  if(prevBusy)return;
+  if(prevBusy||!previewTaskActive)return;
   prevBusy=true;
   const frameCtrl=new AbortController();
   const frameTimer=setTimeout(()=>frameCtrl.abort(),5000); /* 单帧拉取超时：防止 fetch 永久挂起把 prevBusy 卡死 */
@@ -679,6 +926,7 @@ async function fetchPreviewFrame(){
     else if(prevFallback && !live){prevFallback=false;pushLog('实时预览接通（'+tagText+'）');}
   }catch(e){
     prevFail++;
+    if(!previewTaskActive)return; /* 停止后在途请求失败：不覆盖 IDLE 标签 */
     if(prevTag && prevTag.textContent!=='SIM')prevTag.textContent='SIM';
     if(prevFail>=3 && !prevFallback){prevFallback=true;pushLog('预览失败，已降级到模拟（'+e.message+'）');}
     else if(prevFallback===false && prevFail===1){prevFallback=true;}
@@ -957,6 +1205,9 @@ async function startGeneration(requirements) {
     return;
   }
   isGenerating = true;
+  streamDone = false;
+  previewTaskActive = true; /* 任务启动：预览开始轮询（场景就绪前走 demo 兜底画面） */
+  if(previewStopTimer){clearTimeout(previewStopTimer);previewStopTimer=null;}
   resetProcs();
   setWelcome('正在构建你的世界…');
   document.getElementById('buildBtn').textContent = '构建中 ⏳';
@@ -1011,6 +1262,7 @@ async function startGeneration(requirements) {
     clearTimeout(connectTimer);
     isGenerating = false;
     _abortCtrl.ctrl = null;
+    if(!streamDone)stopPreviewPolling(); /* 失败/中止/异常断流：立即停预览 */
     const btn = document.getElementById('buildBtn');
     btn.textContent = '开始构建 ➤';
     btn.disabled = false;
@@ -1074,13 +1326,18 @@ function handleStreamEvent(data) {
       break;
     case 'complete':
       setPhaseDone('complete');
+      streamDone = true;
       pushLog('代码生成完成！' + (data.task_count || 0) + ' 任务', 'ok');
       setWelcome('构建完成 ✓');
       if (data.project_id) startLivePreview(data.project_id);
       if (data.project_id) autoPublish(data.project_id);
+      /* 任务结束：8 秒成品展示后停止预览轮询，后端空闲超时自动释放 Godot 进程 */
+      if(previewStopTimer)clearTimeout(previewStopTimer);
+      previewStopTimer=setTimeout(stopPreviewPolling,8000);
       break;
     case 'error':
       pushLog('错误：' + (data.message || '未知错误'), 'err');
+      stopPreviewPolling(); /* 任务失败：立即停止预览 */
       break;
     case 'compile_result':
       pushLog('编译：' + (data.status || ''), data.status === 'success' ? 'ok' : 'wa');
@@ -1091,9 +1348,21 @@ function handleStreamEvent(data) {
 }
 
 /* 中央大图 + 右侧小图同步拉真实帧 */
+function stopPreviewPolling(){
+  previewTaskActive=false;
+  if(previewStopTimer){clearTimeout(previewStopTimer);previewStopTimer=null;}
+  prevFallback=true; /* 回落本地模拟动画 */
+  if(prevTag && prevTag.textContent!=='IDLE'){
+    prevTag.textContent='IDLE';
+    pushLog('任务结束，预览已停止（空闲后自动释放 Godot 进程）','');
+  }
+}
+
 function startLivePreview(projectId) {
   if (!projectId) return;
   PREVIEW_PROJECT_ID = projectId;
+  previewTaskActive = true; /* 场景就绪事件可能晚于上一次 complete 的停轮询定时器 */
+  if(previewStopTimer){clearTimeout(previewStopTimer);previewStopTimer=null;}
   pushLog('实时预览已连接：' + projectId, 'ok');
   heroFrame.src = `${PREVIEW_BACKEND}/api/v1/preview/frame?project_id=${encodeURIComponent(projectId)}&width=640&height=360&frame=0&t=${Date.now()}`;
   heroFrame.style.opacity = '1';

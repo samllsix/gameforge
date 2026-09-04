@@ -541,7 +541,7 @@ if not supervisor_enabled or not config.preview.enabled:
 
 ## 14. 验收清单
 
-- [ ] 浏览器打开 `/app`，5 秒内"实时预览"框显示真实游戏画面
+- [x] 浏览器打开 `/`（数字生命驾驶舱，旧 `/app` 已移除），任务运行期间"实时预览"框显示真实游戏画面
 - [ ] 画面每 250ms 更新一次，肉眼感觉连续
 - [ ] 手动 kill Godot 进程，下次请求 5 秒内恢复
 - [ ] curl `/api/v1/preview/frame?project_id=evil/../etc` 返回 400

@@ -6,6 +6,8 @@
 """
 import json
 import os
+import shutil
+import uuid
 
 import pytest
 from pydantic import ValidationError
@@ -197,3 +199,169 @@ def test_preview_width_rejects_out_of_range(api_client):
         "project_id": "demo", "width": 99999,
     })
     assert r.status_code == 422
+
+
+def test_preview_task_id_resolves_sandbox_path(api_client, tmp_path):
+    """sandbox task_id 应解析到 data/sandbox/<project_id>/tasks/<task_id>/"""
+    import os
+    from src.api.main import _resolve_preview_project
+
+    project_id = "demo"
+    task_id = "task_123"
+    sandbox_root = tmp_path / "data" / "sandbox" / project_id / "tasks" / task_id
+    sandbox_root.mkdir(parents=True, exist_ok=True)
+    (sandbox_root / "project.godot").write_text("[application]\n", encoding="utf-8")
+
+    cwd = os.getcwd()
+    os.chdir(str(tmp_path))
+    try:
+        resolved = _resolve_preview_project(project_id, task_id=task_id)
+        assert os.path.isdir(resolved)
+        assert resolved.endswith(os.path.join("data", "sandbox", project_id, "tasks", task_id))
+    finally:
+        os.chdir(cwd)
+
+
+def test_preview_task_id_missing_returns_404(api_client):
+    r = api_client.get("/api/v1/preview/frame", params={
+        "project_id": "demo", "task_id": "task_missing",
+    })
+    assert r.status_code == 404
+
+
+def test_sandbox_create_modify_merge_rollback_cycle(api_client, tmp_path, monkeypatch):
+    """sandbox API 完整生命周期：create → modify → merge → rollback"""
+    import os
+    import json
+    import uuid
+    monkeypatch.setenv("GAMEFORGE_PROJECTS_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setenv("GAMEFORGE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    project_id = "cycle_proj_" + uuid.uuid4().hex[:8]
+    main_dir = tmp_path / "projects" / project_id
+    main_dir.mkdir(parents=True, exist_ok=True)
+    (main_dir / "project.godot").write_text("[application]\n", encoding="utf-8")
+    (main_dir / "scripts").mkdir(parents=True, exist_ok=True)
+    (main_dir / "scripts" / "main.gd").write_text("extends Node\n", encoding="utf-8")
+
+    ws_root = tmp_path / "workspace"
+    if ws_root.exists():
+        shutil.rmtree(ws_root)
+    ws_root.mkdir(parents=True, exist_ok=True)
+
+    # 1) create
+    r = api_client.post(f"/api/v1/sandbox/{project_id}/create", json={"role": "code_agent"})
+    assert r.status_code == 200
+    task = r.json()["task"]
+    task_id = task["task_id"]
+
+    # 2) modify
+    r = api_client.post(f"/api/v1/sandbox/{project_id}/task/{task_id}/modify", params={
+        "rel_path": "scripts/main.gd",
+        "content": "extends Node\n# modified\n",
+    })
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+    # 3) merge
+    r = api_client.post(f"/api/v1/sandbox/{project_id}/task/{task_id}/merge")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    merged_file = main_dir / "scripts" / "main.gd"
+    assert "# modified" in merged_file.read_text(encoding="utf-8")
+
+    # 4) rollback（已合并的任务 rollback 应回到合并前状态）
+    r = api_client.post(f"/api/v1/sandbox/{project_id}/task/{task_id}/rollback")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+
+def test_sandbox_status_lists_tasks(api_client, tmp_path, monkeypatch):
+    """sandbox status 应返回项目下的任务列表。"""
+    import os
+    import shutil
+    monkeypatch.setenv("GAMEFORGE_PROJECTS_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setenv("GAMEFORGE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    project_id = "status_proj_" + uuid.uuid4().hex[:8]
+    main_dir = tmp_path / "projects" / project_id
+    main_dir.mkdir(parents=True, exist_ok=True)
+    (main_dir / "project.godot").write_text("[application]\n", encoding="utf-8")
+
+    # 确保工作区干净
+    ws_root = tmp_path / "workspace"
+    if ws_root.exists():
+        shutil.rmtree(ws_root)
+    ws_root.mkdir(parents=True, exist_ok=True)
+
+    r = api_client.post(f"/api/v1/sandbox/{project_id}/create", json={"role": "director"})
+    assert r.status_code == 200
+
+    r = api_client.get(f"/api/v1/sandbox/{project_id}/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["project_id"] == project_id
+    assert len(body["tasks"]) == 1
+
+
+def test_sandbox_cleanup_removes_old_tasks(api_client, tmp_path, monkeypatch):
+    """sandbox cleanup 应移除超龄任务。"""
+    import os
+    import time
+    monkeypatch.setenv("GAMEFORGE_PROJECTS_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setenv("GAMEFORGE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    project_id = "cleanup_proj_" + uuid.uuid4().hex[:8]
+    main_dir = tmp_path / "projects" / project_id
+    main_dir.mkdir(parents=True, exist_ok=True)
+    (main_dir / "project.godot").write_text("[application]\n", encoding="utf-8")
+
+    import shutil
+    from src.sandbox.controller import SandboxController
+    ctrl = SandboxController({})
+
+    # 确保工作区干净（pytest tmp_path 可能跨次运行复用）
+    ws_root = tmp_path / "workspace"
+    if ws_root.exists():
+        shutil.rmtree(ws_root)
+    ws_root.mkdir(parents=True, exist_ok=True)
+
+    task_ids = []
+    for _ in range(3):
+        r = api_client.post(f"/api/v1/sandbox/{project_id}/create", json={"role": "director"})
+        assert r.status_code == 200
+        task_ids.append(r.json()["task"]["task_id"])
+
+    r = api_client.post(f"/api/v1/sandbox/{project_id}/cleanup", params={
+        "keep_last": 2,
+        "max_age_hours": 168,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["kept"] == 2
+
+
+def test_sandbox_destroy_removes_task(api_client, tmp_path, monkeypatch):
+    """sandbox destroy 应删除任务工作区。"""
+    import os
+    monkeypatch.setenv("GAMEFORGE_PROJECTS_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setenv("GAMEFORGE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+    project_id = "destroy_proj_" + uuid.uuid4().hex[:8]
+    main_dir = tmp_path / "projects" / project_id
+    main_dir.mkdir(parents=True, exist_ok=True)
+    (main_dir / "project.godot").write_text("[application]\n", encoding="utf-8")
+
+    ws_root = tmp_path / "workspace"
+    if ws_root.exists():
+        shutil.rmtree(ws_root)
+    ws_root.mkdir(parents=True, exist_ok=True)
+
+    r = api_client.post(f"/api/v1/sandbox/{project_id}/create", json={"role": "director"})
+    assert r.status_code == 200
+    task_id = r.json()["task"]["task_id"]
+
+    r = api_client.delete(f"/api/v1/sandbox/{project_id}/task/{task_id}")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True

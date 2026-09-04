@@ -1,43 +1,21 @@
-"""多智能体改造第二~五步功能测试（无需 LLM / 无需 Godot）。
+"""多智能体功能测试（无需 LLM / 无需 Godot）。
 
-覆盖：Reflector 反思回环、消息总线、Debugger 委派查知识库、Tester 引擎反馈降级。
+覆盖：消息总线、Debugger 委派查知识库、Tester 引擎反馈降级。
+（Reflector 反思回环已随 Phase 1 精简移除）
 """
 
 import pytest
 
-from src.agents.reflector import ReflectorAgent
 from src.core.state.bus import publish, messages_for, latest
-from src.core.state.game_state import GameDevState, AgentType
 from src.core.knowledge.lookup import lookup_godot_knowledge
 
 
 @pytest.fixture
 def config():
-    return {"agents": {"reflector": {"fast_reflect": True}}}
+    return {}
 
 
-# ---------- 第二步：Reflector ----------
-
-@pytest.mark.asyncio
-async def test_reflector_ok_when_clean(config):
-    agent = ReflectorAgent(config)
-    state = {"error_log": [], "warnings": [], "main_review_result": {}, "design_review_result": {}}
-    res = await agent.execute(state)
-    assert res["verdict"] == "ok"
-    assert res["replan_needed"] is False
-    assert res["reflection_mode"] == "fast"
-
-
-@pytest.mark.asyncio
-async def test_reflector_replan_when_errors(config):
-    agent = ReflectorAgent(config)
-    state = {"error_log": ["player.gd:12: error: Identifier not found"], "warnings": [], "main_review_result": {}, "design_review_result": {}}
-    res = await agent.execute(state)
-    assert res["verdict"] == "replan"
-    assert res["replan_needed"] is True
-
-
-# ---------- 第三步：消息总线 ----------
+# ---------- 消息总线 ----------
 
 def test_bus_publish_consume():
     base = {"message_bus": []}
@@ -49,7 +27,7 @@ def test_bus_publish_consume():
     assert latest(base, recipient="planner")["content"] == "设计有坑"
 
 
-# ---------- 第四步：Debugger 委派查知识库 ----------
+# ---------- Debugger 委派查知识库（适配层保留该能力） ----------
 
 def test_debugger_delegate_finds_knowledge(config):
     from src.agents.debugger import DebuggerAgent
@@ -67,7 +45,7 @@ def test_lookup_godot_knowledge_offline():
     assert len(hits) >= 1
 
 
-# ---------- 第五步：Tester 引擎反馈降级 ----------
+# ---------- Tester 引擎反馈降级 ----------
 
 @pytest.mark.asyncio
 async def test_tester_engine_feedback_degraded_when_godot_down(config):

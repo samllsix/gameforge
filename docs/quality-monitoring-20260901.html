@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GameForge 产品生成质量监测报告 · 2026-09-01</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --ink: #1a2233; --muted: #5b6472;
+    --line: #e4e7ee; --accent: #3b5bfd; --p0: #d92d20; --p1: #dc6803; --p2: #667085;
+    --ok: #12805c; --code-bg: #0f172a; --code-ink: #d5dcf2;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--ink); line-height: 1.65; padding: 32px 16px 64px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header.hero { background: linear-gradient(135deg, #10182e 0%, #1d2a52 100%); color: #fff; border-radius: 14px; padding: 34px 38px; margin-bottom: 26px; }
+  header.hero h1 { font-size: 25px; letter-spacing: .5px; margin-bottom: 8px; }
+  header.hero .sub { color: #aab6d8; font-size: 13.5px; }
+  header.hero .meta { display: flex; gap: 26px; flex-wrap: wrap; margin-top: 18px; font-size: 12.5px; color: #c7d0ea; }
+  header.hero .meta b { color: #fff; font-weight: 600; }
+  .verdict { margin-top: 18px; background: rgba(217,45,32,.14); border: 1px solid rgba(217,45,32,.45); color: #ffb3ad; border-radius: 10px; padding: 12px 16px; font-size: 14px; }
+  h2 { font-size: 19px; margin: 34px 0 14px; padding-left: 12px; border-left: 4px solid var(--accent); }
+  h3 { font-size: 15.5px; margin: 18px 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 6px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; text-align: center; }
+  .kpi .v { font-size: 22px; font-weight: 700; }
+  .kpi .l { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .kpi.bad .v { color: var(--p0); }
+  .kpi.warn .v { color: var(--p1); }
+  .kpi.neutral .v { color: var(--p2); }
+  .badge { display: inline-block; font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 2px 11px; margin-right: 8px; vertical-align: 1px; }
+  .b-p0 { background: #fdecea; color: var(--p0); }
+  .b-p1 { background: #fdf1e2; color: var(--p1); }
+  .b-p2 { background: #eef0f4; color: var(--p2); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 10px 0 4px; }
+  th { background: #f0f2f8; text-align: left; padding: 9px 12px; border: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+  td { padding: 9px 12px; border: 1px solid var(--line); vertical-align: top; }
+  code, pre { font-family: Consolas, "Cascadia Mono", monospace; }
+  code.inline { background: #eef1f7; border-radius: 4px; padding: 1px 6px; font-size: 12.5px; color: #24356b; }
+  pre.log { background: var(--code-bg); color: var(--code-ink); border-radius: 10px; padding: 14px 18px; font-size: 12px; line-height: 1.7; overflow-x: auto; margin: 10px 0; }
+  pre.log .t { color: #7fd1a8; }
+  pre.log .e { color: #ff9d8f; }
+  pre.log .w { color: #f2c57c; }
+  pre.log .dim { color: #8593b8; }
+  .flow { display: flex; flex-direction: column; gap: 0; margin: 12px 0; }
+  .flow-row { display: flex; align-items: stretch; gap: 10px; }
+  .flow-node { flex: 1; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; border: 1px solid var(--line); background: #fbfcfe; }
+  .flow-node b { display: block; font-size: 13px; margin-bottom: 2px; }
+  .flow-node.bad { border-color: #f3b6b0; background: #fdf3f2; }
+  .flow-node.dead { border-style: dashed; opacity: .75; }
+  .flow-node.win { border-color: #b3e0cf; background: #f0faf6; }
+  .arrow { text-align: center; color: #98a2b3; font-size: 15px; padding: 2px 0; }
+  .shot { width: 100%; border-radius: 10px; border: 1px solid var(--line); margin: 8px 0 4px; }
+  .cap { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .fix { border-left: 3px solid var(--ok); background: #f2faf7; border-radius: 0 10px 10px 0; padding: 10px 16px; margin: 10px 0; font-size: 13.5px; }
+  .fix b { color: var(--ok); }
+  ul.tight { padding-left: 20px; font-size: 13.5px; }
+  ul.tight li { margin: 4px 0; }
+  .toc { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .num { font-variant-numeric: tabular-nums; }
+  footer { margin-top: 40px; font-size: 12px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>GameForge 产品生成质量监测报告</h1>
+  <div class="sub">端到端生成链路 · 浏览器实测 · 双轮复现验证</div>
+  <div class="meta">
+    <span>日期 <b>2026-09-01</b></span>
+    <span>服务 <b>uvicorn 127.0.0.1:8000</b></span>
+    <span>LLM <b>deepseek-v4-pro</b></span>
+    <span>引擎 <b>Godot 4.6.3</b></span>
+    <span>监测方式 <b>浏览器操控 + 服务端日志取证</b></span>
+  </div>
+  <div class="verdict">
+    <b>总体结论：不合格（阻断级）。</b>提交"太空射击游戏"需求后，实际产物为<b>硬编码模板生成的"海洋主题平台跳跃游戏"</b>——需求类型、美术主题、玩法机制三项全部不符；多智能体工作流全程显示 100% 完成但代码产出为 0；Web 导出被发布门禁拦截，无法出包。
+  </div>
+</header>
+
+<h2>一、关键质量指标</h2>
+<div class="kpis">
+  <div class="kpi bad"><div class="v">0 / 10</div><div class="l">需求-产物一致性</div></div>
+  <div class="kpi bad"><div class="v">0 个</div><div class="l">工作流 .gd 脚本产出</div></div>
+  <div class="kpi bad"><div class="v">0 / 11</div><div class="l">符合太空主题的美术素材</div></div>
+  <div class="kpi bad"><div class="v">失败</div><div class="l">Web 导出（门禁拦截）</div></div>
+  <div class="kpi warn"><div class="v">~11 次</div><div class="l">资产管线重复执行</div></div>
+  <div class="kpi warn"><div class="v">15–20s</div><div class="l">预览进程重启震荡周期</div></div>
+  <div class="kpi neutral"><div class="v">~1 分钟</div><div class="l">工作流名义耗时</div></div>
+  <div class="kpi neutral"><div class="v">2 轮</div><div class="l">独立复现验证</div></div>
+</div>
+
+<h2>二、测试设定</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:130px">项目</th><th>内容</th></tr>
+    <tr><td>测试需求</td><td>「太空射击游戏：玩家驾驶星舰穿越小行星带，对抗外星无人机舰队，收集能量核心升级武器，Boss战每三波出现一次，像素风」</td></tr>
+    <tr><td>入口</td><td>浏览器访问 <code class="inline">http://127.0.0.1:8000/</code>（数字生命系统驾驶舱 UI），输入需求 → 开始构建</td></tr>
+    <tr><td>第 1 轮（16:17）</td><td>复用既有项目目录（上一轮"深海"需求残留内容）</td></tr>
+    <tr><td>第 2 轮（19:40）</td><td>隔离变量：将旧项目目录备份为 <code class="inline">GameForge_Project.bak_ocean</code>，从零验证全新生成路径</td></tr>
+    <tr><td>取证手段</td><td>服务端结构化日志、产物文件时间戳/行数比对、UI 实时预览截图、导出 API 实测、gd-guard / baseline_checker 门禁日志</td></tr>
+  </table>
+</div>
+
+<h2>三、P0-1 需求与产物完全脱节（核心阻断缺陷）</h2>
+<div class="card">
+  <p><span class="badge b-p0">P0</span><b>无论提交什么需求，产物永远是同一个"海洋主题平台跳跃游戏"。</b>两轮独立测试均复现。</p>
+
+  <h3>证据链（第 2 轮，全新项目目录）</h3>
+  <ul class="tight">
+    <li>UI 世界设定卡显示类型 <code class="inline">space_shooter</code>，但实测预览画面为<b>木质帆船 + 天空/海面背景的横版平台游戏</b>（见下方截图）；</li>
+    <li>美术指导器按 <b>"深海 珊瑚 沉船"</b> 主题包生成全部生图提示词——与"太空"需求毫无关系：</li>
+  </ul>
+  <pre class="log"><span class="t">2026-09-01 19:41:58</span> [info] art_director.llm_plan          slots=9 theme=<span class="e">'深海 珊瑚 沉船'</span>
+<span class="t">2026-09-01 19:42:29</span> [info] asset_forge.done               assets=['background','decoration','enemy','enemy2','enemy3','ground','icon','npc','pickup','platform','player']  <span class="dim">×7（并发重复，见 P1-3）</span></pre>
+  <ul class="tight">
+    <li>新生成 <code class="inline">main.tscn</code> 与上一轮"深海"项目的场景文件<b>行数完全一致（553 行）</b>，均为同一硬编码模板；</li>
+    <li>BGM 生成记录 <code class="inline">audio_engine.using_ai backend=musicgen genre=platformer</code>——音乐类型也是硬编码的 platformer。</li>
+  </ul>
+
+  <h3>根因：预览轮询端点的硬编码兜底抢跑</h3>
+  <div class="flow">
+    <div class="flow-row">
+      <div class="flow-node"><b>① 用户提交需求</b>工作流启动：game_designer → planner（genre=shooter 匹配成功）→ scene_generator 生成正确 IR（6 实体，shooter）</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="flow-row">
+      <div class="flow-node dead"><b>② 工作流成果被丢弃</b>scene_generator：<code class="inline">scene_build_skipped reason=auto_build_scene_disabled</code>（godot.auto_build_scene=false）——正确的 shooter 场景 IR 没有任何代码把它写入磁盘</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="flow-row">
+      <div class="flow-node bad"><b>③ 预览端点用硬编码模板抢建项目</b>UI 每 250ms 轮询 <code class="inline">/api/v1/preview/frame</code>；发现 main.tscn 缺失即自动建项目——<b>写死</b> <code class="inline">default_scene_ir(theme="sky_blue", genre="platformer")</code>（src/api/main.py:933）</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="flow-row">
+      <div class="flow-node bad"><b>④ 主题错位传导到美术</b>theme="sky_blue" 在 art_director 的主题包匹配中命中第一个 palette_base=sky_blue 的包 → <b>ocean（深海 珊瑚 沉船）</b>→ 全套海洋帆船素材</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="flow-row">
+      <div class="flow-node win" style="border-style:dashed;"><b>⑤ 最终产物</b>海洋主题平台跳跃游戏（可运行、可预览），但与需求 0 相关。需求中"星舰/小行星/Boss 战"无一落地</div>
+    </div>
+  </div>
+
+  <h3>产物截图（第 2 轮最终预览）</h3>
+  <img class="shot" src="quality-assets/run3-final-ship-preview.jpg" alt="第2轮最终预览：木质帆船海洋平台游戏">
+  <div class="cap">图 1 · 提交"太空射击"需求后实际生成的游戏：木质帆船、天空海面背景的横版平台游戏；UI 文案却标注 space_shooter。</div>
+  <img class="shot" src="quality-assets/run2-final-ocean-preview.jpg" alt="第1轮最终预览：海洋平台游戏">
+  <div class="cap">图 2 · 第 1 轮（复用旧目录）产物：同为海洋主题平台游戏。上一轮"深海"需求看似成功纯属巧合——主题恰好撞上硬编码模板。</div>
+
+  <div class="fix"><b>修复方向：</b>切断"预览兜底抢跑"链路——① 预览端点的 auto-build 兜底改为读取工作流落盘的 Scene IR（如 <code class="inline">.gameforge/scene_ir.json</code>），禁止硬编码 genre/theme；② 工作流侧将 scene_generator 的 IR 真正写入项目（或开启 auto_build_scene）；③ art_director 主题匹配改为"需求关键词 → THEME_PACKS 加权匹配"（太空/星舰/小行星应命中现成的 <code class="inline">space_night 星舰 星云 小行星</code> 包，目前该包完全未被使用）。</div>
+</div>
+
+<h2>四、P0-2 多智能体工作流空转</h2>
+<div class="card">
+  <p><span class="badge b-p0">P0</span><b>7 个 Agent 进度条全部 100%，但对最终可玩产物贡献为零。</b></p>
+  <ul class="tight">
+    <li><b>GDM 贫瘠且无质量门禁：</b>game_designer 的 LLM 返回缺失 game_title、entities/main_systems 为空，校验条件 <code class="inline">any(k in gdm for k in ("game_title","genre","core_loop","entities"))</code> 过宽——只要含 genre 即放行，缺字段由 normalize 填默认值「未命名游戏」；</li>
+    <li><b>规划塌缩：</b>planner 基于贫瘠 GDM 只生成 <b>1 个任务</b>（<code class="inline">task_plan_generated_from_gdm task_count=1</code>），代码生成最终产出 <b>0 个 .gd 脚本</b>（gd_guard 扫描结果 <code class="inline">{'gd': 0, 'tscn': 1, 'project_godot': 1}</code>）；</li>
+    <li><b>门禁形同虚设：</b>baseline_checker 15 项检查通过、gd_guard 放行——因为检查的是预览兜底写的模板项目，而非工作流产物；</li>
+    <li>两轮均复现，非偶发。</li>
+  </ul>
+  <pre class="log"><span class="t">19:41:44</span> [info] agent_action  action=using_gdm_for_planning  <span class="e">title=未命名游戏</span>
+<span class="t">19:41:44</span> [info] agent_action  action=task_plan_generated_from_gdm  <span class="e">task_count=1</span>
+<span class="t">19:47:46</span> [info] gd_guard.allow  scanned=<span class="e">{'gd': 0</span>, 'tscn': 1, 'project_godot': 1}
+<span class="t">19:47:46</span> [info] baseline_checker.passed  checks=15</pre>
+  <div class="fix"><b>修复方向：</b>① GDM 质量门禁：title 非空 + entities ≥ N + main_systems ≥ M 才放行，不达标带错误反馈重试（当前已有一次重试，但重试用相同宽松校验）；② planner 对 task_count=1 且 genre 与需求不符时告警；③ UI 的 Agent 进度条与真实产物解耦校验（展示"工作流产出 0 个脚本"的诚实状态）。</div>
+</div>
+
+<h2>五、P1 缺陷</h2>
+<div class="card">
+  <h3><span class="badge b-p1">P1-3</span>并发重复生成，成本放大 ~11 倍</h3>
+  <p>250ms 高频轮询下，多个并发 <code class="inline">/preview/frame</code> 请求同时发现 main.tscn 缺失，各自触发<b>完整的资产管线</b>（AI 生图 11 张 + SFX 5 段 + BGM）。单项目锁未覆盖生成全程：</p>
+  <pre class="log"><span class="t">19:42:29</span> asset_forge.done  ×7   <span class="dim">← 同一秒 7 个并发构建全部完成全套资产生成</span>
+<span class="t">19:42:29</span> sfx_forge.done   ×7
+<span class="t">19:42:29</span> preview.scene_auto_generated ×7
+<span class="t">19:42:32/43/46, 19:43:33</span> …  <span class="dim">← 后续又有 4 轮，累计 ~11 次完整生成</span></pre>
+  <div class="fix"><b>修复方向：</b>auto-build 前先抢"项目级互斥标记"（内存锁 + 磁盘 sentinel），后续轮询请求等待或复用，而不是各自全量生成。按单次管线 11 图 × ~15s 估算，本轮浪费约 10 次生图调用。</div>
+
+  <h3><span class="badge b-p1">P1-4</span>Godot 预览进程崩溃循环 + 端口分配竞态</h3>
+  <ul class="tight">
+    <li>预览每 15–20s 出现一次「HTTP 502 → 降级模拟 → 重连」震荡；supervisor 因 <code class="inline">health_status_502</code> 反复重启进程（日志中同一项目 spawn 10+ 次）；</li>
+    <li><b>端口竞态：</b><code class="inline">_pick_free_port</code> 从 8769 起探测空闲端口，进程退出后端口被释放，另一项目立即抢占——第 1 轮观测到 demo_jump_v2 与 GameForge_Project 同时被分配到 8770，互相冲突崩溃；</li>
+    <li>UI 未构建时默认轮询旧项目 demo_jump_v2，制造无关负载与第二个冲突源。</li>
+  </ul>
+  <div class="fix"><b>修复方向：</b>① 端口按 project_id 确定性分配（或维护 port→project 注册表，重启复用原端口）；② health_fail 连续 N 次再重启（当前 consecutive=1 即重启）；③ 预览兜底项目与 UI 默认轮询目标收敛为当前会话项目。</div>
+
+  <h3><span class="badge b-p1">P1-5</span>Web 导出被发布门禁拦截，无法出包</h3>
+  <p>导出 API 实测返回 <code class="inline">release_gate_failed</code>，两类错误：</p>
+  <pre class="log"><span class="e">ERROR: …scenes/main.tscn'. at: instantiate (scene/resources/packed_scene.cpp:211)</span>   <span class="dim">← 场景实例化失败</span>
+<span class="e">ERROR: [screenshot_server] listen failed on 127.0.0.1:8769 err=22</span>               <span class="dim">← 冒烟实例与常驻预览抢同一端口</span></pre>
+  <div class="fix"><b>修复方向：</b>runtime_smoke 启动 Godot 时注入独立 <code class="inline">GAMEFORGE_PREVIEW_PORT</code>（或临时移除 screenshot_server autoload），与常驻预览进程隔离；排查 headless 冒烟下场景实例化失败的具体资源依赖。</div>
+</div>
+
+<h2>六、P2 缺陷与观察</h2>
+<div class="card">
+  <ul class="tight">
+    <li><span class="badge b-p2">P2-6</span><b>同项目重提交新需求不触发重生成：</b>asset_forge 幂等复用 + 场景已存在 → 第 1 轮（复用目录）中，太空射击需求完全复用了旧"深海"产物（资产时间戳停在 16:09–16:10，main.tscn 未更新）。需求变更应使资产缓存失效；</li>
+    <li><span class="badge b-p2">P2-7</span><b>MusicGen 加载曾致服务进程崩溃：</b>首轮服务在 <code class="inline">audio_engine.loading backend=musicgen</code> 后进程级崩溃（exit code 1）。Python 层 fallback 无法兜住原生库段错误，音频模型加载应移出 API 进程（子进程/独立服务）；</li>
+    <li><span class="badge b-p2">P2-8</span><b>UI 预览 fps 显示 1157/1255：</b>降级模拟模式下的假帧率，与真实渲染状态混淆，建议区分 LIVE/SIM 标识下的数据来源；</li>
+    <li><span class="badge b-p2">P2-9</span><b>art_director 兜底先于 LLM 计划执行：</b>fallback_plan（ocean）先行落日志多次后才出现 llm_plan，轮询路径重复规划。</li>
+  </ul>
+</div>
+
+<h2>七、修复优先级建议</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:70px">优先级</th><th style="width:220px">缺陷</th><th>建议动作</th><th style="width:90px">预估工作量</th></tr>
+    <tr><td><span class="badge b-p0">P0</span></td><td>需求-产物脱节（§三）</td><td>预览兜底读工作流 IR；scene IR 落盘；art_director 按需求关键词匹配主题包</td><td class="num">1–2 天</td></tr>
+    <tr><td><span class="badge b-p0">P0</span></td><td>工作流空转（§四）</td><td>GDM 质量门禁 + 带反馈重试；产物为零时流程显式失败</td><td class="num">0.5–1 天</td></tr>
+    <tr><td><span class="badge b-p1">P1</span></td><td>并发重复生成（§五）</td><td>项目级互斥标记，轮询等待/复用</td><td class="num">0.5 天</td></tr>
+    <tr><td><span class="badge b-p1">P1</span></td><td>端口竞态与崩溃循环（§五）</td><td>端口确定性分配 + 健康重启阈值</td><td class="num">0.5 天</td></tr>
+    <tr><td><span class="badge b-p1">P1</span></td><td>导出门禁端口冲突（§五）</td><td>冒烟实例端口隔离</td><td class="num">0.5 天</td></tr>
+    <tr><td><span class="badge b-p2">P2</span></td><td>缓存失效 / 音频进程隔离等（§六）</td><td>需求哈希进缓存键；MusicGen 移出 API 进程</td><td class="num">1 天</td></tr>
+  </table>
+</div>
+
+<h2>八、附录 · 环境与取证材料</h2>
+<div class="card">
+  <ul class="tight">
+    <li>服务日志：TRAE 后台任务 <code class="inline">job-b430a45133f3462c9ca3528f6c563f84</code>（第 2 轮）/ <code class="inline">job-ea103218c72048cfb9d2d656c0fbc2b4</code>（第 1 轮）</li>
+    <li>产物目录：<code class="inline">projects/GameForge_Project</code>（本轮）/ <code class="inline">projects/GameForge_Project.bak_ocean</code>（隔离备份）</li>
+    <li>截图证据：<code class="inline">docs/quality-assets/run2-final-ocean-preview.jpg</code>、<code class="inline">run3-final-ship-preview.jpg</code></li>
+    <li>关键代码位置：预览硬编码兜底 <code class="inline">src/api/main.py:933</code>；场景构建跳过 <code class="inline">src/agents/scene_generator/__init__.py:69</code>；GDM 校验 <code class="inline">src/agents/game_designer/__init__.py:69</code>；主题包 <code class="inline">src/agents/genre_fusion.py:60</code>；端口探测 <code class="inline">src/engine/godot/supervisor.py</code>（<code class="inline">_pick_free_port</code>）</li>
+  </ul>
+</div>
+
+<footer>GameForge 产品生成质量监测报告 · 由 TRAE 生成 · 2026-09-01</footer>
+</div>
+</body>
+</html>

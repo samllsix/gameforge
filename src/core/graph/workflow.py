@@ -28,10 +28,9 @@ from src.agents.scene_generator import SceneGeneratorAgent
 from src.agents.game_designer import GameDesignerAgent
 from src.agents.refactor import RefactorAgent
 from src.agents.main_reviewer import MainReviewerAgent
-from src.agents.reflector import ReflectorAgent
 from src.core.memory import MemoryManager
 from src.core.recipes import RecipeStore
-from src.core.dialogue.review_refactor_negotiation import run_review_refactor_dialogue
+from src.sandbox.controller import SandboxController
 
 
 class GameDevWorkflow:
@@ -59,7 +58,6 @@ class GameDevWorkflow:
         self.scene_generator = SceneGeneratorAgent(config)
         self.refactor_agent = RefactorAgent(config)
         self.main_reviewer = MainReviewerAgent(config)
-        self.reflector = ReflectorAgent(config)
 
         # 记忆系统 — 让 Agent 有上下文记忆
         self.memory = MemoryManager()
@@ -68,25 +66,12 @@ class GameDevWorkflow:
         self.recipe_store = RecipeStore()
         self.recipe_enabled = config.get("recipes", {}).get("enabled", True)
 
-        # 多智能体改造第一步：审查↔重构对话协商开关（默认关闭，保持原流水线行为）
-        self.dialogue_enabled = (
-            config.get("agents", {})
-            .get("review_refactor", {})
-            .get("dialogue_enabled", False)
-        )
-        self.dialogue_max_rounds = (
-            config.get("agents", {})
-            .get("review_refactor", {})
-            .get("max_rounds", 3)
-        )
-
-        # 多智能体改造第二步：反思回环开关（默认关闭，保持原流水线行为）
-        self.reflector_enabled = (
-            config.get("agents", {}).get("reflector", {}).get("enabled", False)
-        )
-        self.max_reflections = (
-            config.get("agents", {}).get("reflector", {}).get("max_reflections", 1)
-        )
+        # Sandbox 平台集成（Phase 1）
+        self.sandbox = SandboxController(config)
+        sandbox_cfg = config.get("sandbox", {})
+        self.sandbox_enabled = sandbox_cfg.get("enabled", False)
+        self.sandbox_auto_merge = sandbox_cfg.get("auto_merge", True)
+        self.sandbox_auto_rollback = sandbox_cfg.get("auto_rollback", True)
 
         self.graph = self._build_graph()
 
@@ -118,6 +103,57 @@ class GameDevWorkflow:
             return sanitized
         return ""
 
+    def _resolve_preview_task_id(self, state: "GameDevState") -> Optional[str]:
+        """若当前处于沙箱任务工作区，返回 task_id；否则返回 None。"""
+        task = (state.get("sandbox") or {}).get("task")
+        if not task:
+            return None
+        task_id = task.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            return task_id
+        return None
+
+    def _preview_meta(self, state: "GameDevState") -> Dict[str, str]:
+        """构造预览事件共用的 project_id/task_id 字典。"""
+        pid = self._resolve_preview_project_id(state)
+        tid = self._resolve_preview_task_id(state)
+        out: Dict[str, str] = {}
+        if pid:
+            out["project_id"] = pid
+        if tid:
+            out["task_id"] = tid
+        return out
+
+    async def _gd_guard_scan(self, state: GameDevState, event_callback) -> bool:
+        """安全闸门：gd-guard 扫描生成脚本。
+
+        返回 True 表示被拦截（调用方应提前结束工作流），False 表示继续。
+        """
+        try:
+            import src.engine.godot.gd_guard as _gd_guard
+
+            task = (state.get("sandbox") or {}).get("task")
+            scan_dir = None
+            if task and task.get("task_dir"):
+                scan_dir = task["task_dir"]
+            else:
+                project_hint = self._resolve_preview_project_id(state)
+                if project_hint:
+                    scan_dir = os.path.join("projects", project_hint)
+            if scan_dir and os.path.isdir(scan_dir):
+                guard = _gd_guard.scan_project(scan_dir)
+                if guard["available"] and guard["verdict"] == "block":
+                    findings = guard["findings"][:5]
+                    state["warnings"] = list(state.get("warnings", [])) + [
+                        f"gd-guard 拦截: {f.get('file','')}:{f.get('line','')} {f.get('detail','')}" for f in findings
+                    ]
+                    await event_callback("scene_error", {"message": "gd-guard 安全闸门拦截了危险脚本，已阻止运行/出包"})
+                    state["runnable"] = False
+                    return True
+        except Exception:  # noqa: BLE001
+            pass  # 闸门缺失/异常不阻塞主流程(失败开放)
+        return False
+
     def _build_graph(self):
         """构建LangGraph状态图，返回编译后的可执行图"""
         workflow = StateGraph(GameDevState)
@@ -126,16 +162,12 @@ class GameDevWorkflow:
         workflow.add_node("game_designer", self._game_designer_node)
         workflow.add_node("planner", self._planner_node)
         workflow.add_node("orchestrator", self._orchestrator_node)
-        workflow.add_node("code_generator", self._code_generator_node)
+        workflow.add_node("code_generator", self._wrap_code_node("code_generator"))
         workflow.add_node("code_reviewer", self._code_reviewer_node)
-        workflow.add_node("refactor", self._refactor_node)
-        workflow.add_node("test_generator", self._test_generator_node)
-        workflow.add_node("debugger", self._debugger_node)
+        workflow.add_node("refactor", self._wrap_code_node("refactor"))
+        workflow.add_node("test_generator", self._wrap_code_node("test_generator"))
+        workflow.add_node("debugger", self._wrap_code_node("debugger"))
         workflow.add_node("main_reviewer", self._main_reviewer_node)
-        # 对话协商节点（仅在开启时挂到主路径，常驻定义不影响旧行为）
-        workflow.add_node("review_refactor_dialogue", self._review_refactor_dialogue_node)
-        # 反思节点（多智能体改造第二步，常驻定义，仅在开启时接入主路径）
-        workflow.add_node("reflector", self._reflector_node)
 
         # 入口点
         workflow.set_entry_point("game_designer")
@@ -144,24 +176,11 @@ class GameDevWorkflow:
         workflow.add_edge("game_designer", "planner")
         workflow.add_edge("planner", "orchestrator")
         workflow.add_edge("code_generator", "code_reviewer")
+        workflow.add_edge("code_reviewer", "refactor")
+        workflow.add_edge("refactor", "test_generator")
         workflow.add_edge("test_generator", "main_reviewer")
+        workflow.add_edge("main_reviewer", "orchestrator")
         workflow.add_edge("debugger", "orchestrator")
-
-        # 多智能体改造第二步：开启反思时，main_reviewer -> reflector -> orchestrator
-        if self.reflector_enabled:
-            workflow.add_edge("main_reviewer", "reflector")
-            workflow.add_edge("reflector", "orchestrator")
-        else:
-            workflow.add_edge("main_reviewer", "orchestrator")
-
-        if self.dialogue_enabled:
-            # 多智能体模式：审查与重构通过多轮对话协商，而非单向交接
-            workflow.add_edge("code_reviewer", "review_refactor_dialogue")
-            workflow.add_edge("review_refactor_dialogue", "test_generator")
-        else:
-            # 原流水线：审查 → 重构 → 测试
-            workflow.add_edge("code_reviewer", "refactor")
-            workflow.add_edge("refactor", "test_generator")
 
         # 条件边：orchestrator 根据当前状态路由到不同节点
         workflow.add_conditional_edges(
@@ -171,12 +190,40 @@ class GameDevWorkflow:
                 "code_generator": "code_generator",
                 "test_generator": "test_generator",
                 "debugger": "debugger",
-                "planner": "planner",  # 多智能体改造第二步：反思触发重规划
                 END: END,
             },
         )
 
         return workflow.compile()
+
+    # ── Sandbox 自动同步 ──
+
+    def _wrap_code_node(self, node_name: str):
+        """包装代码生成类节点，执行后自动同步新增/修改文件到沙箱工作区。"""
+        real_method = getattr(self, f"_{node_name}_node")
+
+        async def wrapper(state: GameDevState) -> Dict[str, Any]:
+            result = await real_method(state)
+            self._sandbox_sync_code_generated(state, result)
+            return result
+
+        return wrapper
+
+    def _sandbox_sync_code_generated(self, state: GameDevState, node_result: Dict[str, Any]) -> None:
+        """若启用沙箱，将 node_result 中 code_generated 的变更同步到任务工作区。"""
+        if not getattr(self, "sandbox_enabled", False):
+            return
+        task = (state.get("sandbox") or {}).get("task")
+        if not task:
+            return
+        new_files = node_result.get("code_generated") or {}
+        if not new_files:
+            return
+        for rel_path, content in new_files.items():
+            try:
+                self.sandbox.modify(task, rel_path, content)
+            except Exception as e:
+                self.logger.warning("sandbox_sync_failed", path=rel_path, error=str(e))
 
     # ========== 节点实现 ==========
 
@@ -305,33 +352,6 @@ class GameDevWorkflow:
         except Exception as e:
             return {"error_log": [f"Refactor failed: {e}"], "current_phase": "error"}
 
-    async def _review_refactor_dialogue_node(self, state: GameDevState) -> Dict[str, Any]:
-        """审查↔重构 对话协商节点（多智能体改造第一步）
-
-        调用 DialogueSession 让 code_reviewer(指导者) 与 refactor(助手) 多轮协商，
-        直至审查通过或达到 max_rounds。全程 transcript 写回 state，使协作可见。
-        """
-        try:
-            result = await run_review_refactor_dialogue(
-                self.code_reviewer,
-                self.refactor_agent,
-                state,
-                max_rounds=self.dialogue_max_rounds,
-            )
-            return result
-        except Exception as e:
-            # 兜底：对话失败不阻断主流程，退化为旧行为（仅审查，不重构）
-            self.logger.error("review_refactor_dialogue_failed", error=str(e))
-            try:
-                review_result = await self.code_reviewer.review(state)
-            except Exception:
-                review_result = {}
-            return {
-                "current_phase": "code_reviewed",
-                "review_result": review_result,
-                "error_log": [f"review_refactor_dialogue failed: {e}"],
-            }
-
     async def _test_generator_node(self, state: GameDevState) -> Dict[str, Any]:
         """测试生成节点 — 为 GDScript 代码生成 GUT 测试用例"""
         try:
@@ -395,31 +415,8 @@ class GameDevWorkflow:
                 "current_phase": "main_review_error",
             }
 
-    async def _reflector_node(self, state: GameDevState) -> Dict[str, Any]:
-        """反思节点（多智能体改造第二步）
-
-        在 main_reviewer 之后复盘整次运行，判断是否需要重规划。
-        结果写入 reflection_result / reflection_count，由 _route_next 决定是否回到 planner。
-        """
-        try:
-            result = await self.reflector.execute(state)
-            count = state.get("reflection_count", 0) + 1
-            return {
-                "reflection_result": result,
-                "reflection_count": count,
-                "current_phase": "reflected",
-            }
-        except Exception as e:
-            self.logger.error("reflector_failed", error=str(e))
-            return {
-                "reflection_result": {"verdict": "ok", "replan_needed": False, "error": str(e)},
-                "reflection_count": state.get("reflection_count", 0) + 1,
-                "current_phase": "reflected",
-                "error_log": [f"Reflector failed: {e}"],
-            }
-
     async def _debugger_node(self, state: GameDevState) -> Dict[str, Any]:
-        """调试节点 — 分析 GDScript 错误并生成修复"""
+        """调试节点 — 分析 GDScript 错误并生成修复（委托 code_generator 修复能力）"""
         try:
             error_log = state.get("error_log", [])
             fix_result = await self.debugger.analyze_and_fix(state, error_log)
@@ -439,16 +436,6 @@ class GameDevWorkflow:
         # 工作流完成
         if current_phase == "workflow_complete" or state.get("is_complete"):
             return END
-
-        # 多智能体改造第二步：反思判定需要重规划，且未超过最大反思次数 → 回到 planner
-        refl = state.get("reflection_result") or {}
-        if (
-            self.reflector_enabled
-            and refl.get("replan_needed")
-            and current_phase == "reflected"
-            and state.get("reflection_count", 0) < self.max_reflections
-        ):
-            return "planner"
 
         # 需要修复 → debugger
         if current_phase == "needs_fix":
@@ -478,6 +465,39 @@ class GameDevWorkflow:
             return "code_generator"
 
     # ========== 工具方法 ==========
+
+    def _sandbox_project_config(self, state: GameDevState) -> Optional[Dict[str, Any]]:
+        """若 Sandbox 启用，返回指向任务工作区的 Godot 配置副本；否则返回 None。"""
+        if not getattr(self, "sandbox_enabled", False):
+            return None
+        task = (state.get("sandbox") or {}).get("task")
+        if not task:
+            return None
+        task_dir = task.get("task_dir")
+        if not task_dir:
+            return None
+        cfg = dict(self.config)
+        godot_cfg = dict(cfg.get("godot") or {})
+        godot_cfg["project_path"] = task_dir
+        cfg["godot"] = godot_cfg
+        return cfg
+
+    def _sandbox_cleanup_if_needed(self, project_id: str) -> None:
+        """当项目沙箱任务数超过阈值时，自动清理最旧的任务。"""
+        if not getattr(self, "sandbox_enabled", False) or not getattr(self, "sandbox", None):
+            return
+        try:
+            tasks = self.sandbox.workspace.list_tasks(project_id)
+            threshold = int((self.config.get("sandbox") or {}).get("cleanup_threshold", 20))
+            if len(tasks) <= threshold:
+                return
+            keep_last = int((self.config.get("sandbox") or {}).get("cleanup_keep_last", 10))
+            max_age_hours = int((self.config.get("sandbox") or {}).get("cleanup_max_age_hours", 168))
+            result = self.sandbox.cleanup(project_id, keep_last=keep_last, max_age_hours=max_age_hours)
+            if result.get("removed"):
+                self.log_action("sandbox_auto_cleanup", result)
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("sandbox_cleanup_failed", error=str(e))
 
     def log_action(self, action: str, details: Optional[Dict] = None) -> None:
         """记录操作日志（与 BaseAgent.log_action 语义一致）"""
@@ -519,6 +539,39 @@ class GameDevWorkflow:
 
     # ========== 场景生成（与主图并行） ==========
 
+    def _persist_scene_ir(self, state: GameDevState, scene_ir) -> None:
+        """把工作流生成的 Scene IR 落盘到 projects/<pid>/.scene_ir.json 或沙箱任务工作区。
+
+        预览端点（/api/v1/preview/frame?task_id=...）优先读取该文件构建场景，
+        替代旧的硬编码 default_scene_ir 抢跑（P0-1）。
+        requirements 一并落盘，供美术指导器按需求关键词匹配主题包。
+        """
+        if scene_ir is None:
+            return
+        pid = self._resolve_preview_project_id(state)
+        if not pid:
+            return
+        try:
+            ir_data = scene_ir.model_dump() if hasattr(scene_ir, "model_dump") else dict(scene_ir)
+            payload = {
+                "project_id": pid,
+                "requirements": (state.get("project_context", {}) or {}).get("requirements", ""),
+                "scene_ir": ir_data,
+            }
+            # 沙箱优先：写入任务工作区，便于预览端点按 task_id 直接读取
+            task = (state.get("sandbox") or {}).get("task")
+            if task and task.get("task_dir"):
+                ir_path = os.path.join(task["task_dir"], ".scene_ir.json")
+            else:
+                proj_dir = os.path.join("projects", pid)
+                os.makedirs(proj_dir, exist_ok=True)
+                ir_path = os.path.join(proj_dir, ".scene_ir.json")
+            with open(ir_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            self.log_action("scene_ir_persisted", {"path": ir_path, "genre": ir_data.get("genre")})
+        except Exception as e:  # noqa: BLE001
+            self.log_error("scene_ir_persist_failed", {"error": str(e)})
+
     async def _run_scene_generation(self, state: GameDevState, event_callback):
         """并行运行场景生成（与代码生成同时进行）"""
         await event_callback("scene_start", {"message": "正在生成 Godot 场景..."})
@@ -530,6 +583,11 @@ class GameDevWorkflow:
             state["scene_path"] = result.get("scene_path", "")
             state["scene_error"] = result.get("scene_error")
 
+            # IR 落盘须先于 scene_complete 事件：前端收到 project_id 才开始轮询预览
+            scene_ir_obj = result.get("scene_ir")
+            if scene_ir_obj is not None:
+                await asyncio.to_thread(self._persist_scene_ir, state, scene_ir_obj)
+
             if result.get("compile_errors"):
                 state.setdefault("scene_compile_errors", []).extend(result["compile_errors"])
 
@@ -537,6 +595,10 @@ class GameDevWorkflow:
             if scene_desc:
                 scene_json = json.dumps(scene_desc, indent=2, ensure_ascii=False)
                 state["code_generated"]["scenes/scene_description.json"] = scene_json
+                # Sandbox：同步场景描述到任务工作区
+                self._sandbox_sync_code_generated(state, {
+                    "code_generated": {"scenes/scene_description.json": scene_json}
+                })
 
             # 场景生成后立即执行人物、环境和玩法闭环审查。
             design_review = self.main_reviewer.review_game_design(state)
@@ -545,21 +607,22 @@ class GameDevWorkflow:
 
             if status == "built":
                 msg = "Godot 场景已生成！请在 Godot Editor 中查看"
-                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "message": msg,
                     "scene_path": result.get("scene_path", ""),
                     "object_count": len(scene_desc.get("game_objects", [])) if scene_desc else 0,
-                    **({"project_id": pid} if pid else {}),
+                    **self._preview_meta(state),
                 })
             elif status == "skipped":
                 await event_callback("scene_skipped", {
                     "message": result.get("message", "场景描述已生成，Godot 未构建"),
                     "reason": result.get("scene_skip_reason", "unknown"),
+                    **self._preview_meta(state),
                 })
             else:
                 await event_callback("scene_error", {
                     "message": result.get("scene_error", "场景生成失败"),
+                    **self._preview_meta(state),
                 })
         except Exception as e:
             state["scene_status"] = "error"
@@ -572,6 +635,9 @@ class GameDevWorkflow:
         """Godot 编译闭环：导入 → 编译 → 读错误 → 自动修复 → 重编译"""
         from src.engine.godot.godot_http_client import GodotHTTPClient
 
+        sandbox_cfg = self._sandbox_project_config(state)
+        use_sandbox = sandbox_cfg is not None
+
         # —— 编译闭环模式路由 ——
         # auto    : 配置了 Godot 引擎路径则走 headless（无需编辑器 GUI），否则退回 8765 HTTP
         # headless: 始终走 headless（未配置引擎路径则报错，不退回）
@@ -579,7 +645,7 @@ class GameDevWorkflow:
         compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
         if compile_mode in ("auto", "headless"):
             from src.engine.godot import GodotEditor
-            editor = GodotEditor(self.config)
+            editor = GodotEditor(sandbox_cfg or self.config)
             valid, _editor_msg = editor.validate()
             if valid:
                 await self._godot_compile_loop_headless(state, event_callback, max_rounds, editor)
@@ -590,20 +656,14 @@ class GameDevWorkflow:
                     "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法使用 headless 编译",
                 })
                 return
-        # 以下为原 8765 编辑器插件路径
-
-        client = GodotHTTPClient()
-        if not await client.check_health():
-            await event_callback("compile_result", {
-                "status": "skipped",
-                "message": "Godot Editor 未启动，跳过编译闭环",
-            })
-            return
-
-        code_files = state.get("code_generated", {})
-        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
-        if not gd_files:
-            return
+            if use_sandbox:
+                # 沙箱模式下不可退回 HTTP（会污染主线），直接跳过
+                await event_callback("compile_result", {
+                    "status": "skipped",
+                    "message": "沙箱模式需要 headless Godot（设置 godot.editor_path），HTTP 模式会修改主线，已跳过",
+                })
+                return
+        # 以下为原 8765 编辑器插件路径（仅非沙箱模式）
 
         await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
         import_result = await client.import_files(gd_files)
@@ -717,20 +777,20 @@ class GameDevWorkflow:
                 )
                 state["scene_status"] = "success"
                 state["scene_path"] = f"res://scenes/{name}.tscn"
-                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": name,
                     "scene_path": state["scene_path"],
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "headless",
-                    **({"project_id": pid} if pid else {}),
+                    **self._preview_meta(state),
                 })
             except Exception as e:
                 self.log_error("headless_scene_build_failed", {"error": str(e)})
 
         # 3) 校验闭环
         import os as _os
-        _proj = self.config.get("godot", {}).get("project_path", "") or _os.getcwd()
+        _sandbox_cfg = self._sandbox_project_config(state)
+        _proj = (_sandbox_cfg or self.config).get("godot", {}).get("project_path", "") or _os.getcwd()
         res_paths = []
         for k in gd_files.keys():
             clean = k.removeprefix("res://").removeprefix("res:/")
@@ -814,8 +874,11 @@ class GameDevWorkflow:
                 "runtime_smoke_skipped": True,
             }
 
+        sandbox_cfg = self._sandbox_project_config(state)
+        use_sandbox = sandbox_cfg is not None
+        runtime_config = sandbox_cfg or self.config
         from src.engine.godot.runtime_smoke import GodotRuntimeSmoke
-        smoke = GodotRuntimeSmoke(self.config)
+        smoke = GodotRuntimeSmoke(runtime_config)
         for attempt in range(max_fix_attempts + 1):
             await event_callback("phase_start", {
                 "phase": "runtime_smoke",
@@ -871,7 +934,7 @@ class GameDevWorkflow:
             # 重新落盘 debugger 修改的脚本
             try:
                 from src.engine.godot import GodotEditor
-                editor = GodotEditor(self.config)
+                editor = GodotEditor(runtime_config)
                 updated_gd = {
                     k: v for k, v in state.get("code_generated", {}).items()
                     if k.endswith(".gd")
@@ -898,11 +961,14 @@ class GameDevWorkflow:
           （无需打开编辑器 GUI，直接调用 Godot 引擎二进制落盘 .gd/.tscn 并校验）
         - 否则退回 8765 HTTP 编辑器插件
         """
+        sandbox_cfg = self._sandbox_project_config(state)
+        use_sandbox = sandbox_cfg is not None
+
         # —— 一键构建模式路由 ——
         compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
         if compile_mode in ("auto", "headless"):
             from src.engine.godot import GodotEditor
-            editor = GodotEditor(self.config)
+            editor = GodotEditor(sandbox_cfg or self.config)
             valid, _editor_msg = editor.validate()
             if valid:
                 await self._try_godot_pipeline_headless(state, event_callback, editor)
@@ -911,6 +977,15 @@ class GameDevWorkflow:
                 await event_callback("scene_skipped", {
                     "reason": "godot_unavailable",
                     "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法使用 headless 构建",
+                    **self._preview_meta(state),
+                })
+                return
+            if use_sandbox:
+                # 沙箱模式下不可退回 HTTP（会污染主线），直接跳过
+                await event_callback("scene_skipped", {
+                    "reason": "sandbox_headless_unavailable",
+                    "message": "沙箱模式需要 headless Godot（设置 godot.editor_path），HTTP 模式会修改主线，已跳过",
+                    **self._preview_meta(state),
                 })
                 return
 
@@ -921,6 +996,7 @@ class GameDevWorkflow:
             await event_callback("scene_skipped", {
                 "reason": "godot_http_unavailable",
                 "message": "Godot Editor HTTP Server 未运行，跳过自动构建",
+                **self._preview_meta(state),
             })
             return
 
@@ -929,7 +1005,7 @@ class GameDevWorkflow:
         if not gd_files:
             return
 
-        # 第一步：导入所有代码文件
+        # 非沙箱模式：原 HTTP 编辑器导入
         await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
         import_result = await client.import_files(gd_files)
         if import_result.get("status") == "error":
@@ -974,18 +1050,18 @@ class GameDevWorkflow:
             if scene_result.get("status") == "success":
                 state["scene_status"] = "success"
                 state["scene_path"] = scene_result.get("scene_path", "")
-                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": scene_desc.get("scene_name", "GameScene"),
                     "scene_path": scene_result.get("scene_path", ""),
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "success" if not errors else "with_errors",
-                    **({"project_id": pid} if pid else {}),
+                    **self._preview_meta(state),
                 })
             else:
                 state["scene_status"] = "error"
                 await event_callback("scene_error", {
                     "message": scene_result.get("error", "场景构建失败"),
+                    **self._preview_meta(state),
                 })
 
         if not errors:
@@ -1008,7 +1084,6 @@ class GameDevWorkflow:
         gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
         if not gd_files:
             return
-
         # 1) 写入 GDScript 到项目磁盘
         await event_callback("phase_start", {
             "phase": "compiling",
@@ -1043,20 +1118,20 @@ class GameDevWorkflow:
                 )
                 state["scene_status"] = "success"
                 state["scene_path"] = f"res://scenes/{name}.tscn"
-                pid = self._resolve_preview_project_id(state)
                 await event_callback("scene_complete", {
                     "scene_name": name,
                     "scene_path": state["scene_path"],
                     "object_count": len(scene_desc.get("game_objects", [])),
                     "compile_status": "headless",
-                    **({"project_id": pid} if pid else {}),
+                    **self._preview_meta(state),
                 })
             except Exception as e:
                 self.log_error("headless_scene_build_failed", {"error": str(e)})
 
         # 3) headless 一次性校验（不做自动修复闭环）
         import os as _os2
-        _proj2 = self.config.get("godot", {}).get("project_path", "") or _os2.getcwd()
+        _sandbox_cfg = self._sandbox_project_config(state)
+        _proj2 = (_sandbox_cfg or self.config).get("godot", {}).get("project_path", "") or _os2.getcwd()
         res_paths = []
         for k in gd_files.keys():
             clean = k.removeprefix("res://").removeprefix("res:/")
@@ -1191,6 +1266,7 @@ class GameDevWorkflow:
             "is_complete": False,
             "requires_human_input": False,
             "project_context": input_state.get("project_context", {}),
+            "sandbox": input_state.get("sandbox"),
             "error_log": [],
             "scene_description": None,
             "scene_status": "pending",
@@ -1199,9 +1275,6 @@ class GameDevWorkflow:
             "file_metadata": {},
             "validation_result": None,
             "warnings": [],
-            # 多智能体改造：反思回环 + 消息总线初始值
-            "reflection_result": None,
-            "reflection_count": 0,
             "message_bus": [],
         }
 
@@ -1238,6 +1311,8 @@ class GameDevWorkflow:
             logger.warning("code_validation_failed", error=str(e))
 
         self._add_project_artifacts(state)
+        # Sandbox：后处理生成的产物也同步到任务工作区
+        self._sandbox_sync_code_generated(state, state)
 
         # 评测系统
         try:
@@ -1303,6 +1378,8 @@ class GameDevWorkflow:
             return None
 
         RecipeStore.apply_recipe(state, recipe)
+        # Sandbox：配方命中后，将复用代码同步到任务工作区
+        self._sandbox_sync_code_generated(state, state)
 
         async def _noop(event_type, data):
             pass
@@ -1370,9 +1447,25 @@ class GameDevWorkflow:
         _start = _time.time()
         set_active_workflows(1)
 
+        # Sandbox：创建任务工作区
+        sandbox_task = None
+        if self.sandbox_enabled:
+            try:
+                project_id = self._resolve_preview_project_id(state) or "default"
+                sandbox_task = self.sandbox.create(project_id, role="director")
+                state.setdefault("sandbox", {})["task"] = sandbox_task
+                self._sandbox_cleanup_if_needed(project_id)
+            except Exception as e:
+                self.logger.warning("sandbox_create_failed", error=str(e))
+
         # P1 语义级复用：命中已验证配方 → 快速路径直接返回
         recipe_state = await self._run_recipe(state, None)
         if recipe_state is not None:
+            if sandbox_task and self.sandbox_enabled and self.sandbox_auto_merge:
+                try:
+                    self.sandbox.merge(sandbox_task)
+                except Exception as e:
+                    self.logger.warning("sandbox_merge_failed", error=str(e))
             return recipe_state
 
         # 加载项目记忆
@@ -1419,6 +1512,11 @@ class GameDevWorkflow:
             _success = False
             # 主图已失败，取消仍在后台运行的场景生成任务，避免任务泄漏
             scene_task.cancel()
+            if sandbox_task and self.sandbox_enabled and self.sandbox_auto_rollback:
+                try:
+                    self.sandbox.rollback(sandbox_task)
+                except Exception as e:
+                    self.logger.warning("sandbox_rollback_failed", error=str(e))
             raise
         finally:
             record_workflow_run(_success, _time.time() - _start)
@@ -1429,6 +1527,13 @@ class GameDevWorkflow:
         # Godot 一键构建 pipeline
         if state.get("scene_status") in (None, "pending", "skipped"):
             await self._try_godot_pipeline(state, lambda *a, **kw: asyncio.sleep(0))
+
+        # Sandbox：成功则合并回主线
+        if sandbox_task and self.sandbox_enabled and self.sandbox_auto_merge:
+            try:
+                self.sandbox.merge(sandbox_task)
+            except Exception as e:
+                self.logger.warning("sandbox_merge_failed", error=str(e))
 
         return state
 
@@ -1446,9 +1551,25 @@ class GameDevWorkflow:
         _success = True
         set_active_workflows(1)
 
+        # Sandbox：创建任务工作区
+        sandbox_task = None
+        if self.sandbox_enabled:
+            try:
+                project_id = self._resolve_preview_project_id(state) or "default"
+                sandbox_task = self.sandbox.create(project_id, role="director")
+                state.setdefault("sandbox", {})["task"] = sandbox_task
+                self._sandbox_cleanup_if_needed(project_id)
+            except Exception as e:
+                self.logger.warning("sandbox_create_failed", error=str(e))
+
         # P1 语义级复用：命中已验证配方 → 快速路径直接返回
         recipe_state = await self._run_recipe(state, event_callback)
         if recipe_state is not None:
+            if sandbox_task and self.sandbox_enabled:
+                try:
+                    self.sandbox.merge(sandbox_task)
+                except Exception as e:
+                    self.logger.warning("sandbox_merge_failed", error=str(e))
             return recipe_state
 
         project_name = state.get("project_context", {}).get("project_name", "default")
@@ -1541,6 +1662,11 @@ class GameDevWorkflow:
         except Exception as e:
             _success = False
             await event_callback("error", {"message": f"生成过程出错: {str(e)}"})
+            if sandbox_task and self.sandbox_enabled and self.sandbox_auto_rollback:
+                try:
+                    self.sandbox.rollback(sandbox_task)
+                except Exception as rollback_error:
+                    self.logger.warning("sandbox_rollback_failed", error=str(rollback_error))
 
         for task in state.get("task_plan", []):
             if task.get("status") == TaskStatus.COMPLETED.value:
@@ -1560,24 +1686,8 @@ class GameDevWorkflow:
             await self._try_godot_pipeline(state, event_callback)
 
         # 安全闸门：gd-guard 扫描生成脚本（危险 API 一票否决，Rust 二进制缺失则跳过）
-        try:
-            from src.engine.godot.gd_guard import scan_project
-
-            project_hint = self._resolve_preview_project_id(state)
-            if project_hint:
-                scan_dir = os.path.join("projects", project_hint)
-                if os.path.isdir(scan_dir):
-                    guard = scan_project(scan_dir)
-                    if guard["available"] and guard["verdict"] == "block":
-                        findings = guard["findings"][:5]
-                        state["warnings"] = list(state.get("warnings", [])) + [
-                            f"gd-guard 拦截: {f.get('file','')}:{f.get('line','')} {f.get('detail','')}" for f in findings
-                        ]
-                        await event_callback("scene_error", {"message": "gd-guard 安全闸门拦截了危险脚本，已阻止运行/出包"})
-                        state["runnable"] = False
-                        return state
-        except Exception:  # noqa: BLE001
-            pass  # 闸门缺失/异常不阻塞主流程(失败开放)
+        if await self._gd_guard_scan(state, event_callback):
+            return state
 
         # P0-2 运行时冒烟测试（"可运行"闭环）
         smoke_summary = await self._runtime_smoke_test(state, event_callback)
@@ -1601,7 +1711,6 @@ class GameDevWorkflow:
         except Exception:  # noqa: BLE001
             pass
 
-        pid = self._resolve_preview_project_id(state)
         await event_callback("complete", {
             "phase": "complete",
             "message": "代码生成完成！",
@@ -1614,8 +1723,15 @@ class GameDevWorkflow:
             "runtime_smoke_errors": smoke_summary.get("runtime_smoke_errors", [])[:5],
             "runtime_smoke_skipped": smoke_summary.get("runtime_smoke_skipped", False),
             "warnings": state.get("warnings", []),
-            **({"project_id": pid} if pid else {}),
+            **self._preview_meta(state),
         })
+
+        # Sandbox：成功则合并回主线
+        if sandbox_task and self.sandbox_enabled and self.sandbox_auto_merge:
+            try:
+                self.sandbox.merge(sandbox_task)
+            except Exception as e:
+                self.logger.warning("sandbox_merge_failed", error=str(e))
 
         return state
 

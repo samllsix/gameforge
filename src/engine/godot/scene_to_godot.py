@@ -19,7 +19,11 @@ import re
 import textwrap
 from typing import Any, Dict, List, Optional
 
+import structlog
+
 from src.agents.scene_ir import SceneIR, EntityIR
+
+logger = structlog.get_logger()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1496,13 +1500,20 @@ def write_project(
     with open(tscn_path, "w", encoding="utf-8") as f:
         f.write(tscn_text)
 
-    # 2.5 上线件：8-bit 音效 + 导出预设（幂等，已存在则跳过）
+    # 2.5 上线件：AI 音频（BGM + 音效），失败自动回退程序化 8-bit + 导出预设
     try:
-        from src.engine.godot.sfx_forge import write_sfx
+        from src.engine.godot.audio_engine import generate_audio_for_project
 
-        write_sfx(project_path)
+        genre = getattr(scene_ir, "genre", None) or "platformer"
+        generate_audio_for_project(project_path, genre=genre)
     except Exception as e:  # noqa: BLE001
-        logger.warning("write_project.sfx_failed", error=str(e))
+        logger.warning("write_project.audio_failed", error=str(e))
+        try:
+            from src.engine.godot.sfx_forge import write_sfx
+
+            write_sfx(project_path)
+        except Exception as e2:  # noqa: BLE001
+            logger.warning("write_project.sfx_fallback_failed", error=str(e2))
     try:
         from src.engine.godot.export_kit import write_export_presets
 

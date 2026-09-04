@@ -116,6 +116,9 @@ class GodotSupervisor:
         self.request_timeout: float = float(preview_cfg.get("request_timeout_seconds", 5))
         self.health_interval: float = float(preview_cfg.get("health_check_interval_seconds", 3))
         self.max_age: float = float(preview_cfg.get("max_process_age_seconds", 1800))
+        # 无任务空闲停止：无帧请求超过该秒数即停 Godot 进程（前端任务结束后停轮询，
+        # 常驻渲染空烧 GPU/CPU；下次帧请求到达时按需重启）
+        self.idle_timeout: float = float(preview_cfg.get("idle_timeout_seconds", 30))
         self.backoff: List[int] = list(preview_cfg.get("restart_backoff", [1, 3, 9]))
         self.legacy_only: bool = bool(preview_cfg.get("legacy_only", False))
         win = preview_cfg.get("window_position") or [20000, 20000]
@@ -165,6 +168,14 @@ class GodotSupervisor:
     async def _health_check_one(self, project_id: str) -> None:
         pp = self._procs.get(project_id)
         if pp is None:
+            return
+        # 无任务空闲停止：无帧请求超过 idle_timeout → 停进程释放 GPU/CPU
+        idle = time.time() - pp.last_used_at
+        if idle > self.idle_timeout:
+            logger.info(
+                "supervisor.idle_stopped", project_id=project_id, idle_seconds=round(idle, 1)
+            )
+            await self.stop(project_id)
             return
         # LRU 滚动重启
         if pp.age() > self.max_age:

@@ -111,6 +111,9 @@ _gf_check_result.json
 projects/*/export/
 projects/*/assets/gen/
 
+# Sandbox 平台工作区(任务副本+快照,从主线 projects/ 复制而来)
+workspace/
+
 # ── 本地杂项/一次性脚本/生成报告(2026-08-30 清理) ──
 .tmp/
 image_server.cmd

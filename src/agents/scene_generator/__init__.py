@@ -1,4 +1,4 @@
-﻿"""GameForge - 场景生成Agent
+"""GameForge - 场景生成Agent
 
 分析游戏需求和任务计划，生成 Godot 场景描述并发送到 Godot Editor 构建场景。
 与代码生成并行执行，不阻塞主workflow。
@@ -50,7 +50,7 @@ class SceneGeneratorAgent(BaseAgent):
         file_metadata = state.get("file_metadata", {})
 
         if engine != "godot":
-            return {"scene_status": "skipped", "scene_skip_reason": "unsupported_engine", "message": "仅支持 Godot 引擎场景生成"}
+            return {"scene_status": "skipped", "scene_skip_reason": "unsupported_engine", "scene_ir": None, "message": "仅支持 Godot 引擎场景生成"}
 
         # Step 1: Always generate scene description first
         self.log_action("generating_scene_description", {
@@ -60,10 +60,10 @@ class SceneGeneratorAgent(BaseAgent):
             "metadata_files": len(file_metadata),
         })
 
-        scene_desc = await self._generate_scene_description(requirements, task_plan, engine, gdm, file_metadata)
+        scene_desc, scene_ir = await self._generate_scene_description(requirements, task_plan, engine, gdm, file_metadata)
 
         if scene_desc is None:
-            return {"scene_status": "error", "scene_error": "LLM未能生成有效的场景描述"}
+            return {"scene_status": "error", "scene_error": "LLM未能生成有效的场景描述", "scene_ir": scene_ir}
 
         # Step 2: Check if auto_build is enabled
         if not self.auto_build_scene:
@@ -72,6 +72,7 @@ class SceneGeneratorAgent(BaseAgent):
                 "scene_status": "skipped",
                 "scene_skip_reason": "auto_build_disabled",
                 "scene_description": scene_desc,
+                "scene_ir": scene_ir,
                 "message": "场景描述已生成，自动构建已关闭（godot.auto_build_scene=false）",
             }
 
@@ -88,10 +89,14 @@ class SceneGeneratorAgent(BaseAgent):
 
             if tscn_text:
                 import os
-                godot_config = self.config.get("godot", {})
-                project_path = godot_config.get("project_path", "")
-                if not project_path or project_path.startswith("${"):
-                    project_path = os.getenv("GODOT_PROJECT_PATH", os.getcwd())
+                sandbox_task = state.get("sandbox", {}).get("task")
+                if sandbox_task:
+                    project_path = sandbox_task.get("task_dir", "")
+                else:
+                    godot_config = self.config.get("godot", {})
+                    project_path = godot_config.get("project_path", "")
+                    if not project_path or project_path.startswith("${"):
+                        project_path = os.getenv("GODOT_PROJECT_PATH", os.getcwd())
                 scenes_dir = os.path.join(project_path, "scenes")
                 os.makedirs(scenes_dir, exist_ok=True)
                 scene_name = scene_desc.get("scene_name", "GameScene")
@@ -104,7 +109,8 @@ class SceneGeneratorAgent(BaseAgent):
                     with open(main_tscn_path, "w", encoding="utf-8") as f:
                         f.write(tscn_text)
 
-                    self._ensure_script_stubs(scene_desc, project_path)
+                    if not sandbox_task:
+                        self._ensure_script_stubs(scene_desc, project_path)
 
                     self.log_action("scene_tscn_written_to_disk", {
                         "path": tscn_path, "size": len(tscn_text),
@@ -113,6 +119,7 @@ class SceneGeneratorAgent(BaseAgent):
                     return {
                         "scene_status": "built",
                         "scene_description": scene_desc,
+                        "scene_ir": scene_ir,
                         "scene_path": tscn_path,
                         "object_count": len(scene_desc.get("game_objects", [])),
                         "compile_status": "skipped",
@@ -125,12 +132,14 @@ class SceneGeneratorAgent(BaseAgent):
                         "scene_status": "error",
                         "scene_error": f"写入 .tscn 文件失败: {e}",
                         "scene_description": scene_desc,
+                        "scene_ir": scene_ir,
                     }
 
             return {
                 "scene_status": "skipped",
                 "scene_skip_reason": "godot_http_unavailable",
                 "scene_description": scene_desc,
+                "scene_ir": scene_ir,
                 "message": "Godot Editor HTTP 服务未运行，场景描述已生成但未构建",
             }
 
@@ -164,6 +173,7 @@ class SceneGeneratorAgent(BaseAgent):
                 "scene_status": "error",
                 "scene_error": result.get("error", "未知错误"),
                 "scene_description": scene_desc,
+                "scene_ir": scene_ir,
             }
 
         # Step 6: Trigger compilation
@@ -174,6 +184,7 @@ class SceneGeneratorAgent(BaseAgent):
         return {
             "scene_status": "built",
             "scene_description": scene_desc,
+            "scene_ir": scene_ir,
             "scene_path": result.get("scene_path", ""),
             "object_count": result.get("object_count", 0),
             "compile_status": compile_result.get("status", "unknown"),
@@ -183,11 +194,16 @@ class SceneGeneratorAgent(BaseAgent):
     async def _generate_scene_description(
         self, requirements: str, task_plan: List[Dict], engine: str,
         gdm: Optional[Dict] = None, file_metadata: Optional[Dict] = None
-    ) -> Optional[Dict]:
-        """三级降级生成场景描述：
+    ) -> tuple:
+        """四级降级生成场景描述，返回 (scene_desc, scene_ir)：
+
         Level 1: 模板匹配 → 确定性 IR → scene_description
         Level 2: LLM 生成 Scene IR → Pydantic 校验 → scene_description
-        Level 3: 硬编码 fallback 场景
+        Level 3: 品类感知 fallback IR（需求关键词 → 品类规格蓝图）
+        Level 4: 硬编码兜底场景（无 IR，最终手段）
+
+        scene_ir 供工作流落盘到 projects/<pid>/.scene_ir.json，
+        预览端点据此构建与需求一致的场景（P0-1：不再硬编码抢跑）。
         """
         gdm = gdm or {}
         file_metadata = file_metadata or {}
@@ -202,26 +218,46 @@ class SceneGeneratorAgent(BaseAgent):
                 ir = fill_template(tpl_name, gdm)
                 scene_desc = ir_to_scene_description(ir, file_metadata)
                 self.log_action("scene_generated_via_template", {"template": tpl_name})
-                return scene_desc
+                return scene_desc, ir
         except Exception as e:
             self.log_error("template_scene_failed", {"error": str(e)})
 
         # ── Level 2: LLM 生成 Scene IR ──────────────────────
         try:
-            scene_desc = await self._generate_via_llm_ir(requirements, task_plan, gdm, file_metadata)
+            scene_desc, ir = await self._generate_via_llm_ir(requirements, task_plan, gdm, file_metadata)
             if scene_desc:
-                return scene_desc
+                return scene_desc, ir
         except Exception as e:
             self.log_error("llm_ir_scene_failed", {"error": str(e)})
 
-        # ── Level 3: 硬编码 fallback ─────────────────────────
-        return self._fallback_scene(requirements, task_plan)
+        # ── Level 3: 品类感知 fallback IR ────────────────────
+        # LLM 不可用/输出不可解析时，按需求关键词匹配品类规格生成兜底 IR。
+        # 必须产出 IR：预览端点依赖 .scene_ir.json 构建场景（P0-1），
+        # 且品类感知 IR（如 太空射击→Space Invaders 蓝图）远比硬编码平台场景贴切。
+        try:
+            from src.agents.genre_specs import match_genre
+            from src.agents.scene_ir_to_desc import ir_to_scene_description
+            from src.engine.godot.scene_to_godot import default_scene_ir
+
+            spec = match_genre(requirements)
+            ir = default_scene_ir(genre=spec.id if spec else "platformer")
+            scene_desc = ir_to_scene_description(ir, file_metadata)
+            self.log_action("scene_generated_via_fallback_ir", {"genre": ir.genre})
+            return scene_desc, ir
+        except Exception as e:
+            self.log_error("fallback_ir_failed", {"error": str(e)})
+
+        # ── Level 4: 硬编码兜底（无 IR，最终手段）────────────
+        return self._fallback_scene(requirements, task_plan), None
 
     async def _generate_via_llm_ir(
         self, requirements: str, task_plan: List[Dict],
         gdm: Dict, file_metadata: Dict,
-    ) -> Optional[Dict]:
-        """LLM 生成 Scene IR（抽象中间表示），然后确定性转换为 scene_description。"""
+    ) -> tuple:
+        """LLM 生成 Scene IR（抽象中间表示），然后确定性转换为 scene_description。
+
+        返回 (scene_desc, scene_ir)；失败时返回 (None, None)。
+        """
         from src.utils.llm_client import get_llm_client
         from src.agents.scene_ir import repair_scene_ir
         from src.agents.scene_ir_to_desc import ir_to_scene_description
@@ -295,7 +331,7 @@ class SceneGeneratorAgent(BaseAgent):
 
             raw_ir = self._extract_json(response)
             if not raw_ir:
-                return None
+                return None, None
 
             # Pydantic 校验 + 自动修复
             ir = repair_scene_ir(raw_ir, gdm)
@@ -303,11 +339,11 @@ class SceneGeneratorAgent(BaseAgent):
             # 确定性转换
             scene_desc = ir_to_scene_description(ir, file_metadata)
             self.log_action("scene_generated_via_llm_ir", {"genre": ir.genre, "entities": len(ir.entities)})
-            return scene_desc
+            return scene_desc, ir
 
         except Exception as e:
             self.log_error("llm_ir_parse_failed", {"error": str(e)})
-            return None
+            return None, None
 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """从LLM响应中提取JSON（委托给统一提取器）"""
