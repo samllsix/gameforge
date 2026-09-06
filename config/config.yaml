@@ -215,7 +215,7 @@ sandbox:
 #     enabled: true
 
 # Playtest：真正玩游戏——声明式输入回放 + 进程内抓帧 + report.json 证据
-# （借鉴 GameFactory-3A："编译通过 ≠ 可玩"；产物落在 projects/<pid>/.gameforge/<run_id>/playtest/）
+# （验收原则："编译通过 ≠ 可玩"；产物落在 projects/<pid>/.gameforge/<run_id>/playtest/）
 playtest:
   enabled: false
   frames_every: 10        # 每 N 帧抓一帧

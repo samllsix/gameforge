@@ -882,7 +882,7 @@ class GameDevWorkflow:
     # ── P1 playtest：输入回放 + 帧证据 ──────────────────────────────────
 
     async def _playtest(self, state: GameDevState, event_callback) -> Optional[Dict[str, Any]]:
-        """P1 playtest：真正玩游戏（借鉴 GameFactory-3A 的 validate-play-iterate）。
+        """P1 playtest：真正玩游戏——验证"能玩"而非仅"能启动"。
 
         "能启动"不算验证——用声明式动作脚本驱动玩家操作（移动/跳跃/交互），
         进程内抓帧，产出 report.json 证据并评分。产物按 paths 约定落在

@@ -1,6 +1,6 @@
 """GameForge - 仓库 I/O 路径单一事实源
 
-借鉴 GameFactory-3A 的 paths.py 约定：所有生成产物的路径只在本模块构造，
+路径契约：所有生成产物的路径只在本模块构造，
 其他模块一律通过这里的函数取路径。验收约束::
 
     grep -rn '"projects"' src/ --include="*.py" | grep -v paths.py   # 必须为空

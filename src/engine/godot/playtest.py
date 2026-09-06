@@ -1,6 +1,6 @@
 """GameForge - Godot playtest 运行器（输入回放 + 帧捕获证据链）。
 
-借鉴 GameFactory-3A 的 validate-play-iterate 闭环："编译通过/能启动"
+playtest 闭环："编译通过/能启动"
 不算验证，必须真正驱动玩家操作、逐帧留证、按报告评分：
 
     生成动作脚本 → 注入录制器 autoload → --headless 启动游戏 →
@@ -72,7 +72,7 @@ def evaluate_report(
     console_errors: Optional[List[Dict[str, Any]]] = None,
     require_frames: bool = False,
 ) -> Dict[str, Any]:
-    """按 GF-3A playtest.eval 的思路给执行报告评分。
+    """对 playtest 执行报告逐项评分。
 
     只评已有产物，不重新运行游戏。检查项：
     - 报告存在且 schema 正确、ok=true

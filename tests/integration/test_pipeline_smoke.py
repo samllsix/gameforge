@@ -1,4 +1,4 @@
-"""全链路离线冒烟测试（GameFactory-3A 风格 CPU-only harness）。
+"""全链路离线冒烟测试（CPU-only harness）。
 
 GAMEFORGE_LLM_STUB=1 时，所有 Agent 走模板降级路径，
 整条工作流无需网络、无需 API key、无需 Godot 即可跑通。

@@ -433,7 +433,7 @@ class LLMStubUnavailable(RuntimeError):
 
 
 class StubLLMClient:
-    """离线 stub 客户端 — 全链路冒烟用（借鉴 GameFactory-3A 的 CPU-only harness）。
+    """离线 stub 客户端 — 全链路冒烟用（CPU-only，无需 GPU/网络/API key）。
 
     通过环境变量 ``GAMEFORGE_LLM_STUB=1`` 或配置 ``llm.stub.enabled: true`` 启用。
     与 LLMClient 同接口；任何 chat 调用立即抛 :class:`LLMStubUnavailable`，

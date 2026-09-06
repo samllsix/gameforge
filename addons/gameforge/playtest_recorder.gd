@@ -1,12 +1,12 @@
 ## GameForge playtest 录制器（autoload 入口）
 ##
-## 借鉴 GameFactory-3A 的 playtest 思路："编译通过/能启动"不算验证，
+## playtest 验收原则："编译通过/能启动"不算验证，
 ## 必须真正驱动玩家操作并留下证据。本脚本由 PlaytestRunner 注入到
 ## 生成项目的 [autoload] 段，以 --headless 启动后：
 ##   1) 读取声明式动作脚本（绝对路径，环境变量 GAMEFORGE_PLAYTEST_ACTIONS）
 ##   2) 按时间轴用 Input.parse_input_event 注入真实输入事件
 ##   3) 每 N 帧用 get_viewport().get_texture().get_image() 抓帧（进程内，
-##      headless 可用，无需显示器；GameFactory-3A 同款固定步长采样）
+##      headless 可用，无需显示器，固定步长采样时序确定）
 ##   4) 结束后写 report.json（GAMEFORGE_PLAYTEST_OUT 指向的目录）并退出
 ##
 ## 动作脚本格式（JSON 数组，t 为自启动起的秒数）：

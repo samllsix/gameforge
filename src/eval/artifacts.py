@@ -1,4 +1,4 @@
-"""GameForge - 产物级评测（GameFactory-3A 风格 eval.py）。
+"""GameForge - 产物级评测。
 
 只读取已存在的产物并评分，绝不重新生成、绝不重新运行游戏：
 

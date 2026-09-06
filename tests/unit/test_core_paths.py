@@ -1,6 +1,5 @@
 """src/core/paths.py 单一事实源的契约测试。
 
-对应 GameFactory-3A 的 paths 约定：
 - 产物按 (project_id, run_id, task_kind, task_id) 编址
 - 路径穿越被拒绝
 - 其余模块不得自行拼 projects 根（grep 约束在本测试中落地）
@@ -117,7 +116,7 @@ class TestJsonHelpers:
 
 class TestGrepConstraint:
     def test_no_other_module_builds_projects_root(self):
-        """GF-3A 约定：paths.py 之外不得出现 projects 根字面量。"""
+        """项目约定：paths.py 之外不得出现 projects 根字面量。"""
         src_root = Path(__file__).resolve().parents[2] / "src"
         offenders = []
         for py in src_root.rglob("*.py"):

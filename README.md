@@ -26,7 +26,7 @@ GameForge 是一个基于 **Multi-Agent 架构** 的 Godot 游戏研发 AI 工�
 - **Godot 4.x 专用**：生成符合规范的 GDScript (`.gd`) 与场景文件 (`.tscn`)
 - **场景 IR 生成**：从 GameDesignModel 到场景描述再到 .tscn 文件的完整管线
 - **Headless 编译校验**：Godot headless 模式自动校验脚本编译与场景完整性
-- **Playtest 输入回放**：声明式动作脚本驱动真实玩家操作 + 进程内抓帧，"编译通过 ≠ 可玩"（借鉴 GameFactory-3A）
+- **Playtest 输入回放**：声明式动作脚本驱动真实玩家操作 + 进程内抓帧，"编译通过 ≠ 可玩"
 - **VLM 视觉审查**：playtest 截图交给多模态模型按失败模式清单打分，高严重度问题触发修复闭环
 - **优雅降级**：LLM API 不可用时自动降级到模板生成，保证流程不中断；`GAMEFORGE_LLM_STUB=1` 可全链路离线冒烟
 - **Web 界面**：内置 FastAPI + SSE 流式界面，实时查看 Agent 执行进度
