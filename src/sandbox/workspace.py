@@ -38,8 +38,10 @@ class WorkspaceError(RuntimeError):
 
 class WorkspaceManager:
     def __init__(self, workspace_root: Optional[str] = None, projects_root: Optional[str] = None):
+        from src.core.paths import PROJECTS_ROOT
+
         self.root = Path(workspace_root or os.environ.get("GAMEFORGE_WORKSPACE_ROOT", _repo_root() / "workspace"))
-        self.projects_root = Path(projects_root or os.environ.get("GAMEFORGE_PROJECTS_ROOT", _repo_root() / "projects"))
+        self.projects_root = Path(projects_root or os.environ.get("GAMEFORGE_PROJECTS_ROOT", PROJECTS_ROOT))
         self.root.mkdir(parents=True, exist_ok=True)
 
     # ── 主线（projects/<id>）──

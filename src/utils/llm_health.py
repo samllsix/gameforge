@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Optional
 
 import structlog
@@ -42,6 +42,7 @@ class LLMHealthStatus:
     checked_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
+        """转为 dict（供 /health 与 / 端点序列化）。"""
         return asdict(self)
 
 
@@ -98,7 +99,7 @@ async def ping(config: Dict[str, Any], timeout: float = 5.0) -> LLMHealthStatus:
             model=status.model,
             latency_ms=round(status.ping_latency_ms, 1),
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         status.ping_ok = False
         status.ping_error = "timeout"
         status.ping_latency_ms = (time.monotonic() - t0) * 1000

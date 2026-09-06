@@ -110,17 +110,16 @@ class GodotAudioTools:
 
         # Godot 4.x 音频总线布局格式
         config = '[gd_resource type="AudioBusLayout" format=3]\n\n'
+        config += "[resource]\n"
 
         for idx, bus_name in enumerate(buses):
-            config += f'[sub_resource type="AudioBusLayout" id="{idx}"]\n'
-            config += f'bus/{idx}/name = "{bus_name}"\n'
+            config += f'bus/{idx}/name = &"{bus_name}"\n'
             config += f"bus/{idx}/solo = false\n"
             config += f"bus/{idx}/mute = false\n"
             config += f"bus/{idx}/bypass = false\n"
             config += f"bus/{idx}/volume_db = 0.0\n"
             if idx > 0:  # 非 Master 总线连接到 Master
-                config += f'bus/{idx}/send = "Master"\n'
-            config += "\n"
+                config += f'bus/{idx}/send = &"Master"\n'
 
         return config
 

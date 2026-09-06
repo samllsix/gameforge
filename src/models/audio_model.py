@@ -4,13 +4,18 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, List
-from enum import Enum
-from pydantic import BaseModel, Field
 from datetime import datetime
-import asyncio
-import aiohttp
-from pathlib import Path
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
+#: 音频采样率（Hz）——音频资产与时长估算的默认值
+DEFAULT_SAMPLE_RATE = 44100
+#: 各音频类型的默认目标时长（秒），GDM 未给出 duration 时的兜底
+DEFAULT_SFX_SECONDS = 3.0
+DEFAULT_BGM_SECONDS = 60.0
+DEFAULT_AMBIENT_SECONDS = 10.0
 
 
 class AudioType(str, Enum):
@@ -39,7 +44,7 @@ class AudioAsset(BaseModel):
     format: AudioFormat = Field(..., description="音频格式")
     file_path: str = Field(..., description="文件路径(相对于项目根目录)")
     duration: float = Field(..., description="时长(秒)")
-    sample_rate: int = Field(default=44100, description="采样率")
+    sample_rate: int = Field(default=DEFAULT_SAMPLE_RATE, description="采样率")
     description: str = Field(..., description="用途描述")
     prompt: str = Field(..., description="生成 prompt")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
@@ -118,19 +123,64 @@ class TTSModel(AudioModel):
             return await self._generate_openai_tts(prompt, voice, **kwargs)
         elif self.provider == "edge":
             return await self._generate_edge_tts(prompt, voice, **kwargs)
+        elif self.provider == "stepfun":
+            return await self._generate_stepfun_tts(prompt, voice, **kwargs)
         else:
             raise NotImplementedError(f"TTS provider '{self.provider}' not implemented")
 
     async def _generate_openai_tts(self, text: str, voice: str, **kwargs) -> bytes:
         """调用 OpenAI TTS API"""
-        # 实际实现需要调用 OpenAI API
-        # 这里返回占位
         raise NotImplementedError("OpenAI TTS integration pending")
 
     async def _generate_edge_tts(self, text: str, voice: str, **kwargs) -> bytes:
         """调用 Edge TTS(免费)"""
-        # 可使用 edge-tts 库
         raise NotImplementedError("Edge TTS integration pending")
+
+    async def _generate_stepfun_tts(self, text: str, voice: str, **kwargs) -> bytes:
+        """调用 StepFun stepaudio-2.5-tts API"""
+        if not self.api_key:
+            raise ValueError("StepFun TTS 需要 API Key")
+
+        base_url = kwargs.get("base_url") or self.config.get(
+            "base_url", "https://api.stepfun.com/step_plan/v1"
+        )
+        base_url = base_url.rstrip("/")
+        endpoint = kwargs.get("endpoint") or self.config.get(
+            "endpoint", "/audio/speech"
+        )
+
+        payload = {
+            "model": kwargs.get("model") or self.config.get("model", "stepaudio-2.5-tts"),
+            "input": text,
+            "voice": voice or self.config.get("voice", "zh-CN-YunxiNeural"),
+            "response_format": kwargs.get("response_format") or self.config.get(
+                "response_format", "mp3"
+            ),
+        }
+        for extra in ("speed", "instruction", "emotion"):
+            if extra in kwargs:
+                payload[extra] = kwargs[extra]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        timeout = kwargs.get("timeout") or self.config.get("timeout", 60)
+
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    f"{base_url}{endpoint}",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.content
+        except Exception as exc:
+            raise RuntimeError(f"StepFun TTS 请求失败: {exc}") from exc
 
     def get_supported_formats(self) -> List[AudioFormat]:
         return [AudioFormat.MP3, AudioFormat.WAV, AudioFormat.OGG]
@@ -155,7 +205,7 @@ class SFXModel(AudioModel):
         self,
         prompt: str,
         audio_type: AudioType = AudioType.SFX,
-        duration: Optional[float] = 3.0,
+        duration: Optional[float] = DEFAULT_SFX_SECONDS,
         **kwargs,
     ) -> bytes:
         """生成音效
@@ -201,7 +251,7 @@ class MusicModel(AudioModel):
         self,
         prompt: str,
         audio_type: AudioType = AudioType.BGM,
-        duration: Optional[float] = 60.0,
+        duration: Optional[float] = DEFAULT_BGM_SECONDS,
         genre: Optional[str] = None,
         mood: Optional[str] = None,
         **kwargs,
@@ -263,8 +313,11 @@ class AudioModelFactory:
             音频模型实例
         """
         if audio_type == AudioType.DIALOGUE:
+            effective_provider = (
+                provider or ((config or {}).get("provider") if config else None) or "openai"
+            )
             return TTSModel(
-                provider=provider or "openai", api_key=api_key, config=config
+                provider=effective_provider, api_key=api_key, config=config
             )
         elif audio_type in (AudioType.SFX, AudioType.AMBIENT):
             return SFXModel(

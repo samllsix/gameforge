@@ -105,6 +105,10 @@ def test_gd_guard_scan_uses_sandbox_task_dir():
     with tempfile.TemporaryDirectory() as tmp:
         task_dir = os.path.join(tmp, "sandbox", "p", "tasks", "t1")
         os.makedirs(task_dir, exist_ok=True)
+        # 任务目录需要已落盘（至少有一个 .gd），否则 gd_guard 按
+        # "skipped_unmaterialized" 跳过扫描，不会真正走到 scan_project
+        with open(os.path.join(task_dir, "player.gd"), "w", encoding="utf-8") as f:
+            f.write("extends Node\n")
         task = {"task_id": "t1", "task_dir": task_dir, "role": "director"}
         state = {"sandbox": {"task": task}, "warnings": []}
         wf._resolve_preview_project_id = lambda s: "p"

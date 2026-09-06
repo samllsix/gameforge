@@ -111,6 +111,12 @@ _gf_check_result.json
 projects/*/export/
 projects/*/assets/gen/
 
+# E2E 调试/冒烟生成的一次性测试项目(可随时重新生成)
+projects/e2e_*/
+
+# GameForge 流水线产物(playtest 录像帧/报告/评测汇总,体积大且可再生)
+projects/*/.gameforge/
+
 # Sandbox 平台工作区(任务副本+快照,从主线 projects/ 复制而来)
 workspace/
 

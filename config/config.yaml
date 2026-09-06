@@ -1,31 +1,20 @@
-# GameForge Configuration — Godot 版本
-# 主配置文件
-
 app:
   name: GameForge
   version: 0.4.0
   description: Godot 游戏研发全流程 AI Agent 工具链
   environment: ${GAMEFORGE_ENV:development}
   debug: ${GAMEFORGE_DEBUG:true}
-
-# Server configuration
 server:
   host: 127.0.0.1
   port: 8000
   workers: 4
   cors_origins:
-    - "http://localhost:3000"
-    - "http://localhost:5173"
-
-# LLM Configuration - 多Provider架构
-# 全量任务已切换到 stepfun step-3.7-flash（2026-09-01，用户指定）：
-# planner/code_generator/code_reviewer/test_generator/refactor/scene_generator/
-# main_reviewer/game_designer + 默认模型均走 StepFun；
-# deepseek provider 保留仅作回退备用
+  - http://localhost:3000
+  - http://localhost:5173
 llm:
-  default_model: step-3.7-flash
-  base_url: https://api.stepfun.com/step_plan/v1
-  api_key_env: STEPFUN_API_KEY
+  default_model: deepseek-v4-pro
+  base_url: https://token.sensenova.cn/v1
+  api_key_env: SENSENOVA_API_KEY
   max_retries: 3
   base_retry_delay: 1.0
   max_retry_delay: 30.0
@@ -39,7 +28,7 @@ llm:
       base_url: https://token-plan-cn.xiaomimimo.com/v1
       api_key_env: MIMO_API_KEY
     deepseek:
-      base_url: https://api.deepseek.com/v1
+      base_url: https://token.sensenova.cn/v1
       api_key_env: DEEPSEEK_API_KEY
     zhipu:
       base_url: https://open.bigmodel.cn/api/paas/v4
@@ -55,52 +44,65 @@ llm:
       api_key_env: STEPFUN_API_KEY
   models:
     planner:
-      provider: stepfun
-      model: step-3.7-flash
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.4
-      max_tokens: 4096
+      max_tokens: 16384
     code_generator:
-      provider: stepfun
-      model: step-3.7-flash
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.2
-      max_tokens: 8192
+      max_tokens: 16384
     code_reviewer:
-      provider: stepfun
-      model: step-3.7-flash
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.2
-      max_tokens: 4096
+      max_tokens: 16384
     test_generator:
-      provider: stepfun
-      model: step-3.7-flash
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.2
       max_tokens: 4096
     debugger:
-      provider: zhipu
-      model: glm-4.5-air
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.1
       max_tokens: 4096
     refactor:
-      provider: stepfun
-      model: step-3.7-flash
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.2
       max_tokens: 8192
     game_designer:
-      provider: stepfun
-      model: step-3.7-flash
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.4
-      max_tokens: 8192
+      max_tokens: 16384
     scene_generator:
-      provider: stepfun
-      model: step-3.7-flash
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.3
       max_tokens: 8192
     main_reviewer:
-      provider: stepfun
-      model: step-3.7-flash
+      provider: sensenova
+      model: deepseek-v4-pro
       temperature: 0.2
+      max_tokens: 16384
+    requirement_analyzer:
+      provider: sensenova
+      model: deepseek-v4-pro
+      temperature: 0.4
+      max_tokens: 16384
+    orchestrator:
+      provider: sensenova
+      model: deepseek-v4-pro
+      temperature: 0.4
       max_tokens: 4096
-
-# Agent Configuration
+    reflector:
+      provider: sensenova
+      model: deepseek-v4-pro
+      temperature: 0.4
+      max_tokens: 4096
 agents:
   max_concurrent: 5
   planning:
@@ -112,69 +114,80 @@ agents:
   testing:
     max_iterations: 5
     timeout_seconds: 600
-
-# MCP (Model Context Protocol) Configuration
+  ui_generation:
+    scene_dir: res://scenes/ui
+    script_dir: res://scripts/ui
+    max_concurrent_ui: 5
+    timeout_seconds: 300
+  audio_generation:
+    audio_dir: res://assets/audio
+    max_concurrent_audio: 3
+    timeout_seconds: 300
+audio:
+  default_tts_provider: stepfun
+  providers:
+    stepfun:
+      base_url: https://api.stepfun.com/step_plan/v1
+      api_key_env: STEPFUN_TTS_API_KEY
+      model: stepaudio-2.5-tts
+      voice: zh-CN-YunxiNeural
+      response_format: mp3
+      endpoint: /audio/speech
 mcp:
   enabled: true
   servers:
-    # Image MCP server (stdio) - 美术资源生成
     image:
       transport: stdio
       command: python
-      args: ["-m", "src.mcp.servers.image_server"]
+      args:
+      - -m
+      - src.mcp.servers.image_server
       cwd: ${GAMEFORGE_PROJECT_ROOT:.}
       timeout_ms: 30000
       retry:
         max: 3
         backoff: exponential
       env:
-        - STEP_API_KEY=${STEP_API_KEY:}
-        - STEP_BASE_URL=${STEP_BASE_URL:https://api.stepfun.com/step_plan/v1}
-        - SENSENOVA_API_KEY=${SENSENOVA_API_KEY:}
-        - SENSENOVA_BASE_URL=${SENSENOVA_BASE_URL:https://token.sensenova.cn/v1}
-        - IMAGE_PREFER_PROVIDER=${IMAGE_PREFER_PROVIDER:step}
-
-    # Engine MCP server (stdio) - Godot 引擎操作
+      - STEP_API_KEY=${STEP_API_KEY:}
+      - STEP_BASE_URL=${STEP_BASE_URL:https://api.stepfun.com/step_plan/v1}
+      - SENSENOVA_API_KEY=${SENSENOVA_API_KEY:}
+      - SENSENOVA_BASE_URL=${SENSENOVA_BASE_URL:https://token.sensenova.cn/v1}
+      - IMAGE_PREFER_PROVIDER=${IMAGE_PREFER_PROVIDER:step}
     engine:
       transport: stdio
       command: python
-      args: ["-m", "src.mcp.servers.engine_server"]
+      args:
+      - -m
+      - src.mcp.servers.engine_server
       cwd: ${GAMEFORGE_PROJECT_ROOT:.}
       timeout_ms: 60000
       retry:
         max: 5
         backoff: exponential
       health_check:
-        path: "/health"
+        path: /health
         interval_ms: 5000
-
-    # Asset MCP server (stdio) - 资源管理
     asset:
       transport: stdio
       command: python
-      args: ["-m", "src.mcp.servers.asset_server"]
+      args:
+      - -m
+      - src.mcp.servers.asset_server
       cwd: ${GAMEFORGE_PROJECT_ROOT:.}
       timeout_ms: 10000
       audit_log: data/asset_audit.log
-
-    # Knowledge MCP adapter (in-process) - 知识库检索
     knowledge:
       transport: in_process
       module: src.mcp.adapters.knowledge_adapter.KnowledgeMCPAdapter
-
-    # Test MCP adapter (in-process) - 测试管理
     test:
       transport: in_process
       module: src.mcp.adapters.test_adapter.TestMCPAdapter
-
   client:
     pool_size: 3
     request_timeout_ms: 30000
     circuit_breaker:
       threshold: 5
       recovery_s: 60
-
-# Sandbox Configuration
 sandbox:
   enabled: false
   workspace_root: data/sandbox
@@ -184,7 +197,7 @@ sandbox:
   process_limit: 32
   auto_merge: true
   auto_rollback: true
-  backend: local  # local | docker
+  backend: local
   cleanup_threshold: 20
   cleanup_keep_last: 10
   cleanup_max_age_hours: 168
@@ -194,3 +207,26 @@ sandbox:
     mem_limit: 2g
     cpu_quota: 100000
     pids_limit: 32
+
+# LLM stub 模式：所有 LLM 调用立即拒绝，Agent 走模板降级，
+# 全链路离线冒烟用（也可用环境变量 GAMEFORGE_LLM_STUB=1 开启，优先级更高）
+# llm:
+#   stub:
+#     enabled: true
+
+# Playtest：真正玩游戏——声明式输入回放 + 进程内抓帧 + report.json 证据
+# （借鉴 GameFactory-3A："编译通过 ≠ 可玩"；产物落在 projects/<pid>/.gameforge/<run_id>/playtest/）
+playtest:
+  enabled: false
+  frames_every: 10        # 每 N 帧抓一帧
+  duration_tail: 1.0      # 最后一个动作之后再跑多少秒
+  timeout_seconds: 90
+  max_fix_attempts: 1     # 未通过时喂给 debugger 修复并重放的最大额外轮数
+  # actions: []            # 自定义动作脚本；缺省用内置通用计划（左右移动+跳跃+交互）
+
+# VLM 视觉审查：playtest 帧交给多模态模型按失败模式清单打分
+# （黑屏/精灵错位/UI 不可读/风格不符/相机异常；高严重度问题触发修复循环）
+visual_review:
+  enabled: false
+  max_frames: 4           # 送审帧数（均匀采样）
+

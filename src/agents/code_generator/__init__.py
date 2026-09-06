@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
 from src.agents.base import BaseAgent
-from src.core.state.game_state import GameDevState, AgentType, TaskType
+from src.core.state.game_state import TaskStatus, GameDevState, AgentType, TaskType
 from src.utils.llm_client import get_llm_client
 
 
@@ -268,8 +268,15 @@ extends CharacterBody2D
 
         task_type = task.get("type", TaskType.CODE.value)
         if task_type != TaskType.CODE.value:
-            self.log_error("unsupported_task_type", {"type": task_type})
-            return []
+            # 非代码类任务（documentation/config 等）不产出代码：返回占位产物让
+            # 上层把任务标记完成——直接 return [] 会让任务永远 pending，
+            # 编排器无限重派直到递归上限（真实 E2E 踩过的坑）
+            self.log_action("task_skipped_non_code", {"type": task_type, "task_id": task.get("id")})
+            return [{
+                "file_path": f"docs/{task.get('id', 'task')}.md",
+                "content": task.get("description", "") or f"{task_type} 任务：无需生成代码",
+                "metadata": {"task_id": task.get("id"), "skipped_non_code": task_type},
+            }]
 
         # 尝试从整机模板匹配（确定性快速路径）
         template_artifacts = self._try_template_code(state, task, engine)
@@ -362,6 +369,34 @@ extends CharacterBody2D
             for fpath, content in matched.items()
         ]
 
+    def _gameplay_contract_block(self, state: GameDevState) -> str:
+        """品类玩法规格 + API 合约：让 LLM 首版就生成可玩且能过 gd-guard 门禁的代码。
+
+        数据来源：state.genre_match（planner 品类匹配产物）→ genre_specs 规格库；
+        场景实体名册来自 scene_description，保证代码引用的节点名真实存在。
+        """
+        genre_match = state.get("genre_match") or {}
+        from src.agents.genre_specs import get_spec
+
+        spec = get_spec(genre_match.get("genre"))
+        lines = [f"[品类玩法规格] {spec.name_zh}（基款: {spec.representative}）"]
+        lines += [f"- 核心机制: {m}" for m in spec.mechanics]
+        lines.append(f"- 胜利条件: {spec.win_condition}")
+        lines.append(f"- 失败条件: {spec.lose_condition}")
+        if spec.hud_extras:
+            lines.append(f"- HUD 需显示: {('、'.join(spec.hud_extras))}")
+        sd = state.get("scene_description") or {}
+        objs = sd.get("game_objects") or []
+        if objs:
+            names = [f"{o.get('name', '?')}({o.get('role', '?')})" for o in objs[:12]]
+            lines.append("[场景实体（可直接引用这些节点名）] " + ", ".join(names))
+        from src.engine.godot.gd_guard import DANGEROUS_APIS
+
+        lines.append("[API 安全合约] 生成的游戏代码禁止使用以下 API（安全门禁一票否决，违者必须重生成）:")
+        lines += [f"- {api}" for api in DANGEROUS_APIS]
+        lines.append("- 允许: 节点/场景树操作、物理与碰撞、Input、数学、动画、UI(Label/Button)、signal/@export/@onready、Timer")
+        return chr(10).join(lines)
+
     async def _generate_game_code(
         self, task: Dict[str, Any], engine: str, project_name: str, state: GameDevState
     ) -> List[Dict[str, Any]]:
@@ -427,6 +462,7 @@ extends CharacterBody2D
             memory_section = f"\n\n## 历史经验（来自记忆系统）\n{memory_context}"
 
         if engine == "godot":
+            gameplay_contract = self._gameplay_contract_block(state)
             user_prompt = f"""请根据以下任务生成完整的、高质量的 Godot 4.x GDScript 代码实现。
 
 项目名称: {project_name}
@@ -441,6 +477,7 @@ extends CharacterBody2D
 {gdm_context}
 {existing_context}
 {memory_section}
+{gameplay_contract}
 
 要求：
 1. 生成完整、可直接在 Godot 4.x 中运行的 GDScript 代码，不要省略任何部分。
@@ -940,7 +977,24 @@ func _process(delta: float) -> void:
         # Phase 1: generate
         code_artifacts = await self.generate(state, task)
         if not code_artifacts:
-            return {"current_phase": "code_generated", "warnings": ["代码生成返回空结果"]}
+            # 空产物也必须标记完成，否则任务永远 pending → 编排器无限重派
+            self.log_action("task_no_artifacts_completed", {"task_id": task.get("id")})
+            task_plan = self._mark_task_completed(state, task)
+            return {
+                "task_plan": task_plan,
+                "current_phase": "code_generated",
+                "warnings": [f"任务 {task.get('id', '?')} 无代码产物，已标记完成跳过"],
+            }
+        # 非代码占位产物：提前返回（带着完成状态），不走 review/fix 流水线
+        # ——占位产物缺常规字段，进流水线会抛异常，节点 except 返回的 dict
+        #   不含 task_plan，完成状态落不了地 → 无限重派（E2E 实测踩坑）
+        if code_artifacts and (code_artifacts[0].get("metadata") or {}).get("skipped_non_code"):
+            task_plan = self._mark_task_completed(state, task)
+            return {
+                "task_plan": task_plan,
+                "current_phase": "code_generated",
+                "warnings": [f"任务 {task.get('id', '?')} 为非代码类型，已标记完成"],
+            }
 
         # 标记任务完成并更新任务计划
         task_plan = self._mark_task_completed(state, task)

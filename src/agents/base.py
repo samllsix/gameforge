@@ -39,7 +39,8 @@ class BaseAgent(ABC):
         llm_models = config.get("llm", {}).get("models", {})
         self.llm_config = llm_models.get(
             self._get_llm_key(),
-            {"provider": "mimo", "model": "mimo-v2.5-pro", "temperature": 0.7, "max_tokens": 4096}
+            {"provider": "sensenova", "model": "deepseek-v4-pro",
+             "temperature": 0.7, "max_tokens": 4096}  # 未单独配置的 agent 回退默认
         )
         # 暴露 provider 和 model，供子类在调用 LLM 时使用
         self.provider = self.llm_config.get("provider")

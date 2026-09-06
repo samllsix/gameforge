@@ -293,7 +293,7 @@ def build_scene_tscn(
         nodes.append("mouse_filter = 2")
         # AI 玩家精灵（ColorRect 保留作动画脚本载体，精灵盖在其上）
         if ext_player_tex is not None:
-            nodes.append(_node_header("Sprite", "Sprite2D", parent="PlayerVisual"))
+            nodes.append(_node_header("Sprite", "Sprite2D", parent=f"{pnm}/PlayerVisual"))
             nodes.append('texture = ExtResource("' + ext_player_tex + '")')
             # Control 子节点坐标原点在左上角，矩形 32x48 → 中心 (16, 24)
             nodes.append("position = Vector2(16, 24)")

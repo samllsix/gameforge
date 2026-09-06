@@ -4,28 +4,29 @@
 专注于 Godot 引擎，生成 GDScript 代码和 .tscn 场景文件。
 """
 
-import time as _time
-import os
-
 import asyncio
 import json
+import os
 import re
+import time as _time
+
 import structlog
-from pathlib import Path
 
 logger = structlog.get_logger()
 from typing import Any, Dict, List, Optional
-from langgraph.graph import StateGraph, END
 
-from src.core.state.game_state import GameDevState, TaskStatus, TaskType, AgentType
+from langgraph.graph import END, StateGraph
+
+from src.agents.code_generator import CodeGeneratorAgent
+from src.agents.game_designer import GameDesignerAgent
 from src.agents.orchestrator import OrchestratorAgent
 from src.agents.planner import PlannerAgent
-from src.agents.code_generator import CodeGeneratorAgent
-from src.agents.scene_generator import SceneGeneratorAgent
-from src.agents.game_designer import GameDesignerAgent
 from src.agents.requirement_analyzer import RequirementAnalyzerAgent
+from src.agents.scene_generator import SceneGeneratorAgent
+from src.core import paths
 from src.core.memory import MemoryManager
 from src.core.recipes import RecipeStore
+from src.core.state.game_state import GameDevState, TaskStatus, TaskType
 from src.sandbox.controller import SandboxController
 
 
@@ -138,7 +139,7 @@ class GameDevWorkflow:
             else:
                 project_hint = self._resolve_preview_project_id(state)
                 if project_hint:
-                    scan_dir = os.path.join("projects", project_hint)
+                    scan_dir = str(paths.project_dir(project_hint))
             if scan_dir and os.path.isdir(scan_dir):
                 # 项目尚未落盘（无 project.godot 且无任何 .gd）时没有可扫对象，
                 # 跳过本次扫描；导出阶段的发布门禁会对完整项目再做一次 gd-guard 扫描。
@@ -154,13 +155,42 @@ class GameDevWorkflow:
                     return False
                 guard = _gd_guard.scan_project(scan_dir)
                 if guard["available"] and guard["verdict"] == "block":
+                    # 有界反馈回路：findings 喂给修复代理重生成一次 → 写盘 → 重扫；
+                    # 仍拦截才终判失败（多智能体协作减少修改次数的核心闭环）
                     findings = guard["findings"][:5]
-                    state["warnings"] = list(state.get("warnings", [])) + [
-                        f"gd-guard 拦截: {f.get('file','')}:{f.get('line','')} {f.get('detail','')}" for f in findings
+                    error_lines = [
+                        f"{f.get('file', '')}:{f.get('line', '')} 使用了被禁止的 "
+                        f"{f.get('rule', '')}（{f.get('detail', '')}），请改用节点/物理/Input 等"
+                        f"允许的 API 重写该脚本"
+                        for f in findings
                     ]
-                    await event_callback("scene_error", {"message": "gd-guard 安全闸门拦截了危险脚本，已阻止运行/出包"})
-                    state["runnable"] = False
-                    return True
+                    try:
+                        fix_result = await self.code_generator.fix_code(state, error_lines)
+                        new_code = fix_result.get("code_generated") or {}
+                        for rel_path, content in new_code.items():
+                            if not rel_path.endswith(".gd"):
+                                continue
+                            rel = rel_path
+                            if rel.startswith("res://"):
+                                rel = rel[len("res://"):]
+                            disk = os.path.join(scan_dir, rel.replace("/", os.sep))
+                            os.makedirs(os.path.dirname(disk) or scan_dir, exist_ok=True)
+                            with open(disk, "w", encoding="utf-8") as f:
+                                f.write(content)
+                        state["warnings"] = list(state.get("warnings", [])) + [
+                            "gd-guard 拦截后已自动重生成一轮，复检结果见后续扫描"
+                        ]
+                        guard = _gd_guard.scan_project(scan_dir)
+                    except Exception as fix_err:  # noqa: BLE001
+                        logger.warning("gd_guard.feedback_loop_failed", error=str(fix_err))
+                    if guard["available"] and guard["verdict"] == "block":
+                        findings = guard["findings"][:5]
+                        state["warnings"] = list(state.get("warnings", [])) + [
+                            f"gd-guard 重生成后仍拦截: {f.get('file','')}:{f.get('line','')} {f.get('detail','')}" for f in findings
+                        ]
+                        await event_callback("scene_error", {"message": "gd-guard 安全闸门拦截了危险脚本（重生成后仍未通过），已阻止运行/出包"})
+                        state["runnable"] = False
+                        return True
         except Exception:  # noqa: BLE001
             pass  # 闸门缺失/异常不阻塞主流程(失败开放)
         return False
@@ -204,9 +234,12 @@ class GameDevWorkflow:
         real_method = getattr(self, f"_{node_name}_node")
 
         async def wrapper(state: GameDevState) -> Dict[str, Any]:
+            """执行真实节点并同步产出文件到沙箱工作区。"""
             result = await real_method(state)
             self._sandbox_sync_code_generated(state, result)
             return result
+
+        return wrapper
     def _sandbox_sync_code_generated(self, state: GameDevState, node_result: Dict[str, Any]) -> None:
         """若启用沙箱，将 node_result 中 code_generated 的变更同步到任务工作区。"""
         if not getattr(self, "sandbox_enabled", False):
@@ -464,9 +497,8 @@ class GameDevWorkflow:
             if task and task.get("task_dir"):
                 ir_path = os.path.join(task["task_dir"], ".scene_ir.json")
             else:
-                proj_dir = os.path.join("projects", pid)
-                os.makedirs(proj_dir, exist_ok=True)
-                ir_path = os.path.join(proj_dir, ".scene_ir.json")
+                proj_dir = paths.ensure_project_dir(pid)
+                ir_path = str(paths.scene_ir_path(pid))
             with open(ir_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             self.log_action("scene_ir_persisted", {"path": ir_path, "genre": ir_data.get("genre")})
@@ -529,7 +561,6 @@ class GameDevWorkflow:
 
     async def _godot_compile_loop(self, state: GameDevState, event_callback, max_rounds: int = 3):
         """Godot 编译闭环：导入 → 编译 → 读错误 → 自动修复 → 重编译"""
-        from src.engine.godot.godot_http_client import GodotHTTPClient
 
         sandbox_cfg = self._sandbox_project_config(state)
         use_sandbox = sandbox_cfg is not None
@@ -847,6 +878,149 @@ class GameDevWorkflow:
             "runtime_smoke_result": result_dict,
             "runtime_smoke_attempts": max_fix_attempts + 1,
         }
+
+    # ── P1 playtest：输入回放 + 帧证据 ──────────────────────────────────
+
+    async def _playtest(self, state: GameDevState, event_callback) -> Optional[Dict[str, Any]]:
+        """P1 playtest：真正玩游戏（借鉴 GameFactory-3A 的 validate-play-iterate）。
+
+        "能启动"不算验证——用声明式动作脚本驱动玩家操作（移动/跳跃/交互），
+        进程内抓帧，产出 report.json 证据并评分。产物按 paths 约定落在
+        ``<project>/.gameforge/<run_id>/playtest/``。
+
+        配置 ``playtest.enabled``（默认关）开启；失败时把 findings 喂给
+        code_generator 修复一轮并重放一次（有界反馈）。
+        """
+        pt_cfg = (self.config.get("playtest", {}) or {})
+        if not pt_cfg.get("enabled", False):
+            return None
+        pid = self._resolve_preview_project_id(state)
+        if not pid:
+            return None
+
+        from src.engine.godot.playtest import PlaytestRunner, build_default_action_plan
+
+        if event_callback is None:
+            async def event_callback(_event_type, _data=None):
+                pass
+
+        runtime_config = self._sandbox_project_config(state) or self.config
+        runner = PlaytestRunner(runtime_config)
+        actions = pt_cfg.get("actions") or build_default_action_plan()
+        run_id = paths.new_run_id()
+        state["playtest_run_id"] = run_id
+
+        # run 级元数据：本 run 的全部产物（playtest/视觉审查/评测）共用该 run_id
+        gdm = state.get("game_design_model")
+        await asyncio.to_thread(
+            paths.write_run_meta, pid, run_id,
+            meta={
+                "requirements": (state.get("project_context", {}) or {}).get("requirements", ""),
+                "genre": (gdm or {}).get("genre", "") if isinstance(gdm, dict) else "",
+                "scene_path": state.get("scene_path", ""),
+            },
+        )
+        # 冒烟结果同样落盘为产物，供产物级评测读取（eval 只读不重跑）
+        if state.get("runtime_smoke_result"):
+            await asyncio.to_thread(
+                paths.write_json,
+                paths.run_dir(pid, run_id) / "runtime_smoke.json",
+                state["runtime_smoke_result"],
+            )
+
+        scene_path = state.get("scene_path") or None
+        max_rounds = int(pt_cfg.get("max_fix_attempts", 1)) + 1
+        summary: Dict[str, Any] = {}
+        for attempt in range(1, max_rounds + 1):
+            await event_callback("phase_start", {
+                "phase": "playtest",
+                "message": f"Playtest 输入回放（第{attempt}次）...",
+            })
+            summary = await asyncio.to_thread(
+                runner.run, actions,
+                **{"project_id": pid, "run_id": run_id, "scene_path": scene_path},
+            )
+
+            # P1 视觉审查：帧证据交给多模态模型按失败模式清单打分；
+            # 高严重度问题把 playtest 判为未通过，进入下方有界修复
+            if summary.get("ok") and not summary.get("skipped"):
+                review = await self._visual_review(state, pid, run_id, summary)
+                if review:
+                    summary["visual_review"] = review
+                    if review.get("ok") is False:
+                        summary["ok"] = False
+                        for issue in review.get("issues", []):
+                            if str(issue.get("severity", "")).lower() == "high":
+                                summary.setdefault("findings", []).append(
+                                    f"视觉审查[{issue.get('area', '?')}]: {issue.get('description', '')}"
+                                )
+
+            await event_callback("playtest_result", {
+                "ok": summary.get("ok"),
+                "skipped": summary.get("skipped", False),
+                "checks": summary.get("checks", {}),
+                "findings": summary.get("findings", [])[:5],
+                "run_id": run_id,
+                "attempt": attempt,
+            })
+            if summary.get("ok") or summary.get("skipped") or attempt >= max_rounds:
+                break
+
+            # 有界修复：findings → code_generator 修复 → 重放
+            findings = summary.get("findings") or []
+            if not findings:
+                break
+            state.setdefault("warnings", []).append(
+                f"playtest 未通过（第{attempt}次），进入 code_generator 修复"
+            )
+            state["error_log"] = [f"playtest: {f}" for f in findings[:5]]
+            fix_result = await self.code_generator.fix_code(state, state["error_log"])
+            state.update(fix_result)
+            # 重新落盘修复后的脚本（与 runtime smoke 修复路径一致）
+            try:
+                from src.engine.godot import GodotEditor
+                editor = GodotEditor(runtime_config)
+                updated_gd = {
+                    k: v for k, v in state.get("code_generated", {}).items()
+                    if k.endswith(".gd")
+                }
+                if updated_gd:
+                    await asyncio.to_thread(editor.import_files, updated_gd)
+            except Exception as e:  # noqa: BLE001
+                self.log_error("playtest_reimport_failed", {"error": str(e)})
+
+        # P0-4 产物级评测：聚合本 run 的全部证据 → eval/summary.json
+        try:
+            from src.eval.artifacts import evaluate_run
+
+            summary["eval"] = await asyncio.to_thread(evaluate_run, pid, run_id)
+        except Exception as e:  # noqa: BLE001
+            self.log_error("eval_run_failed", {"error": str(e)})
+
+        return summary
+
+    async def _visual_review(
+        self, state: GameDevState, pid: str, run_id: str, playtest_summary: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """P1 视觉审查：把 playtest 帧交给多模态模型按清单打分。
+
+        未启用/无 key/模型异常时返回 None 或 skipped 结果，不阻塞主流程。
+        """
+        from src.engine.godot.visual_review import VisualReviewer
+
+        reviewer = VisualReviewer(self.config)
+        if not reviewer.enabled:
+            return None
+        frames_dir = paths.playtest_frames_dir(pid, run_id)
+        frame_names = playtest_summary.get("frames") or []
+        if not frames_dir.is_dir() or not frame_names:
+            return None
+        requirements = (state.get("project_context", {}) or {}).get("requirements", "")
+        return await reviewer.review(
+            frames_dir, frame_names,
+            project_id=pid, run_id=run_id,
+            context=f"需求：{requirements}",
+        )
 
     async def _try_godot_pipeline(self, state: GameDevState, event_callback) -> None:
         """Godot 一键构建：导入代码 → 编译 → 构建场景
@@ -1179,7 +1353,7 @@ class GameDevWorkflow:
         # 等待场景生成完成
         try:
             await asyncio.wait_for(scene_task, timeout=60)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             state["scene_status"] = "error"
             state["scene_error"] = "Scene generation timed out"
             state.setdefault("warnings", []).append("场景生成超时")
@@ -1223,7 +1397,9 @@ class GameDevWorkflow:
 
             # Godot 兼容性评分
             try:
-                from src.utils.godot_compatibility_validator import validate_godot_compatibility
+                from src.utils.godot_compatibility_validator import (
+                    validate_godot_compatibility,
+                )
                 compat = validate_godot_compatibility(state.get("code_generated", {}))
                 compat_score = 100.0 if not compat.has_errors else max(0, 100 - len(compat.errors) * 10)
                 eval_report.add_metric(
@@ -1335,8 +1511,11 @@ class GameDevWorkflow:
     async def run(self, input_state: Dict[str, Any]) -> Dict[str, Any]:
         """运行工作流（批处理模式）"""
         from src.utils.metrics import (
-            record_workflow_run, record_task_completed, record_file_generated,
-            record_fix_attempt, set_active_workflows,
+            record_file_generated,
+            record_fix_attempt,
+            record_task_completed,
+            record_workflow_run,
+            set_active_workflows,
         )
 
         state = self._make_initial_state(input_state)
@@ -1438,8 +1617,11 @@ class GameDevWorkflow:
     ) -> Dict[str, Any]:
         """运行工作流（流式模式）"""
         from src.utils.metrics import (
-            record_workflow_run, record_task_completed, record_file_generated,
-            record_fix_attempt, set_active_workflows,
+            record_file_generated,
+            record_fix_attempt,
+            record_task_completed,
+            record_workflow_run,
+            set_active_workflows,
         )
 
         state = self._make_initial_state(input_state)
@@ -1594,6 +1776,11 @@ class GameDevWorkflow:
         if state.get("runnable") is True:
             await asyncio.to_thread(self._bake_if_verified, state)
 
+        # P1 playtest：真正玩游戏（输入回放 + 帧证据）——编译通过 ≠ 可玩
+        playtest_summary = await self._playtest(state, event_callback)
+        if playtest_summary:
+            state["playtest"] = playtest_summary
+
         # P2 稳定性指标：本次生成的修改次数（按品类/难度，量化多智能体协作的首过率）
         try:
             from src.utils.metrics import record_generation_stability
@@ -1618,6 +1805,11 @@ class GameDevWorkflow:
             "runnable": state.get("runnable"),
             "runtime_smoke_errors": smoke_summary.get("runtime_smoke_errors", [])[:5],
             "runtime_smoke_skipped": smoke_summary.get("runtime_smoke_skipped", False),
+            "playtest": {
+                "ok": (state.get("playtest") or {}).get("ok"),
+                "skipped": (state.get("playtest") or {}).get("skipped", False),
+                "run_id": (state.get("playtest") or {}).get("run_id"),
+            },
             "warnings": state.get("warnings", []),
             **self._preview_meta(state),
         })

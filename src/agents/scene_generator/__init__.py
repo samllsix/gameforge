@@ -89,7 +89,8 @@ class SceneGeneratorAgent(BaseAgent):
 
             if tscn_text:
                 import os
-                sandbox_task = state.get("sandbox", {}).get("task")
+                # state["sandbox"] 可能为 None（键存在、值为 None），不能依赖 {} 默认值
+                sandbox_task = (state.get("sandbox") or {}).get("task")
                 if sandbox_task:
                     project_path = sandbox_task.get("task_dir", "")
                 else:

@@ -4,9 +4,8 @@
 使用线程锁保证单例初始化安全。
 """
 
-import os
-import sys
 import logging
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -122,11 +121,14 @@ _logger_lock = threading.Lock()
 
 
 def get_logger(
-    log_dir: str = "logs", prefix: str = "gameforge"
+    name: Optional[str] = None, log_dir: str = "logs", prefix: str = "gameforge"
 ) -> GameForgeLogger:
     """获取全局日志实例（线程安全的懒加载）
 
     Args:
+        name: 调用方模块名（如 ``__name__``），仅作标识用途，被忽略。
+              没有它时，``get_logger(__name__)`` 会把模块名当成 log_dir，
+              生成 ``src.agents.xxx`` 这类点号垃圾目录。
         log_dir: 日志目录
         prefix: 日志文件前缀
 

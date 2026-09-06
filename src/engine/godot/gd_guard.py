@@ -21,6 +21,17 @@ import structlog
 logger = structlog.get_logger()
 
 _GUARD_NAME = "gd-guard.exe"
+
+# 危险 API 黑名单（与 tools/gd-guard/src/main.rs 的 BLOCK_PATTERNS 保持同步；
+# 供代码生成提示词使用——生成时禁用，比生成后拦截便宜一个数量级）
+DANGEROUS_APIS = [
+    "OS.execute", "OS.create_process", "OS.shell_open",
+    "FileAccess", "DirAccess", "ResourceSaver.save",
+    "TCPServer", "StreamPeerTCP", "UDPServer", "PacketPeerUDP", "PacketPeerStream",
+    "HTTPRequest", "HTTPClient", "WebSocketPeer", "WebSocketMultiplayerPeer",
+    "ENetMultiplayerPeer", "MultiplayerAPI", "SceneMultiplayer",
+    "JavaScriptBridge",
+]
 _repo_root = Path(__file__).resolve().parents[3]
 
 

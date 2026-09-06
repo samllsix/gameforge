@@ -49,7 +49,9 @@ func _ready() -> void:
 	tcp_server = TCPServer.new()
 	var err := tcp_server.listen(port, "127.0.0.1")
 	if err != OK:
-		push_error("[screenshot_server] listen failed on 127.0.0.1:%d err=%d" % [port, err])
+		# 端口被其它预览实例占用是预期场景：降级为普通日志。
+		# push_error 会被 runtime_smoke 的错误解析器当成致命错误，误杀发布门禁。
+		print("[screenshot_server] listen skipped on 127.0.0.1:%d err=%d" % [port, err])
 		return
 	_running = true
 	print("[screenshot_server] listening on 127.0.0.1:%d token_set=%s display=%s" % [port, str(not token.is_empty()), DisplayServer.get_name()])

@@ -28,7 +28,7 @@ def test_tscn_with_assets_emits_sprites():
     assert tscn.count('type="Texture2D"') == 4
     # 玩家/敌人/金币精灵挂在视觉节点下，3 层背景各一张 BGArt
     assert tscn.count("Sprite2D") >= 3 + 3
-    assert '[node name="Sprite" type="Sprite2D" parent="PlayerVisual"]' in tscn
+    assert '[node name="Sprite" type="Sprite2D" parent="Player/PlayerVisual"]' in tscn
     assert '[node name="Sprite" type="Sprite2D" parent="Enemy1/Visual"]' in tscn
     assert '[node name="Sprite" type="Sprite2D" parent="Pickup1/Visual"]' in tscn
     assert '[node name="BGArt1" type="Sprite2D" parent="ParallaxLayer1"]' in tscn
@@ -45,7 +45,7 @@ def test_tscn_partial_assets_only_wires_present_ones():
     )
     assert tscn.count('type="Texture2D"') == 1
     assert "BGArt1" not in tscn
-    assert '[node name="Sprite" type="Sprite2D" parent="PlayerVisual"]' in tscn
+    assert '[node name="Sprite" type="Sprite2D" parent="Player/PlayerVisual"]' in tscn
 
 
 # ── asset_forge 门控与生成 ───────────────────────────────────────────────────

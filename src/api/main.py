@@ -28,6 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from src.core.graph.workflow import create_workflow
+from src.core import paths
 from src.core.concurrency import ConcurrencyManager
 from src.api.middleware import (
     RateLimitMiddleware,
@@ -849,7 +850,7 @@ def _resolve_preview_project(project_id: str, task_id: Optional[str] = None) -> 
     if not project_id or not _PREVIEW_PROJECT_RE.match(project_id):
         raise HTTPException(status_code=400, detail="project_id 非法（仅允许字母数字_-.)")
     if task_id is not None:
-        task_dir = os.path.join("data", "sandbox", project_id, "tasks", task_id)
+        task_dir = str(paths.sandbox_task_dir(project_id, task_id))
         abs_root = os.path.abspath(task_dir)
         if not os.path.isdir(abs_root):
             raise HTTPException(status_code=404, detail="沙箱任务工作区不存在")
@@ -865,8 +866,13 @@ def _resolve_preview_project(project_id: str, task_id: Optional[str] = None) -> 
 
 
 def _projects_root() -> Path:
-    """返回仓库内 projects/ 目录的绝对路径。"""
-    return Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "projects"
+    """返回仓库内 projects/ 目录的绝对路径。
+
+    委托给 src.core.paths（单一事实源），保持既有内部调用点不变。
+    """
+    from src.core.paths import PROJECTS_ROOT
+
+    return PROJECTS_ROOT
 
 
 def _load_project_scene_ir(project_path: str):

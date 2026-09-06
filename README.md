@@ -26,9 +26,11 @@ GameForge 是一个基于 **Multi-Agent 架构** 的 Godot 游戏研发 AI 工�
 - **Godot 4.x 专用**：生成符合规范的 GDScript (`.gd`) 与场景文件 (`.tscn`)
 - **场景 IR 生成**：从 GameDesignModel 到场景描述再到 .tscn 文件的完整管线
 - **Headless 编译校验**：Godot headless 模式自动校验脚本编译与场景完整性
-- **优雅降级**：LLM API 不可用时自动降级到模板生成，保证流程不中断
+- **Playtest 输入回放**：声明式动作脚本驱动真实玩家操作 + 进程内抓帧，"编译通过 ≠ 可玩"（借鉴 GameFactory-3A）
+- **VLM 视觉审查**：playtest 截图交给多模态模型按失败模式清单打分，高严重度问题触发修复闭环
+- **优雅降级**：LLM API 不可用时自动降级到模板生成，保证流程不中断；`GAMEFORGE_LLM_STUB=1` 可全链路离线冒烟
 - **Web 界面**：内置 FastAPI + SSE 流式界面，实时查看 Agent 执行进度
-- **量化评测**：多维度评测体系（编译通过率、Godot 兼容性、任务完成度）
+- **量化评测**：产物级评测体系（运行时冒烟、playtest 证据、视觉审查、项目完整性 → eval/summary.json）
 
 ---
 
@@ -212,12 +214,14 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 GODOT_EDITOR_PATH=D:/godot/Godot_v4.6.3-stable_win64.exe/Godot_v4.6.3-stable_win64.exe
 GODOT_PROJECT_PATH=D:/game_project
 
-# 应用配置
-APP_ENV=development
-APP_DEBUG=true
-APP_HOST=127.0.0.1
-APP_PORT=8000
+# 应用配置（键名与 config/config.yaml 对应）
+GAMEFORGE_ENV=development
+GAMEFORGE_DEBUG=true
+GAMEFORGE_HOST=127.0.0.1
+GAMEFORGE_PORT=8000
 ```
+
+> 各 API Key 的申请方式见 [docs/API_KEYS.md](docs/API_KEYS.md)。
 
 ### 启动服务
 
@@ -325,6 +329,7 @@ game_project/
 │   │   ├── scene_ir.py               # 场景 IR 定义
 │   │   └── scene_templates.py        # 场景模板
 │   ├── core/                         # 核心模块
+│   │   ├── paths.py                  # 仓库 I/O 路径单一事实源 (产物按 (project_id, run_id) 编址)
 │   │   ├── concurrency.py            # 异步任务队列管理
 │   │   ├── graph/workflow.py          # LangGraph 状态图
 │   │   ├── state/                    # 状态管理
@@ -345,16 +350,19 @@ game_project/
 │   │   │   ├── godot_ws_client.py    # WebSocket 客户端 (端口 8766)
 │   │   │   ├── project_generator.py  # 项目生成器
 │   │   │   ├── scene_builder.py      # 场景构建器
+│   │   │   ├── playtest.py           # playtest 运行器 (输入回放+帧证据+评分)
+│   │   │   ├── visual_review.py      # VLM 视觉审查 (失败模式清单打分)
 │   │   │   └── tscn_writer.py        # .tscn 文件写入器
 │   │   └── sandbox/                  # 沙箱执行
 │   ├── db/                           # 数据库
 │   │   ├── models.py                 # SQLAlchemy 模型
 │   │   └── session.py                # SQLite 会话
 │   ├── eval/                         # 评测体系
-│   │   ├── metrics/                  # 评测指标
+│   │   ├── metrics/                  # 代码静态评测指标
+│   │   ├── artifacts.py              # 产物级评测 (只读已有证据 → eval/summary.json)
 │   │   └── dashboard/                # 评测看板
 │   └── utils/                        # 工具函数
-│       ├── llm_client.py             # 统一 LLM 客户端
+│       ├── llm_client.py             # 统一 LLM 客户端 (多模态 + 离线 stub 模式)
 │       ├── code_validator.py         # 代码校验
 │       ├── godot_compatibility_validator.py  # Godot 兼容性校验
 │       ├── vector_store.py           # Qdrant 向量存储

@@ -259,6 +259,14 @@ def extract_class_name(content: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def extract_public_class_name(content: str) -> Optional[str]:
+    """提取 class_name 声明的公共类名（extract_class_name 的兼容别名）
+
+    code_validator / consistency_validator 通过此名字导入。
+    """
+    return extract_class_name(content)
+
+
 def extract_extends(content: str) -> Optional[str]:
     """从 GDScript 代码中提取 extends 类型
 
