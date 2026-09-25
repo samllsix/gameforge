@@ -41,6 +41,31 @@ class TestValidateId:
             paths.validate_id(bad)
 
 
+class TestResolveProjectId:
+    """resolve_project_id：全项目唯一的 project_id 解析（M6-06 收口）。"""
+
+    def test_explicit_injection_wins(self):
+        state = {
+            "preview_project_id": "my-custom-pid",
+            "project_context": {"project_name": "ignored", "requirements": "ignored"},
+        }
+        assert paths.resolve_project_id(state) == "my-custom-pid"
+
+    def test_sanitizes_project_name(self):
+        state = {"project_context": {"project_name": "My Game Project", "requirements": "2D平台跳跃"}}
+        assert paths.resolve_project_id(state) == "My_Game_Project"
+
+    def test_falls_back_to_requirements(self):
+        state = {"project_context": {"requirements": "制作一个2D平台跳跃游戏"}}
+        assert paths.resolve_project_id(state) == "2D"
+
+    def test_illegal_returns_empty(self):
+        """解析不出必须返回空串——调用方走错误分支，不得回落 cwd（M6-01）。"""
+        assert paths.resolve_project_id({"project_context": {"project_name": "    ", "requirements": ""}}) == ""
+        assert paths.resolve_project_id({"project_context": {"requirements": "做一个游戏"}}) == ""
+        assert paths.resolve_project_id({}) == ""
+
+
 class TestProjectAddressing:
     def test_project_dir_under_root(self, isolated_roots):
         projects, _ = isolated_roots

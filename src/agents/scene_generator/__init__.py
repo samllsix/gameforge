@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from src.agents.base import BaseAgent
+from src.core import paths
 from src.core.state.game_state import GameDevState, AgentType
 from src.engine.godot.godot_http_client import GodotHTTPClient
 
@@ -89,15 +90,26 @@ class SceneGeneratorAgent(BaseAgent):
 
             if tscn_text:
                 import os
+
                 # state["sandbox"] 可能为 None（键存在、值为 None），不能依赖 {} 默认值
                 sandbox_task = (state.get("sandbox") or {}).get("task")
                 if sandbox_task:
                     project_path = sandbox_task.get("task_dir", "")
                 else:
-                    godot_config = self.config.get("godot", {})
-                    project_path = godot_config.get("project_path", "")
-                    if not project_path or project_path.startswith("${"):
-                        project_path = os.getenv("GODOT_PROJECT_PATH", os.getcwd())
+                    # M6-01：项目目录只走 paths 契约（projects/<project_id>/）。
+                    # 禁止回落到 GODOT_PROJECT_PATH / os.getcwd()——
+                    # 那正是"生成物写穿仓库、覆盖 scripts/、scenes/ 已跟踪
+                    # 源码"的根因（作者实测发生过，已回滚）。
+                    project_id = paths.resolve_project_id(state)
+                    if not project_id:
+                        self.log_error("scene_project_id_unresolved", {})
+                        return {
+                            "scene_status": "error",
+                            "scene_error": "无法确定项目目录：state 中无 preview_project_id / project_name",
+                            "scene_description": scene_desc,
+                            "scene_ir": scene_ir,
+                        }
+                    project_path = str(paths.ensure_project_dir(project_id))
                 scenes_dir = os.path.join(project_path, "scenes")
                 os.makedirs(scenes_dir, exist_ok=True)
                 scene_name = scene_desc.get("scene_name", "GameScene")

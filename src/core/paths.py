@@ -83,6 +83,37 @@ def validate_id(external_id: str, *, kind: str = "id") -> str:
     return str(external_id)
 
 
+#: 预览 project_id 的合法形态（前端输入 sanitize 后使用；与 api 的 _PREVIEW_PROJECT_RE 对齐）。
+_PREVIEW_ID_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
+
+
+def resolve_project_id(state: Dict[str, Any]) -> str:
+    """从工作流 state 解析当前项目的 project_id（全项目唯一解析处，M6-06）。
+
+    优先级：
+    1. ``state["preview_project_id"]``（外部注入）
+    2. ``project_context.project_name``（前端输入，sanitize）
+    3. ``project_context.requirements``（兜底）
+
+    解析不出时返回 ""，调用方必须走错误分支——**不得回落到
+    ``os.getcwd()`` 或 ``GODOT_PROJECT_PATH``**：那正是 M6-01
+    "生成物写穿仓库、覆盖已跟踪源码"的根因。
+    """
+    existing = state.get("preview_project_id")
+    if isinstance(existing, str) and _PREVIEW_ID_RE.match(existing):
+        return existing
+
+    ctx = state.get("project_context", {}) or {}
+    name = ctx.get("project_name") or ctx.get("requirements") or ""
+    if not isinstance(name, str):
+        return ""
+
+    sanitized = re.sub(r"[^A-Za-z0-9_\-\.]", "_", name).strip("._-")[:64]
+    if sanitized and _PREVIEW_ID_RE.match(sanitized):
+        return sanitized
+    return ""
+
+
 # ── 生成项目 ─────────────────────────────────────────────────────────────────
 
 

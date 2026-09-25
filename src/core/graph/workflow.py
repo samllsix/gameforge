@@ -75,33 +75,14 @@ class GameDevWorkflow:
 
         self.graph = self._build_graph()
 
-    # 实时预览：把"项目名"规整为后端 /api/v1/preview/frame 接受的 project_id
-    # （与 src/api/main.py 的 _PREVIEW_PROJECT_RE 完全对齐）
-    _PREVIEW_ID_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
-
     def _resolve_preview_project_id(self, state: "GameDevState") -> str:
         """从 state 推出当前项目的 preview project_id。
 
-        优先级：
-        1. state["preview_project_id"]（已由外部注入）
-        2. project_name（前端输入，做 sanitize）
-        3. requirements 取首个稳定 token（兜底）
-
-        失败时返回 ""，调用方据此判断是否带 project_id 字段。
+        实现已收口到 ``paths.resolve_project_id``（M6-06 单一事实源）：
+        workflow / scene_generator / api 预览端点共用同一解析，
+        不再有第二份 sanitize 规则。
         """
-        existing = state.get("preview_project_id")
-        if isinstance(existing, str) and self._PREVIEW_ID_RE.match(existing):
-            return existing
-
-        ctx = state.get("project_context", {}) or {}
-        name = ctx.get("project_name") or ctx.get("requirements") or ""
-        if not isinstance(name, str):
-            return ""
-
-        sanitized = re.sub(r"[^A-Za-z0-9_\-\.]", "_", name).strip("._-")[:64]
-        if sanitized and self._PREVIEW_ID_RE.match(sanitized):
-            return sanitized
-        return ""
+        return paths.resolve_project_id(state)
 
     def _resolve_preview_task_id(self, state: "GameDevState") -> Optional[str]:
         """若当前处于沙箱任务工作区，返回 task_id；否则返回 None。"""

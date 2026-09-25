@@ -7,6 +7,7 @@
 """
 
 import asyncio
+from pathlib import Path
 
 from src.engine.godot.godot_http_client import GodotHTTPClient
 from src.engine.godot.scene_builder import GodotSceneBuilder
@@ -260,3 +261,85 @@ def test_build_tscn_no_3d_objects_in_2d_scene():
     assert "MeshInstance2D" not in tscn
     assert "BoxMesh" not in tscn
     assert "QuadMesh" not in tscn
+
+
+# ---------------- M6-01：落盘目录契约（禁写 cwd / GODOT_PROJECT_PATH） ----------------
+
+_DISK_FALLBACK_DESC = {
+    # 唯一场景名：仓库 scenes/ 下已跟踪 GameScene.tscn 等历史文件，
+    # 用专属名字才能断言"cwd 没被写入"而不误伤既有文件。
+    "scene_name": "M601RegressionScene",
+    "camera": {"orthographic": True, "background_color": [0.1, 0.1, 0.1, 1.0]},
+    "game_objects": [
+        {"name": "Player", "role": "player", "type": "CharacterBody2D",
+         "position": [0, 0, 0], "color": [1, 0, 0, 1]},
+    ],
+}
+
+
+def _make_disk_fallback_agent(monkeypatch):
+    """构造一个走"编辑器不在线 → .tscn 落盘"分支的 SceneGeneratorAgent。"""
+    from src.agents.scene_generator import SceneGeneratorAgent
+
+    agent = SceneGeneratorAgent({"godot": {"auto_build_scene": True}})
+
+    async def _fake_desc(requirements, task_plan, engine, gdm=None, file_metadata=None):
+        return _DISK_FALLBACK_DESC, None
+
+    async def _offline(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(agent, "_generate_scene_description", _fake_desc)
+    monkeypatch.setattr(agent.godot_client, "check_health", _offline)
+    return agent
+
+
+def test_disk_fallback_writes_to_projects_dir_not_cwd(monkeypatch, tmp_path):
+    """M6-01：编辑器不在线时 .tscn 必须落 projects/<pid>/scenes/。
+
+    禁止回落 GODOT_PROJECT_PATH / os.getcwd()——那会把生成物写进
+    仓库根，覆盖 scripts/、scenes/ 已跟踪源码（实测发生过的写穿事故）。
+    """
+    from src.core import paths
+
+    projects_root = tmp_path / "projects"
+    monkeypatch.setattr(paths, "PROJECTS_ROOT", projects_root)
+
+    trap_dir = tmp_path / "trap_repo_root"
+    trap_dir.mkdir(exist_ok=True)
+    monkeypatch.setenv("GODOT_PROJECT_PATH", str(trap_dir))
+
+    agent = _make_disk_fallback_agent(monkeypatch)
+    state = {
+        "preview_project_id": "brick_breaker_test",
+        "project_context": {"requirements": "2D打砖块", "engine": "godot"},
+        "code_generated": {},
+    }
+    result = asyncio.run(agent.execute(state))
+
+    assert result["scene_status"] == "built"
+    scenes = projects_root / "brick_breaker_test" / "scenes"
+    assert (scenes / "M601RegressionScene.tscn").is_file(), f".tscn 应落 {scenes}"
+    assert (scenes / "Main.tscn").is_file(), "主场景必须统一为 main.tscn（小写）"
+    # 陷阱目录与进程 cwd 都不得被写入
+    assert not (trap_dir / "scenes").exists(), "不得写 GODOT_PROJECT_PATH 指向的目录"
+    assert not (Path.cwd() / "scenes" / "M601RegressionScene.tscn").exists(), "不得写进程工作目录"
+
+
+def test_disk_fallback_without_project_id_returns_error(monkeypatch, tmp_path):
+    """state 解析不出 project_id 时必须报错，禁止静默回落 cwd。"""
+    from src.core import paths
+
+    projects_root = tmp_path / "projects"
+    monkeypatch.setattr(paths, "PROJECTS_ROOT", projects_root)
+
+    agent = _make_disk_fallback_agent(monkeypatch)
+    state = {
+        "project_context": {"requirements": "做一个游戏", "engine": "godot"},
+        "code_generated": {},
+    }
+    result = asyncio.run(agent.execute(state))
+
+    assert result["scene_status"] == "error"
+    assert "无法确定项目目录" in result["scene_error"]
+    assert not (Path.cwd() / "scenes" / "M601RegressionScene.tscn").exists(), "解析失败时也不得写 cwd"
