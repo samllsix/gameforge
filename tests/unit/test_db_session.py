@@ -324,6 +324,12 @@ def test_default_database_url_uses_no_password(monkeypatch):
 
 def test_production_password_takes_precedence(monkeypatch):
     """契约：生产环境 GAMEFORGE_DB_PASSWORD 优先级最高（与 GAMEFORGE_API_KEYS 同级）。"""
+    # 同 test_default_database_url_uses_no_password：必须清掉 DATABASE_URL，
+    # 否则本机 .env 的 DATABASE_URL（src/db/session 会 load_dotenv）优先级更高，
+    # 会在开发者机器上莫名其妙通过不了这条契约。
+    for k in ["DATABASE_URL", "DBMY_USER", "DBMY_PASSWORD",
+              "GAMEFORGE_DB_USER", "GAMEFORGE_DB_PASSWORD"]:
+        monkeypatch.delenv(k, raising=False)
     # 开发密码 + 生产密码同时存在时，生产密码胜出
     monkeypatch.setenv("DBMY_PASSWORD", "dev_password_123")
     monkeypatch.setenv("GAMEFORGE_DB_PASSWORD", "vault_secret_xyz")

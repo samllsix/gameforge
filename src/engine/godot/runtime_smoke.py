@@ -116,7 +116,7 @@ class GodotRuntimeSmoke:
         if result.runnable:
             ...  # 通过
         else:
-            ...  # 把 result.errors 喂给 DebuggerAgent
+            ...  # 把 result.errors 喂给 code_generator.fix_code()
     """
 
     DEFAULT_FRAMES = 60   # 60 帧 ≈ 1 秒 @ 60 FPS，足够暴露 _ready/_process 错误
@@ -191,6 +191,8 @@ class GodotRuntimeSmoke:
             scene_path,
         ]
         import time
+        from src.engine.godot import godot_user_env
+
         t0 = time.monotonic()
         try:
             proc = subprocess.run(
@@ -200,6 +202,7 @@ class GodotRuntimeSmoke:
                 timeout=timeout,
                 encoding="utf-8", errors="replace",
                 cwd=self.project_path,
+                env=godot_user_env(),
             )
         except subprocess.TimeoutExpired as e:
             elapsed = time.monotonic() - t0

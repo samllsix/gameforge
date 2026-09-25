@@ -6,10 +6,11 @@
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from src.agents.base import BaseAgent
-from src.core.state.game_state import GameDevState, AgentType
+from src.core.gdm import as_item_list
+from src.core.state.game_state import AgentType, GameDevState
 from src.utils.llm_client import get_llm_client
 
 # 预编译的正则表达式（模块级常量）
@@ -30,6 +31,18 @@ class GameDesignerAgent(BaseAgent):
         self.log_action("game_designer_execute")
         requirements = state.get("project_context", {}).get("requirements", "")
         engine = state.get("project_context", {}).get("engine", "godot")
+
+        # 优先使用 Requirement Analyzer 输出的结构化 Game Spec
+        game_spec = state.get("game_spec")
+        if game_spec:
+            self.log_action("using_game_spec", {"genre": game_spec.get("game", {}).get("genre", "")})
+            gdm = await self.generate_design_model_from_spec(game_spec, engine)
+            if gdm:
+                return {
+                    "game_design_model": gdm,
+                    "current_phase": "design_complete",
+                }
+            self.logger.warning("game_spec_to_gdm_failed", fallback="llm")
 
         gdm = await self.generate_design_model(requirements, engine)
         if not gdm:
@@ -92,6 +105,53 @@ class GameDesignerAgent(BaseAgent):
             self.log_error("gdm_llm_error", {"error": str(e)})
             return self._fallback_gdm(requirements, engine)
 
+    async def generate_design_model_from_spec(self, spec: Dict, engine: str) -> Optional[Dict]:
+        """基于结构化 Game Spec 生成 GDM（减少 LLM 幻觉）"""
+        system_prompt = self._system_prompt()
+        user_prompt = f"""基于以下结构化游戏规格，生成完整的 Game Design Model JSON。
+
+游戏规格（Game Spec）:
+{json.dumps(spec, ensure_ascii=False, indent=2)}
+
+引擎: {engine}
+
+请严格按照系统提示中的 JSON Schema 输出，不要输出额外文本。"""
+
+        try:
+            response = await self.llm.chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=self.llm_config.get("temperature", 0.4),
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+
+            gdm = self._extract_json(response)
+            if gdm and any(k in gdm for k in ("game_title", "genre", "core_loop", "entities")):
+                return self._normalize_gdm(gdm, spec.get("requirements", ""), engine)
+
+            retry_response = await self.llm.chat(
+                messages=[
+                    {"role": "system", "content": "You are a Game Design Model JSON generator. Return only valid JSON with game_title, genre, engine, camera_mode, core_loop, player_actions, win_conditions, fail_conditions, main_systems, entities, scenes, code_modules, assets_needed, input_map, tags_layers, and physics_settings."},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=0.1,
+                max_tokens=self.llm_config.get("max_tokens", 4096),
+            )
+            gdm = self._extract_json(retry_response)
+            if gdm and any(k in gdm for k in ("game_title", "genre", "core_loop", "entities")):
+                return self._normalize_gdm(gdm, spec.get("requirements", ""), engine)
+
+            self.log_error("no_valid_gdm_from_spec", {"preview": response[:300]})
+            return None
+
+        except Exception as e:
+            self.log_error("gdm_from_spec_error", {"error": str(e)})
+            return None
+
     def _extract_json(self, text: str) -> Optional[Dict]:
         """从LLM响应中提取JSON（委托给统一提取器）"""
         from src.utils.json_extractor import extract_json
@@ -121,35 +181,93 @@ class GameDesignerAgent(BaseAgent):
             if key not in gdm:
                 gdm[key] = default
 
-        # 确保 main_systems 是列表
+        # 列表字段归一化：str 条目 → 缺省 dict（名称字段/默认值见各表），
+        # dict 条目原样保留；统一收口到 src.core.gdm.as_item_list
         if isinstance(gdm["main_systems"], list):
-            normalized_systems = []
-            for sys in gdm["main_systems"]:
-                if isinstance(sys, str):
-                    normalized_systems.append({"name": sys, "description": "", "priority": "medium"})
-                elif isinstance(sys, dict):
-                    normalized_systems.append(sys)
-            gdm["main_systems"] = normalized_systems
+            gdm["main_systems"] = as_item_list(
+                gdm["main_systems"], defaults={"description": "", "priority": "medium"}
+            )
 
         # 确保 entities 是列表
         if isinstance(gdm["entities"], list):
-            normalized_entities = []
-            for ent in gdm["entities"]:
-                if isinstance(ent, str):
-                    normalized_entities.append({"name": ent, "role": "environment", "components": []})
-                elif isinstance(ent, dict):
-                    normalized_entities.append(ent)
-            gdm["entities"] = normalized_entities
+            gdm["entities"] = as_item_list(
+                gdm["entities"], defaults={"role": "environment", "components": []}
+            )
 
         # 确保 code_modules 是列表
         if isinstance(gdm["code_modules"], list):
-            normalized_modules = []
-            for mod in gdm["code_modules"]:
-                if isinstance(mod, str):
-                    normalized_modules.append({"module_name": mod, "responsibility": "", "output_files": []})
-                elif isinstance(mod, dict):
-                    normalized_modules.append(mod)
-            gdm["code_modules"] = normalized_modules
+            gdm["code_modules"] = as_item_list(
+                gdm["code_modules"],
+                name_key="module_name",
+                defaults={"responsibility": "", "output_files": []},
+            )
+
+        # 结构骨架兜底：推理型 LLM 常省略 code_modules 段（实体都在却缺模块）。
+        # 按实体角色确定性合成标准模块清单——LLM 出创意，结构由流程保证。
+        if not gdm.get("code_modules") and gdm.get("entities"):
+            entities = as_item_list(
+                gdm["entities"], defaults={"role": "environment", "components": []}
+            )
+            roles = {}
+            for e in entities:
+                roles.setdefault(e.get("role", "environment"), []).append(e.get("name", "Entity"))
+
+            modules = []
+            if roles.get("player"):
+                modules.append({
+                    "module_name": "PlayerController",
+                    "responsibility": "玩家输入控制、移动与核心动作（按品类的核心机制实现）",
+                    "target_game_objects": roles["player"][:2],
+                    "dependencies": [],
+                    "priority": "high",
+                    "output_files": ["scripts/player/PlayerController.gd"],
+                })
+            if roles.get("enemy"):
+                modules.append({
+                    "module_name": "EnemySystem",
+                    "responsibility": "敌方单位行为（巡逻/进攻/波次）与玩家威胁判定",
+                    "target_game_objects": roles["enemy"][:3],
+                    "dependencies": ["PlayerController"],
+                    "priority": "high",
+                    "output_files": ["scripts/enemy/EnemySystem.gd"],
+                })
+            if roles.get("pickup"):
+                modules.append({
+                    "module_name": "PickupSystem",
+                    "responsibility": "可收集物生成、拾取判定与计分联动",
+                    "target_game_objects": roles["pickup"][:3],
+                    "dependencies": ["GameManager"],
+                    "priority": "medium",
+                    "output_files": ["scripts/pickup/PickupSystem.gd"],
+                })
+            if roles.get("npc"):
+                modules.append({
+                    "module_name": "NpcInteraction",
+                    "responsibility": "NPC 交互与提示信息",
+                    "target_game_objects": roles["npc"][:2],
+                    "dependencies": [],
+                    "priority": "low",
+                    "output_files": ["scripts/npc/NpcInteraction.gd"],
+                })
+            modules.append({
+                "module_name": "GameManager",
+                "responsibility": "全局状态：计分/生命/胜负条件判定与流程流转",
+                "target_game_objects": [],
+                "dependencies": [],
+                "priority": "high",
+                "output_files": ["scripts/manager/GameManager.gd"],
+            })
+            modules.append({
+                "module_name": "HudUi",
+                "responsibility": "HUD 显示（分数/生命/进度）与结束/重开界面",
+                "target_game_objects": [],
+                "dependencies": ["GameManager"],
+                "priority": "high",
+                "output_files": ["scripts/ui/HudUi.gd"],
+            })
+            gdm["code_modules"] = modules
+            self.logger.info("gdm.code_modules_synthesized",
+                             count=len(modules), from_entities=len(entities))
 
         return gdm
 

@@ -112,5 +112,5 @@ def test_emits_both_for_long_node_name_not_in_skip_set():
         "task_plan": [{"id": "x"}],
     }
     # 一个不存在的节点名（不是 planner / game_designer）—— 既不 game_design 也不 task_plan
-    _emit_for_node_event(wf, "reflector", output, events)
+    _emit_for_node_event(wf, "nonexistent_node", output, events)
     assert events == []

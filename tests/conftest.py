@@ -11,6 +11,12 @@ os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGSMITH_TRACING"] = "false"
 os.environ.pop("LANGCHAIN_API_KEY", None)
 os.environ.pop("LANGSMITH_API_KEY", None)
+# 音频单测统一走程序化合成，不加载 AI 模型（保持快速且离线）
+os.environ.setdefault("GAMEFORGE_AUDIO_BACKEND", "procedural")
+# src.api.main 在 import 时强制要求 API Key 或 loopback 白名单，否则整个模块
+# 无法导入（test_llm_health_endpoint / test_gd_guard 等会因此全红）。
+# 测试统一走 loopback 白名单；无需鉴权的断言改在各用例内自行覆盖环境变量。
+os.environ.setdefault("GAMEFORGE_ALLOW_INSECURE_LOCALHOST", "true")
 
 # 确保项目根目录在 sys.path 中
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -53,9 +59,8 @@ def sample_config():
         "agents": {
             "orchestrator": {},
             "code_generator": {"supported_engines": ["godot"]},
-            "code_reviewer": {},
-            "test_generator": {},
-            "debugger": {},
+            "scene_generator": {},
+            "requirement_analyzer": {},
         },
     }
 
@@ -94,7 +99,7 @@ def sample_game_state():
                 "status": TaskStatus.PENDING.value,
                 "priority": 3,
                 "dependencies": ["task-001", "task-002"],
-                "assigned_agent": "test_generator",
+                "assigned_agent": "code_generator",
             },
         ],
         "current_task_id": None,

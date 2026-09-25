@@ -139,14 +139,14 @@ class TestLocalMockClient:
     async def test_call_log(self):
         client = LocalMockClient()
         obs1 = self._make_observation("code_generator")
-        obs2 = self._make_observation("debugger")
+        obs2 = self._make_observation("planner")
 
         await client.generate(obs1)
         await client.generate(obs2)
 
         assert client.call_count == 2
         assert client.call_log[0].agent_type == "code_generator"
-        assert client.call_log[1].agent_type == "debugger"
+        assert client.call_log[1].agent_type == "planner"
 
     @pytest.mark.asyncio
     async def test_reset(self):
@@ -184,13 +184,10 @@ class TestLocalMockClient:
         client = LocalMockClient()
         expected = {
             "code_generator": ActionType.GENERATE_CODE,
-            "code_reviewer": ActionType.REVIEW_CODE,
-            "debugger": ActionType.FIX_CODE,
             "planner": ActionType.PLAN_TASK,
             "game_designer": ActionType.DESIGN_GAME,
             "scene_generator": ActionType.GENERATE_SCENE,
-            "test_generator": ActionType.GENERATE_TEST,
-            "refactor": ActionType.REFACTOR,
+            "requirement_analyzer": ActionType.CHAT,
             "unknown_agent": ActionType.CHAT,
         }
         for agent_type, expected_type in expected.items():

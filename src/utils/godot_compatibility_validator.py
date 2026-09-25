@@ -9,8 +9,8 @@
 """
 
 import re
-from typing import Any, Dict, List, Set, Tuple
 from dataclasses import dataclass, field
+from typing import Any, Dict, List
 
 import structlog
 
@@ -25,9 +25,11 @@ class GodotValidationResult:
 
     @property
     def has_errors(self) -> bool:
+        """是否存在错误。"""
         return bool(self.errors)
 
     def to_dict(self) -> Dict[str, Any]:
+        """转成便于序列化的 dict（passed 汇总 + errors/warnings）。"""
         return {
             "passed": not self.has_errors,
             "errors": self.errors,
@@ -232,11 +234,10 @@ def _check_common_patterns(path: str, content: str, result: GodotValidationResul
                     break
 
         # 检查信号连接是否使用了正确的语法
-        if ".connect(" in stripped:
-            if "(" not in stripped.split(".connect(")[1]:
-                result.warnings.append({
-                    "check": "signal",
-                    "message": f"第{i+1}行: 信号连接语法可能不正确: {path}",
-                    "file": path,
+        if ".connect(" in stripped and "(" not in stripped.split(".connect(")[1]:
+            result.warnings.append({
+                "check": "signal",
+                "message": f"第{i+1}行: 信号连接语法可能不正确: {path}",
+                "file": path,
                     "line": i + 1,
                 })

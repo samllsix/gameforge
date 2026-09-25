@@ -34,9 +34,7 @@ class OrchestratorAgent(BaseAgent):
             "code": "正在编写 GDScript…",
             "review": "正在审查代码…",
             "test": "正在生成测试用例…",
-            "main_review": "正在进行主审查…",
             "debug": "发现问题，自动修复中…",
-            "refactor": "正在重构优化…",
             "verify": "无头验证中…",
             "complete": "已完成，打开即可游玩",
         }

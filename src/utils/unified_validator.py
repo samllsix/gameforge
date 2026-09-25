@@ -6,8 +6,9 @@
 专注于 Godot GDScript 代码验证。
 """
 
-from typing import Any, Dict, List
 from dataclasses import dataclass, field
+from typing import Any, Dict, List
+
 import structlog
 
 logger = structlog.get_logger()
@@ -22,13 +23,16 @@ class UnifiedValidationResult:
 
     @property
     def has_errors(self) -> bool:
+        """是否存在错误。"""
         return bool(self.errors)
 
     @property
     def has_issues(self) -> bool:
+        """是否存在错误、警告或建议。"""
         return bool(self.errors or self.warnings or self.suggestions)
 
     def to_dict(self) -> Dict[str, Any]:
+        """转成便于序列化的 dict（passed 汇总 + 各级明细与计数）。"""
         return {
             "passed": not self.has_errors,
             "errors": self.errors,

@@ -16,15 +16,19 @@ class ValidationResult:
 
     @property
     def has_issues(self) -> bool:
+        """是否存在错误或警告。"""
         return len(self.errors) > 0 or len(self.warnings) > 0
 
     def add_error(self, file_path: str, message: str, line: int = 0):
+        """记录一条错误（计入 errors 并标记级别为 error）。"""
         self.errors.append({"file": file_path, "message": message, "line": line, "level": "error"})
 
     def add_warning(self, file_path: str, message: str, line: int = 0):
+        """记录一条警告（计入 warnings 并标记级别为 warning）。"""
         self.warnings.append({"file": file_path, "message": message, "line": line, "level": "warning"})
 
     def to_dict(self) -> Dict[str, Any]:
+        """转成便于序列化的 dict（含错误/警告计数与 passed 汇总）。"""
         return {
             "errors": self.errors,
             "warnings": self.warnings,

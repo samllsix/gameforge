@@ -80,19 +80,35 @@ def test_tscn_ext_resource_escape_blocked(tmp_path):
     assert any(f["rule"] == "ext_resource_escape" for f in r["findings"])
 
 
-def test_export_gate_blocks_on_guard_findings(monkeypatch, tmp_path):
-    """发布门禁第 0 关: gd-guard block → 502, stage=gd_guard, 不进入出包"""
-    import src.api.main as main_mod
-    from fastapi.testclient import TestClient
+def _export_fixture(monkeypatch, tmp_path):
+    """在临时目录造一个自足项目，并把端点解析到那里。
 
+    不能直接用仓库里的 projects/demo_jump_v2：它的 AI 素材 assets/gen/*.png
+    被 .gitignore 忽略，新克隆的仓库里不存在，基线检查 ext_resources 必挂。
+    write_project 会落全运行时脚本 / main.tscn / sfx / icon / 导出预设，
+    无 AI key 时用纯色块视觉，因此 ext_resource 只引用真实存在的运行时脚本。
+    """
+    from src.core import paths
+
+    monkeypatch.setattr(paths, "PROJECTS_ROOT", tmp_path / "projects")
+    project = tmp_path / "projects" / "demo_jump_v2"
+    write_project(str(project), default_scene_ir(), width=320, height=180)
     monkeypatch.setenv("GAMEFORGE_ALLOW_INSECURE_LOCALHOST", "true")
     monkeypatch.setenv("GODOT_EDITOR_PATH", "D:/nonexistent/godot.exe")
     # 编辑器存在性检查需要一个真实存在的路径(门禁在它之后), 指向 python.exe 即可
     import src.api.main as _m
 
     monkeypatch.setattr(_m, "_resolve_editor_path", lambda: os.path.abspath(sys.executable))
+    return project
 
-    # 端点从仓库 projects/<id> 解析项目 → 使用真实存在的 demo_jump_v2
+
+def test_export_gate_blocks_on_guard_findings(monkeypatch, tmp_path):
+    """发布门禁第 0 关: gd-guard block → 502, stage=gd_guard, 不进入出包"""
+    import src.api.main as main_mod
+    from fastapi.testclient import TestClient
+
+    _export_fixture(monkeypatch, tmp_path)
+
     from src.engine.godot import gd_guard
 
     monkeypatch.setattr(gd_guard, "find_guard", lambda: "C:/fake/gd-guard.exe")
@@ -131,12 +147,7 @@ def test_export_gate_passes_when_allow(monkeypatch, tmp_path):
     import src.api.main as main_mod
     from fastapi.testclient import TestClient
 
-    monkeypatch.setenv("GAMEFORGE_ALLOW_INSECURE_LOCALHOST", "true")
-    monkeypatch.setenv("GODOT_EDITOR_PATH", "D:/nonexistent/godot.exe")
-    # 编辑器存在性检查需要一个真实存在的路径(门禁在它之后), 指向 python.exe 即可
-    import src.api.main as _m
-
-    monkeypatch.setattr(_m, "_resolve_editor_path", lambda: os.path.abspath(sys.executable))
+    _export_fixture(monkeypatch, tmp_path)
 
     from src.engine.godot import gd_guard
 
@@ -146,7 +157,7 @@ def test_export_gate_passes_when_allow(monkeypatch, tmp_path):
         lambda *a, **k: {"available": True, "verdict": "allow", "findings": [],
                          "scanned": {"gd": 2, "tscn": 1}},
     )
-    # 基线检查会过(项目由 write_project 生成); ensure_imported/冒烟需要真 Godot → 桩掉
+    # ensure_imported/冒烟需要真 Godot → 桩掉
     from src.engine.godot import export_kit
 
     monkeypatch.setattr(export_kit, "ensure_imported", lambda *a, **k: True)
@@ -168,5 +179,5 @@ def test_export_gate_passes_when_allow(monkeypatch, tmp_path):
 
     client = TestClient(main_mod.app)
     r = client.post("/api/v1/projects/demo_jump_v2/export")
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     assert r.json()["ok"] is True

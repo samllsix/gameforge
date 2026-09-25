@@ -1,0 +1,46 @@
+{
+  "project_id": "gf_mtlcou3tivx",
+  "requirements": "做一个贪吃蛇小游戏，蛇吃食物变长，撞墙或撞自己失败",
+  "scene_ir": {
+    "scene_name": "GameScene",
+    "genre": "puzzle",
+    "layout": "grid",
+    "difficulty": "easy",
+    "camera": {
+      "mode": "top_down",
+      "follow_target": "Snake",
+      "background": "warm_beige"
+    },
+    "entities": [
+      {
+        "name": "Snake",
+        "role": "player",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "SnakeController"
+      },
+      {
+        "name": "Food",
+        "role": "pickup",
+        "count": 1,
+        "spawn_zone": "random",
+        "script": "FoodController"
+      },
+      {
+        "name": "Boundary",
+        "role": "boundary",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": null
+      },
+      {
+        "name": "ScoreManager",
+        "role": "manager",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "ScoreManager"
+      }
+    ],
+    "theme": "简约街机"
+  }
+}

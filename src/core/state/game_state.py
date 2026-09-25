@@ -20,7 +20,9 @@ def merge_dicts(old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
     return {**old, **new}
 
 
-def append_to_bus(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def append_to_bus(
+    old: List[Dict[str, Any]], new: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     """消息总线 reducer：列表追加（多智能体改造第三步）"""
     if old is None:
         return new or []
@@ -31,6 +33,7 @@ def append_to_bus(old: List[Dict[str, Any]], new: List[Dict[str, Any]]) -> List[
 
 class TaskStatus(str, Enum):
     """任务状态枚举"""
+
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -40,6 +43,7 @@ class TaskStatus(str, Enum):
 
 class TaskType(str, Enum):
     """任务类型枚举"""
+
     CODE = "code"
     TEST = "test"
     ART = "art"
@@ -48,27 +52,29 @@ class TaskType(str, Enum):
     FIX = "fix"
     SCENE = "scene"
     UI = "ui"
+    AUDIO = "audio"
     CONFIG = "config"
     DOCUMENTATION = "documentation"
 
 
 class AgentType(str, Enum):
-    """Agent类型枚举"""
+    """Agent类型枚举
+
+    精简为 6 个核心 Agent，其余能力（review/refactor/test/debug/final_check）
+    由 CodeGeneratorAgent 内部 Pipeline Phase 承担。
+    """
+
     ORCHESTRATOR = "orchestrator"
     PLANNER = "planner"
     GAME_DESIGNER = "game_designer"
     CODE_GENERATOR = "code_generator"
-    CODE_REVIEWER = "code_reviewer"
-    TEST_GENERATOR = "test_generator"
-    DEBUGGER = "debugger"
-    REFACTOR = "refactor"
     SCENE_GENERATOR = "scene_generator"
-    MAIN_REVIEWER = "main_reviewer"
-    REFLECTOR = "reflector"  # 多智能体改造第二步：反思回环
+    REQUIREMENT_ANALYZER = "requirement_analyzer"
 
 
 class Task(BaseModel):
     """任务数据模型"""
+
     id: str = Field(..., description="任务唯一标识")
     name: str = Field(..., description="任务名称")
     description: str = Field(..., description="任务详细描述")
@@ -84,6 +90,7 @@ class Task(BaseModel):
 
 class CodeArtifact(BaseModel):
     """代码产物数据模型"""
+
     file_path: str = Field(..., description="文件路径")
     content: str = Field(..., description="代码内容")
     language: str = Field(..., description="编程语言")
@@ -117,6 +124,7 @@ class TestReport(BaseModel):
 
 class FixRecord(BaseModel):
     """修复记录数据模型"""
+
     error_type: str = Field(..., description="错误类型")
     error_message: str = Field(..., description="错误信息")
     file_path: str = Field(..., description="错误文件路径")
@@ -135,6 +143,7 @@ class GameDevState(TypedDict):
     - dict + merge_dicts: 多节点返回值自动字典合并（code_generated）
     - 普通类型: 后写入覆盖前值（current_phase, current_task_id 等）
     """
+
     # 任务规划
     task_plan: List[Dict[str, Any]]
     current_task_id: Optional[str]
@@ -172,6 +181,9 @@ class GameDevState(TypedDict):
     # Game Design Model — 游戏整体设计模型
     game_design_model: Optional[Dict[str, Any]]
 
+    # Game Spec — Requirement Analyzer 输出的结构化需求规格（DSL）
+    game_spec: Optional[Dict[str, Any]]
+
     # 代码元数据
     file_metadata: Dict[str, Any]
 
@@ -185,24 +197,31 @@ class GameDevState(TypedDict):
     # 警告 — reducer: 列表追加
     warnings: Annotated[List[str], add]
 
-    # 审查-重构对话协商记录（让 agent 协作可见；多智能体改造第一步）
-    review_dialogue_transcript: Optional[Dict[str, Any]]
-
-    # 反思回环结果（多智能体改造第二步）
-    reflection_result: Optional[Dict[str, Any]]
-    reflection_count: int
+    # 沙箱平台（Phase 1 集成）
+    sandbox: Optional[Dict[str, Any]]
 
     # 消息总线（多智能体改造第三步）：发布-订阅，解耦硬编码边
     message_bus: Annotated[List[Dict[str, Any]], append_to_bus]
 
+    # 音频资产 — reducer: 字典合并
+    audio_assets: Annotated[Dict[str, Any], merge_dicts]
+
+    # UI 场景 — reducer: 字典合并
+    ui_scenes: Annotated[Dict[str, Any], merge_dicts]
+
 
 class ProjectContext(BaseModel):
     """项目上下文信息"""
+
     project_name: str = Field(..., description="项目名称")
     engine: str = Field(..., description="游戏引擎")
     unity_version: Optional[str] = Field(None, description="Unity版本")
     unreal_version: Optional[str] = Field(None, description="Unreal版本")
-    coding_standards: Dict[str, Any] = Field(default_factory=dict, description="编码规范")
-    architecture_patterns: List[str] = Field(default_factory=list, description="架构模式")
+    coding_standards: Dict[str, Any] = Field(
+        default_factory=dict, description="编码规范"
+    )
+    architecture_patterns: List[str] = Field(
+        default_factory=list, description="架构模式"
+    )
     dependencies: List[str] = Field(default_factory=list, description="项目依赖")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="其他元数据")

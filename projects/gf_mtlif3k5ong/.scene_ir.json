@@ -1,0 +1,102 @@
+{
+  "project_id": "gf_mtlif3k5ong",
+  "requirements": "创建一个2D平台跳跃游戏，玩家可以左右移动跳跃，收集金币，避开敌人",
+  "scene_ir": {
+    "scene_name": "GameScene",
+    "genre": "platformer",
+    "layout": "linear",
+    "difficulty": "medium",
+    "camera": {
+      "mode": "2d_side_view",
+      "follow_target": "Player",
+      "background": "sky_blue"
+    },
+    "entities": [
+      {
+        "name": "Player",
+        "role": "player",
+        "count": 1,
+        "spawn_zone": "left",
+        "script": "PlayerController"
+      },
+      {
+        "name": "Ground",
+        "role": "ground",
+        "count": 1,
+        "spawn_zone": "bottom",
+        "script": null
+      },
+      {
+        "name": "Platform1",
+        "role": "platform",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": null
+      },
+      {
+        "name": "Platform2",
+        "role": "platform",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": null
+      },
+      {
+        "name": "Platform3",
+        "role": "platform",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": null
+      },
+      {
+        "name": "Coin1",
+        "role": "pickup",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "CoinController"
+      },
+      {
+        "name": "Coin2",
+        "role": "pickup",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "CoinController"
+      },
+      {
+        "name": "Coin3",
+        "role": "pickup",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "CoinController"
+      },
+      {
+        "name": "Goomba1",
+        "role": "enemy",
+        "count": 1,
+        "spawn_zone": "right",
+        "script": "EnemyController"
+      },
+      {
+        "name": "Goomba2",
+        "role": "enemy",
+        "count": 1,
+        "spawn_zone": "right",
+        "script": "EnemyController"
+      },
+      {
+        "name": "Tree1",
+        "role": "decoration",
+        "count": 1,
+        "spawn_zone": "left",
+        "script": null
+      },
+      {
+        "name": "Tree2",
+        "role": "decoration",
+        "count": 1,
+        "spawn_zone": "left",
+        "script": null
+      }
+    ],
+    "theme": "sky_blue"
+  }
+}

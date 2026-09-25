@@ -35,6 +35,10 @@ class GenerateRequest(BaseModel):
     @classmethod
     def validate_project_name(cls, v):
         from src.api.security import InputValidator
+
+        # 空名视为"未提供"，回退默认值（UI 端会传空串而非省略字段）
+        if not v or not v.strip():
+            return "GameForge Project"
         result = InputValidator.validate_project_name(v)
         if not result["valid"]:
             raise ValueError(result["error"])

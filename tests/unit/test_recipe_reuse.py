@@ -287,3 +287,78 @@ def test_resolve_preview_project_id_truncates_to_64():
     long_name = "a" * 100
     pid = wf._resolve_preview_project_id({"project_context": {"project_name": long_name}})
     assert len(pid) == 64
+
+def _save_recipe_with_ir(store: RecipeStore, requirements: str, title: str = "Demo"):
+    """构造带 Scene IR 的配方：IR 缺失会让预览端回退到通用主题（品类错配）。"""
+    state = {
+        "runnable": True,
+        "project_context": {"requirements": requirements},
+        "game_design_model": {"game_title": title, "genre": "platformer"},
+        "task_plan": [{"id": "task_001", "name": "实现Player控制器", "status": "completed"}],
+        "code_generated": {"res://scripts/player/player_controller.gd": "extends CharacterBody2D\n"},
+        "scene_description": {"scene_name": "GameScene", "game_objects": []},
+        "scene_ir": {
+            "scene_name": "GameScene",
+            "genre": "platformer",
+            "theme": "sky_blue",
+            "entities": [{"type": "player", "count": 1}],
+        },
+    }
+    assert store.save_recipe(state) is True
+    return state
+
+
+def test_recipe_carries_scene_ir(tmp_path):
+    """契约：配方必须带 scene_ir。
+
+    配方命中时不跑场景生成，IR 只能跟着配方走；缺失会让预览端点
+    回退到 default_scene_ir(platformer)，射击类需求也显示成平台跳跃。
+    """
+    store = RecipeStore(storage_dir=str(tmp_path))
+    _save_recipe_with_ir(store, "制作一个2D平台跳跃游戏，含玩家、敌人、金币")
+    hit = store.search("制作一个2D平台跳跃游戏，含玩家、敌人、金币")
+    assert hit is not None
+    assert hit["scene_ir"]["genre"] == "platformer"
+    assert len(hit["scene_ir"]["entities"]) == 1
+
+
+def test_apply_recipe_restores_scene_ir(tmp_path):
+    """契约：apply_recipe 把 scene_ir 铺回 state（历史配方无该字段时为 None）。"""
+    store = RecipeStore(storage_dir=str(tmp_path))
+    _save_recipe_with_ir(store, "制作一个2D平台跳跃游戏，含玩家、敌人、金币")
+    hit = store.search("制作一个2D平台跳跃游戏，含玩家、敌人、金币")
+
+    state = {}
+    RecipeStore.apply_recipe(state, hit)
+    assert state["scene_ir"]["theme"] == "sky_blue"
+
+    # 历史配方（无 scene_ir 字段）注入后应为 None，调用方据此跳过落盘
+    legacy = {"requirements": "x", "code_files": {}, "scene_description": None}
+    legacy_state = {}
+    RecipeStore.apply_recipe(legacy_state, legacy)
+    assert legacy_state["scene_ir"] is None
+
+
+def test_workflow_merges_scene_ir_from_parallel_scene_task():
+    """契约：scene_ir 必须出现在 run / run_with_streaming 的图外→图内合并名单里。
+
+    场景生成跑在 LangGraph 之外（写的是 ainvoke 前的原始 dict），而图返回的是
+    通道快照；不把 scene_ir 并进快照，_bake_if_verified 就存不到配方里，
+    表现为"首次运行能落盘、第二次命中配方反而没有 IR"。
+    这里直接对着源码断言键名，任何一次删改都会立刻暴露。
+    """
+    import inspect
+
+    from src.core.graph import workflow as wf_mod
+
+    src = inspect.getsource(wf_mod)
+    # 两处合并点（run 与 run_with_streaming）都必须在名单里
+    occurrences = [
+        line.strip()
+        for line in src.splitlines()
+        if line.strip() == '"scene_ir",'
+    ]
+    assert len(occurrences) >= 2, (
+        "scene_ir 未出现在 scene_* 合并名单中（run / run_with_streaming 各一处），"
+        "配方沉淀会拿不到 IR"
+    )

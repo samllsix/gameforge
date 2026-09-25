@@ -3,7 +3,7 @@
 不跑完整 workflow（避免拉 LLM），用 stub 验证 _runtime_smoke_test 的路由：
 - 无 scene_path → 跳过、runnable=None
 - scene_path 存在但 Godot 不可用 → runnable=True（降级）
-- scene_path 存在且冒烟失败 → 触发 debugger
+- scene_path 存在且冒烟失败 → 触发 code_generator.fix_code
 """
 import asyncio
 from typing import Any, Dict, List
@@ -22,6 +22,8 @@ def _make_workflow():
     wf = GameDevWorkflow.__new__(GameDevWorkflow)
     wf.config = config
     wf.memory = MagicMock()
+    wf.code_generator = MagicMock()
+    wf.code_generator.fix_code = AsyncMock(return_value={})
     return wf
 
 
@@ -63,8 +65,8 @@ async def test_runtime_smoke_passes_when_godot_unavailable():
     assert events[-1]["data"]["scene_path"] == "res://scenes/Main.tscn"
 
 
-async def test_runtime_smoke_triggers_debugger_on_failure():
-    """冒烟失败 → 调用 debugger，max_fix_attempts 之后才放弃"""
+async def test_runtime_smoke_triggers_fix_on_failure():
+    """冒烟失败 → 调用 code_generator.fix_code，max_fix_attempts 之后才放弃"""
     wf = _make_workflow()
     state: Dict[str, Any] = {
         "scene_path": "res://scenes/Broken.tscn",
@@ -88,8 +90,6 @@ async def test_runtime_smoke_triggers_debugger_on_failure():
     async def cb(event_type, data):
         events.append({"type": event_type, "data": data})
 
-    # stub debugger_node 让它返回空字典（避免拉 LLM）
-    wf._debugger_node = AsyncMock(return_value={})
     # stub GodotEditor 防止真读盘
     with patch("src.engine.godot.GodotEditor") as FakeEditor:
         with patch("src.engine.godot.runtime_smoke.GodotRuntimeSmoke") as FakeSmoke:
@@ -104,12 +104,12 @@ async def test_runtime_smoke_triggers_debugger_on_failure():
     rsr = [e for e in events if e["type"] == "runtime_smoke_result"]
     assert len(rsr) == 2
     assert all(e["data"]["runnable"] is False for e in rsr)
-    # debugger 被调用
-    assert wf._debugger_node.call_count == 1
+    # code_generator.fix_code 被调用
+    assert wf.code_generator.fix_code.call_count == 1
 
 
 async def test_runtime_smoke_succeeds_first_try():
-    """冒烟一次过 → 不调 debugger，runnable=True"""
+    """冒烟一次过 → 不调 fix_code，runnable=True"""
     wf = _make_workflow()
     state: Dict[str, Any] = {
         "scene_path": "res://scenes/Good.tscn",
@@ -124,7 +124,6 @@ async def test_runtime_smoke_succeeds_first_try():
         "elapsed_seconds": 1.0,
         "scene_path": "res://scenes/Good.tscn",
     }
-    wf._debugger_node = AsyncMock(return_value={})
 
     events: List[Dict[str, Any]] = []
 
@@ -139,5 +138,5 @@ async def test_runtime_smoke_succeeds_first_try():
 
     assert summary["runnable"] is True
     assert summary["runtime_smoke_attempts"] == 1
-    assert wf._debugger_node.call_count == 0
+    assert wf.code_generator.fix_code.call_count == 0
     assert summary["runtime_smoke_errors"] == []

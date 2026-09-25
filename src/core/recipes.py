@@ -60,8 +60,21 @@ def _stable_token(*parts: str) -> str:
 class RecipeStore:
     """已验证配方存储与检索。"""
 
-    def __init__(self, storage_dir: str = "data/recipes"):
-        self.dir = Path(storage_dir)
+    def __init__(self, storage_dir: Optional[str] = None):
+        """Args:
+            storage_dir: 配方目录；缺省用 ``paths.DATA_ROOT / "recipes"``。
+
+        缺省值此前是相对路径 ``"data/recipes"``，会随进程 CWD 漂移
+        （从别的目录启动 CLI 时配方会写到别处，看起来像"配方库突然空了"）。
+        统一锚定到 paths 的 DATA_ROOT（可用 GAMEFORGE_DATA_ROOT 整体迁移），
+        与 sandbox、db、日志等产物保持同一事实源。
+        """
+        if storage_dir is None:
+            from src.core import paths
+
+            self.dir = paths.DATA_ROOT / "recipes"
+        else:
+            self.dir = Path(storage_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
 
     # ---------------- 写入 ----------------
@@ -93,6 +106,10 @@ class RecipeStore:
             "task_plan": state.get("task_plan", []),
             "code_files": code_files,
             "scene_description": state.get("scene_description"),
+            # Scene IR：配方命中时不跑场景生成，必须随配方一起复用，
+            # 否则预览端点会回退到通用 platformer 主题（品类错配）。
+            # 历史配方没有该字段，apply_recipe 侧容忍缺失。
+            "scene_ir": state.get("scene_ir"),
             "engine": "godot",
             "verified": True,
             "created_at": datetime.now().isoformat(),
@@ -167,6 +184,8 @@ class RecipeStore:
         for fpath, content in (recipe.get("code_files") or {}).items():
             cf[fpath] = content
         state["scene_description"] = recipe.get("scene_description")
+        # Scene IR：历史配方可能没有该字段（None 时运行方容忍，不落盘 IR）
+        state["scene_ir"] = recipe.get("scene_ir")
         if recipe.get("scene_description"):
             state["scene_status"] = "success"
         # 配方已验证可运行，视为可运行状态

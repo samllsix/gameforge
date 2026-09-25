@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GameForge 控制台 UI 美化方案 · 精密仪表方向</title>
+<style>
+  :root{
+    --bg0:#05070f; --bg1:#0a0f1c; --bg2:#0d1428;
+    --panel:rgba(13,20,42,.6); --panel-hi:rgba(20,30,58,.7);
+    --line:rgba(120,160,220,.16); --line-hi:rgba(120,200,255,.4);
+    --t1:#eaf3ff; --t2:#c0d0e8; --t3:#8fa5c9;
+    --cyan:#43e6ff; --blue:#3da9ff; --violet:#a06bff; --violet2:#8b5cf6;
+    --good:#36e0aa; --warn:#ffb454; --err:#ff5d6c;
+    --mono:'Share Tech Mono',ui-monospace,Consolas,monospace;
+    --disp:'Chakra Petch','PingFang SC','Microsoft YaHei',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:'PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    background:
+      radial-gradient(900px 500px at 85% -5%,rgba(120,90,255,.10),transparent 60%),
+      radial-gradient(700px 420px at 5% 20%,rgba(61,169,255,.07),transparent 60%),
+      linear-gradient(170deg,var(--bg0),var(--bg1) 55%,var(--bg2));
+    color:var(--t1);line-height:1.7;font-size:15px;min-height:100vh;
+  }
+  ::selection{background:rgba(67,230,255,.25)}
+  .wrap{display:grid;grid-template-columns:210px minmax(0,1fr);max-width:1180px;margin:0 auto;gap:36px;padding:0 28px 80px}
+  /* ===== TOC ===== */
+  .toc{position:sticky;top:0;align-self:start;height:100vh;padding:44px 0 30px;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+  .toc .brand{font-family:var(--disp);font-weight:700;font-size:17px;letter-spacing:.5px;margin-bottom:6px;
+    background:linear-gradient(90deg,#9ff3ff,#5db7ff 55%,#b98cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .toc .brand-sub{font-size:11px;color:var(--t3);font-family:var(--mono);letter-spacing:1px;margin-bottom:22px}
+  .toc a{display:flex;gap:10px;align-items:baseline;padding:7px 10px;border-radius:7px;color:var(--t3);text-decoration:none;font-size:13px;transition:.15s;border-left:2px solid transparent}
+  .toc a .no{font-family:var(--mono);font-size:11px;color:rgba(67,230,255,.55);width:22px;flex:0 0 22px}
+  .toc a:hover{color:var(--t1);background:rgba(67,230,255,.06);border-left-color:var(--line-hi)}
+  .toc .foot{margin-top:auto;font-size:11px;color:var(--t3);opacity:.7;font-family:var(--mono);padding:10px 10px 0;border-top:1px solid var(--line)}
+  /* ===== MAIN ===== */
+  main{padding-top:44px;min-width:0}
+  .eyebrow{font-family:var(--mono);font-size:12px;color:var(--cyan);letter-spacing:3px;margin-bottom:14px}
+  h1{font-family:var(--disp);font-size:34px;font-weight:700;line-height:1.25;letter-spacing:1px;margin-bottom:10px}
+  h1 em{font-style:normal;background:linear-gradient(90deg,var(--cyan),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:16px;color:var(--t2);max-width:720px;margin-bottom:26px}
+  .meta{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--t3);font-family:var(--mono);margin-bottom:40px;padding-bottom:26px;border-bottom:1px solid var(--line)}
+  .meta b{color:var(--t2);font-weight:400}
+  /* metrics strip */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:48px}
+  .metric{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .metric .k{font-size:12px;color:var(--t3);margin-bottom:6px}
+  .metric .v{font-family:var(--mono);font-size:22px;color:var(--t1)}
+  .metric .v small{font-size:12px;color:var(--t3)}
+  .metric .d{font-size:11.5px;color:var(--good);margin-top:4px;font-family:var(--mono)}
+  /* sections */
+  section{margin-bottom:64px;scroll-margin-top:20px}
+  h2{font-family:var(--disp);font-size:23px;font-weight:600;letter-spacing:.5px;margin-bottom:6px;display:flex;align-items:center;gap:14px}
+  h2 .no{font-family:var(--mono);font-size:13px;color:var(--cyan);border:1px solid var(--line-hi);border-radius:6px;padding:2px 9px;font-weight:400;letter-spacing:1px}
+  .h2-sub{font-size:13.5px;color:var(--t3);margin-bottom:24px;padding-left:56px}
+  h3{font-size:16.5px;font-weight:600;margin:30px 0 12px;color:var(--t1);display:flex;align-items:center;gap:9px}
+  h3::before{content:"";width:3px;height:15px;border-radius:2px;background:linear-gradient(var(--cyan),var(--violet))}
+  p{color:var(--t2);margin-bottom:14px;max-width:860px}
+  p b,li b{color:var(--t1);font-weight:600}
+  code{font-family:var(--mono);font-size:.9em;background:rgba(67,230,255,.09);border:1px solid rgba(67,230,255,.16);border-radius:4px;padding:1px 6px;color:#a9e8ff}
+  /* cards */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:18px}
+  /* score table */
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:14px 0}
+  th{text-align:left;font-size:12px;color:var(--t3);font-weight:600;letter-spacing:.5px;padding:8px 12px;border-bottom:1px solid var(--line-hi);font-family:var(--mono)}
+  td{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--t2);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td:first-child{font-family:var(--mono);color:var(--t3);white-space:nowrap}
+  .score{font-family:var(--mono);font-weight:700}
+  .s-hi{color:var(--good)} .s-mid{color:var(--warn)} .s-lo{color:var(--err)}
+  .total-row td{border-top:1px solid var(--line-hi);color:var(--t1);font-weight:600;background:rgba(67,230,255,.04)}
+  /* P tags */
+  .ptag{display:inline-flex;align-items:center;font-family:var(--mono);font-size:11px;border-radius:5px;padding:1px 8px;margin-right:8px;letter-spacing:.5px}
+  .p0{color:#ff8d99;background:rgba(255,93,108,.12);border:1px solid rgba(255,93,108,.4)}
+  .p1{color:#ffc98a;background:rgba(255,180,84,.1);border:1px solid rgba(255,180,84,.4)}
+  .p2{color:#8fe8ff;background:rgba(96,200,255,.1);border:1px solid rgba(96,200,255,.35)}
+  .p3{color:#b9a6ff;background:rgba(160,107,255,.1);border:1px solid rgba(160,107,255,.35)}
+  .problem{margin-bottom:16px}
+  .problem .ph{font-weight:600;color:var(--t1);margin-bottom:4px;font-size:15px}
+  .problem .pw{font-size:13.5px;color:var(--t3);margin-bottom:6px}
+  .problem .pf{font-size:13.5px;color:var(--t2)}
+  .problem .pf::before{content:"→ 修复 ";font-family:var(--mono);font-size:11px;color:var(--good);letter-spacing:.5px}
+  /* concept imgs */
+  figure{margin:20px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#070b14}
+  figure img{display:block;width:100%;height:auto}
+  figcaption{font-size:12px;color:var(--t3);padding:10px 16px;border-top:1px solid var(--line);font-family:var(--mono);letter-spacing:.3px}
+  /* swatches */
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:16px 0}
+  .sw{border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .sw .c{height:44px}
+  .sw .i{padding:8px 10px;font-size:11.5px;font-family:var(--mono);color:var(--t3);background:rgba(5,8,16,.5)}
+  .sw .i b{display:block;color:var(--t2);font-weight:400;font-size:11px}
+  /* type scale demo */
+  .tscale{display:flex;flex-direction:column;gap:0;margin:16px 0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .trow{display:grid;grid-template-columns:120px 1fr 150px;gap:14px;align-items:baseline;padding:12px 18px;border-bottom:1px solid var(--line)}
+  .trow:last-child{border-bottom:none}
+  .trow .tk{font-family:var(--mono);font-size:11.5px;color:var(--cyan)}
+  .trow .tv{color:var(--t1)}
+  .trow .tw{font-family:var(--mono);font-size:11px;color:var(--t3);text-align:right}
+  /* glow tiers */
+  .tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}
+  .tier{border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .tier .tn{font-family:var(--mono);font-size:12px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .tier .dot{width:9px;height:9px;border-radius:50%}
+  .tier p{font-size:12.5px;margin:0;color:var(--t3)}
+  /* code blocks */
+  pre{background:#070b16;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:#c9d8ee}
+  pre .c{color:#5a6f93} pre .k{color:#8ff0ff} pre .v{color:#c9a6ff} pre .s{color:#8ef0cc} pre .n{color:#ffcd8a}
+  /* before/after */
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}
+  .ba>div{border-radius:10px;padding:16px 18px;border:1px solid var(--line)}
+  .ba .before{background:rgba(255,93,108,.05);border-color:rgba(255,93,108,.25)}
+  .ba .after{background:rgba(54,224,170,.05);border-color:rgba(54,224,170,.25)}
+  .ba .lbl{font-family:var(--mono);font-size:11px;letter-spacing:2px;margin-bottom:10px}
+  .ba .before .lbl{color:#ff8d99} .ba .after .lbl{color:var(--good)}
+  .ba ul{list-style:none;font-size:13px;color:var(--t2)}
+  .ba li{padding:3px 0;display:flex;gap:8px}
+  .ba .before li::before{content:"✕";color:rgba(255,141,153,.7);font-size:11px;margin-top:2px}
+  .ba .after li::before{content:"✓";color:rgba(54,224,170,.8);font-size:11px;margin-top:2px}
+  /* roadmap */
+  .phase{display:grid;grid-template-columns:88px 1fr;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:12px}
+  .phase .pn{background:rgba(67,230,255,.06);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:18px 10px}
+  .phase .pn b{font-family:var(--mono);font-size:19px;color:var(--cyan)}
+  .phase .pn span{font-size:11px;color:var(--t3)}
+  .phase .pd{padding:16px 20px}
+  .phase .pd .t{font-weight:600;font-size:15px;margin-bottom:6px;color:var(--t1)}
+  .phase .pd .sc{font-size:13px;color:var(--t2);margin-bottom:8px}
+  .phase .pd .out{font-size:12px;color:var(--t3);font-family:var(--mono)}
+  .phase .pd .out::before{content:"▸ 交付物 ";color:var(--cyan);letter-spacing:1px}
+  /* checklist */
+  .check{list-style:none;margin:14px 0}
+  .check li{padding:7px 0 7px 30px;position:relative;color:var(--t2);font-size:14px;border-bottom:1px dashed var(--line)}
+  .check li:last-child{border-bottom:none}
+  .check li::before{content:"";position:absolute;left:4px;top:13px;width:14px;height:14px;border:1.5px solid var(--line-hi);border-radius:4px}
+  .check li b{color:var(--t1)}
+  /* footer */
+  .docfoot{border-top:1px solid var(--line);margin-top:20px;padding-top:22px;font-size:12px;color:var(--t3);font-family:var(--mono);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .note{font-size:12.5px;color:var(--t3);background:rgba(160,107,255,.07);border:1px solid rgba(160,107,255,.22);border-radius:9px;padding:11px 15px;margin:14px 0}
+  .note::before{content:"◈ 备注 ";font-family:var(--mono);color:var(--violet);letter-spacing:1px}
+  @media (max-width:960px){
+    .wrap{grid-template-columns:1fr}
+    .toc{position:static;height:auto;flex-direction:row;flex-wrap:wrap;gap:6px;padding:20px 0 10px}
+    .toc .brand,.toc .brand-sub,.toc .foot{display:none}
+    .toc a{border:1px solid var(--line)}
+    .metrics{grid-template-columns:repeat(2,1fr)}
+    .tiers{grid-template-columns:1fr}
+    .ba{grid-template-columns:1fr}
+    .h2-sub{padding-left:0}
+    h1{font-size:27px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= TOC ================= -->
+  <nav class="toc">
+    <div class="brand">GAMEFORGE UI</div>
+    <div class="brand-sub">REDESIGN PROPOSAL</div>
+    <a href="#s0"><span class="no">00</span>方案摘要</a>
+    <a href="#s1"><span class="no">01</span>现状诊断</a>
+    <a href="#s2"><span class="no">02</span>设计方向</a>
+    <a href="#s3"><span class="no">03</span>设计系统</a>
+    <a href="#s4"><span class="no">04</span>分模块改造</a>
+    <a href="#s5"><span class="no">05</span>动效与无障碍</a>
+    <a href="#s6"><span class="no">06</span>实施路线图</a>
+    <a href="#s7"><span class="no">07</span>验收清单</a>
+    <div class="foot">v1.0 · 2026-09-02<br>digital-life-system-spatial.html</div>
+  </nav>
+
+  <main>
+    <!-- ================= HERO ================= -->
+    <div class="eyebrow">UI BEAUTIFICATION PROPOSAL</div>
+    <h1>控制台美化方案<br><em>从「特效堆叠」到「精密仪表」</em></h1>
+    <p class="lede">现有界面已建立了辨识度很高的全息科幻世界观——WebGL 星系着色器是真正的差异化资产。本方案不动世界观，只做一件事：<b>把装饰预算收回来，还给可读性与视觉焦点</b>，让这套界面从"炫技演示"进化为"可以每天用八小时的生产工具"。</p>
+    <div class="meta">
+      <span>对象 <b>digital-life-system-spatial.html</b></span>
+      <span>方向 <b>精密仪表台 Precision Console</b></span>
+      <span>预估 <b>2.5 个工作日</b></span>
+      <span>风险 <b>低（纯前端，不动后端契约）</b></span>
+    </div>
+
+    <div class="metrics">
+      <div class="metric"><div class="k">最小字号</div><div class="v">7.5<small>px</small> → 11<small>px</small></div><div class="d">可读性下限</div></div>
+      <div class="metric"><div class="k">同屏常亮发光元素</div><div class="v">40<small>+</small> → ≤12</div><div class="d">光效预算制</div></div>
+      <div class="metric"><div class="k">预览区高度</div><div class="v">74<small>px</small> → 140<small>px</small></div><div class="d">看得清游戏画面</div></div>
+      <div class="metric"><div class="k">启发式评分</div><div class="v">21<small>/40</small> → 32<small>+</small></div><div class="d">尼尔森十项</div></div>
+    </div>
+
+    <!-- ================= 00 摘要 ================= -->
+    <section id="s0">
+      <h2><span class="no">00</span>方案摘要</h2>
+      <p class="h2-sub">一段话说清这次美化在做什么、不做什么。</p>
+      <div class="card">
+        <p><b>做的三件事：</b></p>
+        <p>① <b>重建字号与对比度体系</b>——当前 7.5~10px 的正文是全球可读性硬伤，全部按新 token 提升一档，辅助文字对比度从 ≈3.6:1 修到 ≥4.5:1。</p>
+        <p>② <b>建立"光效预算"</b>——发光只保留给三种东西：状态指示（LIVE 灯、活动阶段）、交互反馈（hover/focus）、以及星系本体。静态内容一律去光，让星系重新成为唯一主角。</p>
+        <p>③ <b>放大核心任务路径</b>——命令栏与实时预览是这套工具的命脉：输入区强化为不可忽视的主操作，预览区扩大近一倍并补全 LIVE/SIM/IDLE 状态语义。</p>
+        <p style="margin-top:10px"><b>不做的三件事：</b></p>
+        <p>不改配色世界观（青×紫全息是资产，保留）；不动信息架构与后端联动逻辑（SSE / 预览轮询 / 空闲停机全部原样）；不重写布局骨架（CSS Grid 结构保留，只调尺寸）。</p>
+      </div>
+    </section>
+
+    <!-- ================= 01 诊断 ================= -->
+    <section id="s1">
+      <h2><span class="no">01</span>现状诊断</h2>
+      <p class="h2-sub">先量化问题，再决定动哪里。评分为尼尔森十大启发式 0–4 分制。</p>
+
+      <h3>启发式评分卡</h3>
+      <table>
+        <tr><th>#</th><th>启发式</th><th>分</th><th>关键发现</th></tr>
+        <tr><td>1</td><td>系统状态可见性</td><td class="score s-mid">3</td><td>SSE 阶段流、LIVE/SIM/IDLE 标签、FPS 计数都是真数据，做得好；但 7.5~9px 的小字让状态"看得见、读不清"</td></tr>
+        <tr><td>2</td><td>贴近真实世界</td><td class="score s-lo">2</td><td>「系统等级 Lv.7」「能量值 1287/3000」是装饰性游戏化数字，与真实系统状态脱钩，有误导性</td></tr>
+        <tr><td>3</td><td>用户掌控与自由</td><td class="score s-lo">2</td><td>9 个导航项点击只弹 toast，无对应页面；生成中无法查看/撤销已提交的需求</td></tr>
+        <tr><td>4</td><td>一致性与标准</td><td class="score s-lo">2</td><td>三套图标语言并存：hex 文字符号（◈⊞⌨）、SVG 线性图标（fcards）、emoji（🎲）；两套滚动条样式代码</td></tr>
+        <tr><td>5</td><td>错误预防</td><td class="score s-mid">2.5</td><td>有 isGenerating 防重复提交；但空输入无校验提示，30s 连接超时对用户不可见</td></tr>
+        <tr><td>6</td><td>识别而非回忆</td><td class="score s-lo">2</td><td>模板点击只是静默填入输入框，无选中态、无"接下来会发生什么"的预期管理</td></tr>
+        <tr><td>7</td><td>灵活与效率</td><td class="score s-mid">2.5</td><td>快速模板是好设计；但无 Ctrl+Enter 提交、无历史指令记录</td></tr>
+        <tr><td>8</td><td>美学与极简</td><td class="score s-lo">1.5</td><td>特效密度过高：每块面板都有 scanline + beam + 辉光，40+ 元素同时发光，信息与装饰互相残杀</td></tr>
+        <tr><td>9</td><td>错误恢复</td><td class="score s-mid">2.5</td><td>预览有 SIM 降级、日志有错误分级；但 toast 只报结果不给下一步动作</td></tr>
+        <tr><td>10</td><td>帮助与文档</td><td class="score s-lo">1</td><td>零帮助入口，首次使用者只能靠猜</td></tr>
+        <tr class="total-row"><td>Σ</td><td>合计</td><td class="score s-mid">21 / 40</td><td>「需重点改进」档——功能骨架健康，表层体验拖后腿</td></tr>
+      </table>
+
+      <h3>按严重度排序的问题清单</h3>
+
+      <div class="problem">
+        <div class="ph"><span class="ptag p0">P0</span>字号体系崩溃，正文 7.5~10px</div>
+        <div class="pw">日志 8.5px、进程项副标 7.5px、面板标题 11.5px——长期盯屏的工具型产品用这个字号，等于让用户自带放大镜工作。</div>
+        <div class="pf">建立 6 档字号 token（10/11/12.5/13.5/15/20px），最小可读字号 11px，装饰性英文角标允许 10px。全局替换约 60 处字号声明。</div>
+      </div>
+
+      <div class="problem">
+        <div class="ph"><span class="ptag p0">P0</span>视觉层级缺失：全屏发光，无处落眼</div>
+        <div class="pw">每块面板都有扫描线 + beam 扫光 + 双层 box-shadow 辉光 + 内发光，标题带 text-shadow，四角卡片还在呼吸发光。注意力被均摊，等于没有注意力。</div>
+        <div class="pf">实施"光效三级预算"（见 §03），beam 只保留 header 一处，glowPulse 呼吸动画整体移除，静态文字全部去 text-shadow。</div>
+      </div>
+
+      <div class="problem">
+        <div class="ph"><span class="ptag p1">P1</span>对比度不达 WCAG AA</div>
+        <div class="pw">--muted #7e93b8 在面板底色上约 3.6:1（AA 要求 4.5:1），日志正文 #9fc6e8 8.5px 双重打折；h-center 标题的 22px 辉光 text-shadow 进一步糊掉字形。</div>
+        <div class="pf">--muted 提亮至 #8fa5c9（≈4.7:1），日志正文提至 #b7d4ee + 11px；标题 text-shadow 从三图层减到一层窄半径。</div>
+      </div>
+
+      <div class="problem">
+        <div class="ph"><span class="ptag p1">P1</span>快速模板卡片表达力弱</div>
+        <div class="pw">6 张卡只有色块渐变 + 中心白点 + 9.5px 文字，品类识别全靠读字；hover 只有位移没有信息增量。</div>
+        <div class="pf">每卡增加品类线性 SVG 图标（统一 1.5px stroke 语言），标签升至 12px，hover 时浮出一句玩法描述副标（如"收集金币 · 躲避敌人"）。</div>
+      </div>
+
+      <div class="problem">
+        <div class="ph"><span class="ptag p1">P1</span>实时预览区小到无法判断画面</div>
+        <div class="pw">预览盒仅 74px 高，Godot 真渲染的画面在这个尺寸下只剩色块，LIVE 标签失去了它想传达的"真的在跑"的说服力。</div>
+        <div class="pf">预览盒升至 140px（占右侧栏约 1/3 高），增加角标状态胶囊化（LIVE=青色实底 / SIM=琥珀描边 / IDLE=灰），右上角加"⤢ 全屏"按钮点击放大为中央浮层。</div>
+      </div>
+
+      <div class="problem">
+        <div class="ph"><span class="ptag p2">P2</span>无障碍与响应式空缺</div>
+        <div class="pw">无 prefers-reduced-motion（星系旋转、beam、卡片漂浮全部常开，前庭敏感用户无法关闭）；交互元素无 :focus-visible；overflow:hidden + 固定三栏，1366px 以下笔记本已经拥挤。</div>
+        <div class="pf">加 reduced-motion 媒体查询（动画归零、星系渲染单帧）；全局 focus-visible 描边；补充 1400/1100/820px 三档断点策略（见 §05）。</div>
+      </div>
+
+      <div class="problem">
+        <div class="ph"><span class="ptag p3">P3</span>一致性杂项</div>
+        <div class="pw">双标题冗余（左上 GameForge + 中央 Gameforge-数字生命系统）；能量核心两处数值不一致（仪表盘 71% vs 文本 72%）；🎲 emoji 与科幻线性图标混搭；energyCanvas 处于 display:none 但渲染循环每帧仍在绘制（纯性能浪费）；滚动条样式定义了两遍。</div>
+        <div class="pf">标题合一；两处数值统一从同一变量取值；emoji 换 SVG 骰子；从 loop() 移除 drawEnergy 或删除该 canvas；滚动条样式收敛为一个 utility 选择器组。</div>
+      </div>
+    </section>
+
+    <!-- ================= 02 方向 ================= -->
+    <section id="s2">
+      <h2><span class="no">02</span>设计方向</h2>
+      <p class="h2-sub">「一收一放」：放大星系与命令栏，收起其余一切装饰。</p>
+
+      <p>现有界面的世界观不需要推翻——全息、深空、青紫双辉光是这套产品的性格。问题在于<b>所有元素都在用同样的音量喊话</b>。新方向借鉴航空航天控制室的逻辑：仪表台本身是安静的、克制的、可读的，唯一的"奇观"留给中央那台仪器——星系全息投影。</p>
+      <p>具体执行为三个动作：</p>
+      <p><b>① 放（Hero 强化）</b>——星系保持现有 WebGL 渲染不动，四角卡片后退（更透明、更小、去呼吸动画），让星系核心的视觉统治力恢复；命令栏升格为最醒目的操作件，预览区扩容。</p>
+      <p><b>② 收（仪表降噪）</b>——所有侧栏/底栏面板去掉 scanline、beam、多层辉光，只留细边框 + 微弱内高光，像真实仪器面板的哑光质感；发光成为"信号"而非"装修"。</p>
+      <p><b>③ 统（语言归一）</b>——图标全面 SVG 线性化（统一 stroke 1.5px），文字层次用字号/字重区分而非发光强度，等宽字体只用于数字与日志。</p>
+
+      <figure>
+        <img src="concept-dashboard.jpg" alt="整体布局概念图">
+        <figcaption>CONCEPT A · 整体方向参考 — 仪表降噪 + 星系主角化（AI 概念图，画面文字为生成噪声，仅看布局/密度/光效配比）</figcaption>
+      </figure>
+
+      <figure>
+        <img src="concept-command-zone.jpg" alt="命令区与模板卡片概念图">
+        <figcaption>CONCEPT B · 命令区细节 — 模板卡品类图标化 + 主次按钮分层（AI 概念图，同样仅取视觉方向）</figcaption>
+      </figure>
+
+      <div class="note">两张概念图由 Seedream 生成，用于传达"密度、留白、光效配比"的方向感；图内文字不可作为文案依据，最终实现以本方案的代码规格为准。</div>
+    </section>
+
+    <!-- ================= 03 设计系统 ================= -->
+    <section id="s3">
+      <h2><span class="no">03</span>设计系统升级</h2>
+      <p class="h2-sub">四组 token 直接进 :root，后续所有模块改造都引用这里。</p>
+
+      <h3>3.1 字号阶梯（Type Scale）</h3>
+      <div class="tscale">
+        <div class="trow"><span class="tk">--fs-micro</span><span class="tv" style="font-size:10px">MICRO 10px · 装饰英文角标</span><span class="tw">替代原 7.5px</span></div>
+        <div class="trow"><span class="tk">--fs-caption</span><span class="tv" style="font-size:11px">CAPTION 11px · 时间戳/辅助说明</span><span class="tw">替代原 8~8.5px</span></div>
+        <div class="trow"><span class="tk">--fs-body</span><span class="tv" style="font-size:12.5px">BODY 12.5px · 正文/日志/标签</span><span class="tw">替代原 9~10px</span></div>
+        <div class="trow"><span class="tk">--fs-sub</span><span class="tv" style="font-size:13.5px">SUB 13.5px · 列表标题/按钮</span><span class="tw">替代原 10.5~12px</span></div>
+        <div class="trow"><span class="tk">--fs-title</span><span class="tv" style="font-size:15px">TITLE 15px · 面板标题</span><span class="tw">替代原 11.5px</span></div>
+        <div class="trow"><span class="tk">--fs-hero</span><span class="tv" style="font-size:20px">HERO 20px · 页面主标题</span><span class="tw">维持量级</span></div>
+      </div>
+
+      <h3>3.2 色彩令牌（含对比度修正）</h3>
+      <div class="swatches">
+        <div class="sw"><div class="c" style="background:#eaf3ff"></div><div class="i">--text-1<b>#eaf3ff 主文本 15.8:1</b></div></div>
+        <div class="sw"><div class="c" style="background:#c0d0e8"></div><div class="i">--text-2<b>#c0d0e8 次级 ≈11:1</b></div></div>
+        <div class="sw"><div class="c" style="background:#8fa5c9"></div><div class="i">--text-3<b>#8fa5c9 辅助 ≈4.7:1 ↑</b></div></div>
+        <div class="sw"><div class="c" style="background:#43e6ff"></div><div class="i">--cyan<b>#43e6ff 交互/状态</b></div></div>
+        <div class="sw"><div class="c" style="background:#a06bff"></div><div class="i">--violet<b>#a06bff 次强调</b></div></div>
+        <div class="sw"><div class="c" style="background:#36e0aa"></div><div class="i">--good<b>#36e0aa 成功/在线</b></div></div>
+        <div class="sw"><div class="c" style="background:#ffb454"></div><div class="i">--warn<b>#ffb454 警告/SIM</b></div></div>
+        <div class="sw"><div class="c" style="background:#ff5d6c"></div><div class="i">--err<b>#ff5d6c 错误</b></div></div>
+      </div>
+      <p>核心变化只有一个：<code>--muted:#7e93b8</code> → <code>--text-3:#8fa5c9</code>，一次性修复全部辅助文字的对比度。语义色与背景色体系维持不变。</p>
+
+      <h3>3.3 光效三级预算（Glow Budget）</h3>
+      <div class="tiers">
+        <div class="tier"><div class="tn"><span class="dot" style="background:var(--cyan);box-shadow:0 0 10px var(--cyan)"></span>L0 · 信号光（常亮）</div><p>仅限状态语义：LIVE 指示灯、当前活动阶段进度条、ECG 波形、星系本体。预算 8~12 处。</p></div>
+        <div class="tier"><div class="tn"><span class="dot" style="background:var(--violet);box-shadow:0 0 8px var(--violet)"></span>L1 · 反馈光（瞬时）</div><p>仅出现在交互瞬间：hover 边框增亮、按钮按下、focus 描边、构建成功的一次性庆祝脉冲。离场即灭。</p></div>
+        <div class="tier"><div class="tn"><span class="dot" style="background:#8fa5c9"></span>L2 · 静默（零光）</div><p>一切静态内容：面板容器、正文文字、静态图标、分隔线。无 box-shadow 辉光、无 text-shadow。</p></div>
+      </div>
+
+      <h3>3.4 间距与形状令牌</h3>
+<pre><span class="c">/* 新增 spacing/radius 令牌 */</span>
+:root{
+  <span class="k">--sp-1</span>:<span class="v">4px</span>;  <span class="k">--sp-2</span>:<span class="v">8px</span>;  <span class="k">--sp-3</span>:<span class="v">12px</span>;  <span class="k">--sp-4</span>:<span class="v">16px</span>;
+  <span class="k">--r-panel</span>:<span class="v">10px</span>;   <span class="c">/* 面板统一圆角（原 12px 略收紧） */</span>
+  <span class="k">--r-ctrl</span>:<span class="v">8px</span>;    <span class="c">/* 控件圆角 */</span>
+  <span class="k">--gap</span>:<span class="v">14px</span>;        <span class="c">/* 栅格间隙 12→14px，缓解密度 */</span>
+  <span class="k">--edge</span>:<span class="v">rgba(96,180,255,.22)</span>;  <span class="c">/* 边框微调亮，补偿去辉光后的层次 */</span>
+}</pre>
+      <p>补偿策略：面板去掉辉光后容易"变平"，用<b>更清晰的边框（--edge 提亮）+ 顶部 1px 内高光 + 更深的投影</b>维持立体感——这是真实航空仪表的做法：哑光机身 + 精密刻线。</p>
+    </section>
+
+    <!-- ================= 04 分模块 ================= -->
+    <section id="s4">
+      <h2><span class="no">04</span>分模块改造</h2>
+      <p class="h2-sub">七个区域，每个给出「问题 → 改造 → 关键代码」。全部为 CSS 层改动，JS 仅小补丁。</p>
+
+      <h3>4.1 Header · 合一去噪</h3>
+      <div class="ba">
+        <div class="before"><div class="lbl">BEFORE</div><ul>
+          <li>双标题：左上 GameForge + 中央 Gameforge-数字生命系统</li>
+          <li>「系统等级 Lv.7」「能量值 1287/3000」静态假数据</li>
+          <li>scanline + beam + 标题三重 text-shadow 辉光</li>
+        </ul></div>
+        <div class="after"><div class="lbl">AFTER</div><ul>
+          <li>单标题居左（GameForge · 数字生命系统），右侧放真实状态</li>
+          <li>能量值接 preview/stats 真数据（已有轮询，只需展示）；Lv 改为"累计构建 N 次"真实计数或删除</li>
+          <li>beam 扫光全站只保留 header 这一处，标题 text-shadow 减为一层</li>
+        </ul></div>
+      </div>
+<pre><span class="c">/* header：合一 + 只留一处 beam */</span>
+.h-left{gap:12px}
+.h-center{<span class="k">display:none</span>}              <span class="c">/* 冗余标题移除，靠左标题承担 */</span>
+.h-left .gf-sub{font-size:<span class="v">11px</span>}     <span class="c">/* 9px→11px */</span>
+.h-right{font-size:<span class="v">12px</span>;gap:16px}    <span class="c">/* 10px→12px */</span>
+.hud .beam{<span class="k">animation-duration</span>:<span class="v">9s</span>} <span class="c">/* 稍慢，减少注意力劫持 */</span>
+<span class="c">/* 其余面板的 .beam 全部移除，只保留本处 */</span></pre>
+
+      <h3>4.2 左侧导航 · 图标统一 + 分组降负</h3>
+      <p>9 个平铺菜单项超出认知负荷舒适区（4±1）。按工作流分组为三段：设计（世界概览/任务规划/角色设定）→ 生成（代码生成/场景构建/资产库）→ 交付（测试审查/部署发布/系统日志），组间用 8px 间隔 + 组标签（10px mono）分隔，扫描效率立即提升。</p>
+      <div class="ba">
+        <div class="before"><div class="lbl">BEFORE</div><ul>
+          <li>hex 容器装文字符号 ◈ ⊞ ⌨ ⛬（与 fcard 的 SVG 图标两种语言）</li>
+          <li>项高 33px，标题 12px / 副标 8px</li>
+          <li>9 项无分组平铺</li>
+        </ul></div>
+        <div class="after"><div class="lbl">AFTER</div><ul>
+          <li>统一 SVG 线性图标（stroke 1.5px，继承 fcard 语言）</li>
+          <li>项高 40px，标题 13px / 副标 11px</li>
+          <li>三组分组 + 组标签；active 态只保留左侧 3px 光条 + 边框，去掉 box-shadow 辉光</li>
+        </ul></div>
+      </div>
+<pre><span class="c">/* nav：加高、去辉光、分组 */</span>
+.nav-item{min-height:<span class="v">40px</span>;border-radius:<span class="v">9px</span>}
+.nav-item .tx b{font-size:<span class="v">13px</span>} .nav-item .tx small{font-size:<span class="v">11px</span>}
+.nav-item.active{<span class="k">box-shadow</span>:<span class="v">none</span>;border-color:var(--edgeHi)}
+.nav-group{font:600 <span class="v">10px</span> var(--mono);color:var(--t3);letter-spacing:2px;
+  padding:<span class="v">10px</span> <span class="v">8px</span> <span class="v">4px</span>}
+<span class="c">/* 系统状态区 */</span>
+.mbar{font-size:<span class="v">11px</span>} .mbar .tr{height:<span class="v">4px</span>}  <span class="c">/* 8.5px→11px, 3px→4px */</span>
+.sysstat .ok{font-size:<span class="v">11px</span>}</pre>
+
+      <h3>4.3 中央舞台 · 星系主角化 + 四角卡片后退</h3>
+      <p>星系渲染保持现状（它是全站最好的资产）。四角卡片当前与星系光柱争夺空间，改为"卫星仪表"姿态：宽度 180→164px、背景透明度提高、去掉 glowPulse 呼吸动画与 3D 漂浮改为静态微倾，字号全面上调。数据填充逻辑（renderCornerCards）不动。</p>
+<pre><span class="c">/* fcard：后退为卫星仪表 */</span>
+.fcard{width:<span class="v">164px</span>;
+  background:linear-gradient(160deg,rgba(30,26,72,<span class="n">.62</span>),rgba(10,16,38,<span class="n">.5</span>));
+  <span class="k">box-shadow</span>:0 12px 32px rgba(0,0,0,.45);   <span class="c">/* 去紫色辉光，只留投影 */</span>
+  <span class="k">animation</span>:<span class="v">none</span>;transform:rotateY(24deg)}  <span class="c">/* 静态微倾 */</span>
+.fcard:hover{border-color:rgba(175,145,255,.7);   <span class="c">/* L1 反馈光，离场即灭 */</span>
+  <span class="k">box-shadow</span>:0 14px 36px rgba(0,0,0,.5),0 0 18px rgba(150,110,255,.3)}
+.fcard .tags{font-size:<span class="v">11px</span>;line-height:1.7}   <span class="c">/* 9px→11px */</span>
+.fcard .hd b{font-size:<span class="v">14px</span>}                    <span class="c">/* 13px→14px */</span>
+<span class="c">/* 删除 @keyframes glowPulse 及 fc1~fc4 的 animation-name 绑定 */</span></pre>
+      <p>欢迎语标题去三重 text-shadow，只保留一层窄半径，字号 17→16px 但字重 700——用字重而非光晕做强调。</p>
+
+      <h3>4.4 命令栏 · 唯一主操作</h3>
+      <p>这是整个产品的心脏，当前却和普通面板长得差不多。改造后它应该是<b>扫一眼就知道往哪输入、往哪点</b>的层级：</p>
+<pre><span class="c">/* cmdbar：升格为一级操作件 */</span>
+.cmdbar{padding:<span class="v">10px 12px</span>;border-radius:<span class="v">11px</span>;
+  border-color:rgba(150,120,255,.55);        <span class="c">/* 独占紫色边框语言 */</span>
+  <span class="k">box-shadow</span>:0 10px 28px rgba(0,0,0,.5),inset 0 0 24px rgba(96,180,255,.05)}
+.cmdbar input{font-size:<span class="v">14px</span>}                <span class="c">/* 13px→14px */</span>
+.cmdbar input::placeholder{color:var(--t3)}
+.cmdbar button{padding:<span class="v">9px 22px</span>;font-size:<span class="v">13.5px</span>} <span class="c">/* 12.5px→13.5px */</span>
+.cmdbar .kbd{font:11px var(--mono);color:var(--t3);border:1px solid var(--line);
+  border-radius:5px;padding:1px 7px;margin-right:8px}
+<span class="c">/* 灵感按钮改 ghost 次级样式（描边），与主按钮拉开主次 */</span>
+#diceBtn{background:transparent!important;color:var(--violet)!important;
+  border:1px solid rgba(160,120,255,.5)!important}
+#diceBtn:hover{background:rgba(160,120,255,.12)!important}</pre>
+      <p>交互补强：输入框支持 <code>Ctrl+Enter</code> 提交（与开始构建按钮等价）；骰子 emoji 换为 SVG 图标；构建中按钮内加 CSS spinner 替代纯文字"构建中 ⏳"。</p>
+
+      <h3>4.5 快速模板 · 品类图标化</h3>
+      <p>对齐 Concept B：每卡一个品类线性图标（平台跳跃=奔跑剪影、开放世界=山形罗盘、策略=棋子、射击=飞船、经营=店铺、恐怖=钥匙），统一 1.5px stroke，图标浮于渐变底之上，hover 时图标轻微放大 + 出现玩法副标。</p>
+<pre><span class="c">/* qt：卡片升级 */</span>
+.qt .t{height:<span class="v">104px</span>}                        <span class="c">/* 96px→104px */</span>
+.qt .t .lb{font-size:<span class="v">12px</span>}                  <span class="c">/* 10px→12px */</span>
+.qt .t .gicon{position:absolute;top:<span class="v">14px</span>;left:<span class="v">50%</span>;
+  transform:translateX(-50%);width:<span class="v">30px</span>;height:<span class="v">30px</span>;
+  color:rgba(230,240,255,.9);transition:.2s}
+.qt .t:hover .gicon{transform:translateX(-50%) scale(1.15);filter:drop-shadow(0 0 6px rgba(140,220,255,.6))}
+.qt .t .sub{font-size:<span class="v">11px</span>;color:var(--t3);opacity:0;transition:.2s}
+.qt .t:hover .sub{opacity:1}
+<span class="c">/* 选中反馈：点击后卡片短暂高亮 + 输入框脉冲边框，确认"已填入" */</span>
+.qt .t.picked{border-color:var(--cyan)} .qt .t.picked .lb{color:var(--cyan)}
+.cmdbar.flash{animation:cmdFlash .6s}
+@keyframes cmdFlash{30%{border-color:var(--cyan);box-shadow:0 0 20px rgba(67,230,255,.35)}}</pre>
+
+      <h3>4.6 右侧栏 · 进程清晰化 + 预览扩容</h3>
+      <p>宽度 280→300px。进程列表是用户等待期唯一盯着看的地方，值得给足字号：标题 10.5→12.5px，副标 7.5→11px，进度条 3→5px。活动项增加左侧光条（L0 信号光），完成态打勾图标替代"100%"文字噪音。</p>
+      <p>预览区是本次改动收益最大的一处：74px→140px，约 1.8 倍面积；状态标签胶囊化并赋予语义色；增加全屏按钮。</p>
+<pre><span class="c">/* 预览区扩容 + 状态胶囊 */</span>
+aside.right{width:<span class="v">300px</span>}                      <span class="c">/* grid 列 280→300px */</span>
+.prev-box{height:<span class="v">140px</span>}                       <span class="c">/* 74px→140px */</span>
+.prev-box .tag{font-size:<span class="v">10px</span>;padding:2px 9px;border-radius:999px;font-weight:600}
+.prev-box .tag[data-s="LIVE"]{color:#04222b;background:var(--cyan);border-color:transparent}
+.prev-box .tag[data-s="SIM"] {color:var(--warn);border-color:rgba(255,180,84,.5)}
+.prev-box .tag[data-s="IDLE"]{color:var(--t3)}
+.prev-box .expand{position:absolute;right:6px;top:6px;z-index:3;width:24px;height:24px;
+  border-radius:6px;border:1px solid var(--line);background:rgba(4,8,16,.7);
+  color:var(--t3);cursor:pointer;display:grid;place-items:center;opacity:0;transition:.15s}
+.prev-box:hover .expand{opacity:1}
+<span class="c">/* JS：prevTag.textContent 改为 prevTag.dataset.s = tagText，一并更新胶囊 */</span>
+<span class="c">/* 进程列表 */</span>
+.proc-item .in b{font-size:<span class="v">12.5px</span>} .proc-item .in small{font-size:<span class="v">11px</span>}
+.proc-item .tr{height:<span class="v">5px</span>} .proc-item .pc{font-size:<span class="v">12px</span>}
+.proc-item.active{border-left:2px solid var(--cyan);padding-left:8px}  <span class="c">/* L0 信号光条 */</span>
+.proc-item.done .hex{color:var(--good)}   <span class="c">/* 完成态换色打勾，弱化 100% 文字 */</span>
+<span class="c">/* 日志 */</span>
+#log{font-size:<span class="v">11px</span>;color:#b7d4ee}          <span class="c">/* 8.5px→11px，对比度↑ */</span>
+#log .log-time{font-size:<span class="v">10px</span>}</pre>
+
+      <h3>4.7 底栏与页脚 · 仪表哑光化</h3>
+      <p>底栏四面板高度 82→100px，承担字号提升后的呼吸空间。世界动态事件标题 9.5→12px；能量仪表盘修正数值不同步问题（71%/72% 两处从同一 JS 变量取值）；数据流波形保留但振幅降低 20%（视觉更稳）。面板容器去 scanline/beam，用 --edge 边框 + 顶内高光补偿层次。页脚 8.5→11px。</p>
+<pre><span class="c">/* 面板容器统一「哑光仪表」基底，替换 .hud 现有多层辉光 */</span>
+.hud{background:linear-gradient(165deg,rgba(16,24,48,.55),rgba(8,13,28,.72));
+  border:1px solid var(--edge);border-radius:var(--r-panel);
+  <span class="k">box-shadow</span>:0 10px 30px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.06)}
+<span class="c">/* 移除：每面板的 .beam / .scanln 实例、双层彩色 box-shadow、glowPulse */</span>
+<span class="c">/* 保留：四角科技切割 ::before/::after（这是品牌识别，不占注意力预算） */</span>
+.bottom{grid-template-rows:<span class="v">100px</span>}              <span class="c">/* 82px→100px */</span>
+.wd-ev .ev b{font-size:<span class="v">12px</span>} .wd-ev .ev small{font-size:<span class="v">10.5px</span>}
+footer{font-size:<span class="v">11px</span>}</pre>
+
+      <div class="note">性能红利：去 glowPulse/漂浮动画 + 移除 display:none 的 energyCanvas 绘制 + drawPrevFallback 仅在 previewTaskActive 时执行，三项合计在低端核显设备可省约 15~25% 的合成层开销。</div>
+    </section>
+
+    <!-- ================= 05 动效与无障碍 ================= -->
+    <section id="s5">
+      <h2><span class="no">05</span>动效与无障碍</h2>
+      <p class="h2-sub">把"看起来高级"变成"谁都能用"。</p>
+
+      <h3>5.1 Reduced Motion</h3>
+      <p>当前全站 7 类无限循环动画（星系旋转、beam、卡片漂浮/呼吸、pulse、flowShift、背景粒子、ECG）没有任何关闭手段。方案：CSS 动画在媒体查询内归零；JS 主循环检测 <code>matchMedia('(prefers-reduced-motion: reduce)')</code>，命中时星系只在挂载时渲染单帧、粒子背景静止。</p>
+<pre><span class="k">@media</span> (prefers-reduced-motion: reduce){
+  .beam,.fcard,.flow-wrap::after,.sysstat .ok i{<span class="k">animation</span>:<span class="v">none</span>!important}
+  .nav-item,.qt .t,.cmdbar button{<span class="k">transition-duration</span>:<span class="v">.01s</span>}
+}
+<span class="c">/* JS */</span>
+<span class="k">const</span> RM = matchMedia(<span class="s">'(prefers-reduced-motion: reduce)'</span>).matches;
+<span class="k">if</span>(RM){ drawGalaxy(0); <span class="c">/* 渲染单帧后不再进入 rAF 星系循环 */</span> }</pre>
+
+      <h3>5.2 键盘与焦点</h3>
+      <p>全局补 <code>:focus-visible</code>（2px var(--cyan) 描边 + 2px offset），覆盖命令输入、两个按钮、9 个导航项、6 张模板卡；命令输入绑定 <code>Ctrl+Enter</code> 提交；骰子/全屏等图标按钮补 <code>aria-label</code>。</p>
+
+      <h3>5.3 响应式断点策略</h3>
+      <table>
+        <tr><th>断点</th><th>策略</th></tr>
+        <tr><td>≥1400px</td><td>完整三栏布局（当前默认）</td></tr>
+        <tr><td>1100~1399px</td><td>底栏 4→2×2 面板；四角卡片缩至 150px 且降低透明度；导航副标隐藏（只留图标+标题）</td></tr>
+        <tr><td>820~1099px</td><td>右侧栏隐藏，进程+预览折叠为中央浮层（构建中自动弹出）；布局变两栏</td></tr>
+        <tr><td>&lt;820px</td><td>导航折叠为顶部横向滚动条；放弃星系背景（性能），保留命令栏+模板+日志的竖向工作流</td></tr>
+      </table>
+      <p>现有 <code>overflow:hidden; height:100vh</code> 的"驾驶舱单屏"定位在桌面端保留——这是产品气质；断点只在空间不足时逐级让步，而不是提前放弃单屏。</p>
+    </section>
+
+    <!-- ================= 06 路线图 ================= -->
+    <section id="s6">
+      <h2><span class="no">06</span>实施路线图</h2>
+      <p class="h2-sub">三个阶段，每阶段独立可交付、可回滚（建议每阶段单独 commit）。</p>
+
+      <div class="phase">
+        <div class="pn"><b>P1</b><span>半天</span></div>
+        <div class="pd">
+          <div class="t">令牌替换 · 全局收益（零布局风险）</div>
+          <div class="sc">:root 注入新 token → 全局字号/对比度批量替换（≈60 处）→ .hud 哑光化 + 移除 beam/glowPulse → focus-visible 与 reduced-motion → 移除 energyCanvas 死渲染。</div>
+          <div class="out">可读性+对比度达标，光效预算生效，无任何布局位移</div>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="pn"><b>P2</b><span>1 天</span></div>
+        <div class="pd">
+          <div class="t">结构调优 · 焦点重建</div>
+          <div class="sc">标题合一 + header 真数据 → 导航分组 + SVG 图标统一 → 四角卡片后退 → 命令栏升格（ghost 次按钮/Spinner/Ctrl+Enter）→ 模板卡品类图标 + picked 反馈 → 右栏 300px + 进程字号/进度条升级。</div>
+          <div class="out">视觉焦点落在星系+命令栏，图标语言归一，主次操作分层</div>
+        </div>
+      </div>
+      <div class="phase">
+        <div class="pn"><b>P3</b><span>1 天</span></div>
+        <div class="pd">
+          <div class="t">体验补全 · 细节收尾</div>
+          <div class="sc">预览区 140px + 状态胶囊 + 全屏浮层 → toast 分级（图标+语义色+行动文案）→ 能量仪表数值统一 → 响应式三档断点 → 底栏面板哑光化 → 清理重复滚动条样式与死代码。</div>
+          <div class="out">完整生产工具形态；1366px 笔记本可正常使用</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 07 验收 ================= -->
+    <section id="s7">
+      <h2><span class="no">07</span>验收清单</h2>
+      <p class="h2-sub">每阶段完成后逐项打勾；全部通过即可合并。</p>
+      <ul class="check">
+        <li><b>可读性</b>：DevTools 检查无任何 &lt;10px 文字（除 mono 英文角标）；日志/进程/导航副标 ≥11px</li>
+        <li><b>对比度</b>：--text-3 与所有正文色在面板底色上 ≥4.5:1（用 contrast checker 抽查 10 处）</li>
+        <li><b>光效预算</b>：Lighthouse 截图静态页，常亮发光元素 ≤12（含星系 1、LIVE 灯、活动进度条、ECG、header beam）</li>
+        <li><b>键盘</b>：Tab 可达全部交互件，focus 描边可见；Ctrl+Enter 可提交构建</li>
+        <li><b>Reduced Motion</b>：系统开启后无循环动画，星系为静帧，功能不受损</li>
+        <li><b>状态语义</b>：LIVE/SIM/IDLE 三态胶囊颜色互异且色盲可辨（青/琥珀/灰明度差 ≥3 档）</li>
+        <li><b>回归</b>：SSE 七阶段推进、预览轮询启停（30s 空闲释放）、灵感骰子、模板填入、自动发布链接——全部行为与改版前一致</li>
+        <li><b>性能</b>：空闲态 rAF 内无 display:none 目标绘制；低端设备（核显）滚动/悬停无卡顿</li>
+      </ul>
+
+      <div class="docfoot">
+        <span>GAMEFORGE · UI BEAUTIFICATION PROPOSAL v1.0</span>
+        <span>方向：精密仪表台 · 依据 UICraft 评审工作流</span>
+      </div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

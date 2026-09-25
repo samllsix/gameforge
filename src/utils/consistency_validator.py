@@ -4,7 +4,7 @@
 """
 
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set
 
 
@@ -17,13 +17,16 @@ class ValidationResult:
 
     @property
     def has_errors(self) -> bool:
+        """是否存在错误。"""
         return len(self.errors) > 0
 
     @property
     def has_issues(self) -> bool:
+        """是否存在错误或警告。"""
         return len(self.errors) > 0 or len(self.warnings) > 0
 
     def to_dict(self) -> Dict[str, Any]:
+        """转成便于序列化的 dict（含错误/警告/建议与计数）。"""
         return {
             "errors": self.errors,
             "warnings": self.warnings,
@@ -61,14 +64,13 @@ def validate_code_scene_consistency(
 
     # 1. 场景引用的脚本是否在生成代码中存在
     for script_name in scene_scripts:
-        if script_name not in class_to_file:
-            # 检查是否是Unity内置组件
-            if not _is_unity_builtin(script_name):
-                result.errors.append({
-                    "type": "missing_script",
-                    "message": f"场景引用了脚本 '{script_name}'，但该脚本未在生成代码中找到",
-                    "script": script_name,
-                })
+        # 跳过 Unity 内置组件，只检查自定义脚本
+        if script_name not in class_to_file and not _is_unity_builtin(script_name):
+            result.errors.append({
+                "type": "missing_script",
+                "message": f"场景引用了脚本 '{script_name}'，但该脚本未在生成代码中找到",
+                "script": script_name,
+            })
 
     # 2. 代码中的 public class 是否和文件名一致
     from src.core.tools import extract_public_class_name
@@ -218,6 +220,7 @@ def _extract_scripts_from_scene(scene_desc: Dict[str, Any]) -> Set[str]:
     scripts = set()
 
     def visit(obj: Dict[str, Any]) -> None:
+        """深度遍历场景对象树，收集非内置组件类型。"""
         for comp in obj.get("components", []):
             comp_type = comp.get("type", "")
             if not _is_unity_builtin(comp_type):

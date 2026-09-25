@@ -36,6 +36,11 @@ services:
       - ./src:/app/src:ro
       - ./config:/app/config:ro
       - ./static:/app/static:ro
+      # Docker 后端：挂载宿主 Docker socket 以启隔离容器执行
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # 开启沙箱 Docker 后端（默认 local，按需切换）
+      - GAMEFORGE_SANDBOX_BACKEND=${GAMEFORGE_SANDBOX_BACKEND:-local}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${GAMEFORGE_PORT:-8000}/health"]
       interval: 15s
@@ -62,6 +67,26 @@ services:
       timeout: 3s
       retries: 3
     restart: unless-stopped
+    networks:
+      - gameforge
+
+  # ── Sandbox Runner（Docker 后端专用镜像） ──────────
+  sandbox-runner:
+    build:
+      context: .
+      dockerfile: docker/sandbox-runner/Dockerfile
+    container_name: gameforge-sandbox-runner
+    profiles:
+      - sandbox
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - gameforge
 

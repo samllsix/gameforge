@@ -37,6 +37,7 @@ click>=8.1.0
 rich>=13.0.0
 httpx>=0.27.0
 aiohttp>=3.10.0
+numpy>=1.26                 # 程序化素材(src/image/procedural)与芯片音效合成(sfx_forge)必需
 
 # Testing
 pytest>=8.0.0
@@ -52,14 +53,17 @@ pre-commit>=3.8.0
 
 # ============================================================
 # Optional Dependencies (install with: pip install -r requirements-full.txt)
+# 均为函数内延迟导入 + 优雅降级：缺失不影响核心流水线
 # ============================================================
-# qdrant-client>=1.12.0    # Vector database
+# qdrant-client>=1.12.0    # Vector database (src/utils/vector_store.py)
 # chromadb>=0.5.0           # Vector database alternative
-# redis>=5.0.0              # Cache / message broker
+# redis>=5.0.0              # Cache / message broker (src/utils/redis_client.py)
+# psutil>=5.9.0             # 沙箱进程指标 (src/sandbox/monitor/metrics.py)
+# mss>=9.0.0                # GPU 截帧 (src/engine/godot/screenshot_gpu.py)
 # psycopg[binary]>=3.1.0    # PostgreSQL driver
 # alembic>=1.13.0           # Database migrations
 # celery>=5.4.0             # Task queue
-# prometheus-client>=0.20.0 # Metrics
+# prometheus-client>=0.20.0 # Metrics (src/utils/metrics.py)
 # tree-sitter>=0.22.0       # Code analysis
 # pylint>=3.0.0             # Code linting
 # flake8>=7.0.0             # Code linting
