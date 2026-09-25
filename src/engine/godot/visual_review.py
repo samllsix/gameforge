@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from src.core import paths
+from src.core.result import add_artifact, new_operation_result
 
 logger = structlog.get_logger()
 
@@ -103,26 +104,25 @@ class VisualReviewer:
         """审查 frames_dir 下的帧并落盘 visual_review.json。
 
         任何失败（未启用/无 key/模型异常）都降级为 skipped，
-        不阻塞 playtest 主流程。
+        不阻塞 playtest 主流程。返回值遵循 src/core/result 契约；
+        ``reason`` 是 ``skip_reason`` 的历史别名。
         """
-        result: Dict[str, Any] = {
-            "schema": VISUAL_REVIEW_SCHEMA,
-            "project_id": project_id,
-            "run_id": run_id,
-            "ok": False,
-            "skipped": False,
-            "issues": [],
-            "summary": "",
-            "reviewed_frames": [],
-        }
+        result = new_operation_result(
+            "visual_review.review",
+            project_id=project_id,
+            run_id=run_id,
+            extra={"artifact_schema": VISUAL_REVIEW_SCHEMA, "issues": [], "summary": "", "reviewed_frames": []},
+        )
         if not self.enabled:
             result["skipped"] = True
-            result["reason"] = "visual_review.disabled"
+            result["skip_reason"] = "visual_review.disabled"
+            result["reason"] = result["skip_reason"]  # 历史别名
             return result
 
         ok_avail, why = self.available()
         if not ok_avail:
             result["skipped"] = True
+            result["skip_reason"] = why
             result["reason"] = why
             logger.warning("visual_review.skipped", reason=why)
             return result
@@ -130,6 +130,7 @@ class VisualReviewer:
         picked = pick_frames(frame_names, self.max_frames)
         if not picked:
             result["skipped"] = True
+            result["skip_reason"] = "no_frames"
             result["reason"] = "no_frames"
             return result
         result["reviewed_frames"] = picked
@@ -157,17 +158,34 @@ class VisualReviewer:
             parsed = extract_json_strict(response)
         except Exception as e:  # noqa: BLE001
             result["skipped"] = True
-            result["reason"] = f"视觉模型调用失败: {e}"
+            result["skip_reason"] = f"视觉模型调用失败: {e}"
+            result["reason"] = result["skip_reason"]
             logger.warning("visual_review.llm_failed", error=str(e))
             return result
 
         issues = parsed.get("issues") or []
         hard_issues = [i for i in issues if str(i.get("severity", "")).lower() == "high"]
+        soft_issues = [i for i in issues if i not in hard_issues]
         result["issues"] = issues
         result["summary"] = str(parsed.get("summary", ""))
         result["ok"] = bool(parsed.get("overall_pass")) and not hard_issues
 
-        paths.write_json(paths.visual_review_path(project_id, run_id), result)
+        # 失败必须可归因；低/中严重度问题进 warnings 不拦截
+        if not result["ok"]:
+            result["errors"].append(
+                f"视觉审查未通过: {result['summary']}"
+                + (f"（高严重度问题 {len(hard_issues)} 项）" if hard_issues else "")
+            )
+            for issue in hard_issues:
+                result["errors"].append(
+                    f"视觉审查[{issue.get('area', '?')}][high]: {issue.get('description', '')}"
+                )
+        elif soft_issues:
+            result["warnings"].append(f"视觉审查发现 {len(soft_issues)} 项低/中严重度问题")
+
+        out_path = paths.visual_review_path(project_id, run_id)
+        paths.write_json(out_path, result)
+        add_artifact(result, "visual_review", out_path)
         logger.info(
             "visual_review.finished",
             project_id=project_id, ok=result["ok"],

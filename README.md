@@ -18,19 +18,20 @@
 
 ## 项目简介
 
-GameForge 是一个基于 **Multi-Agent 架构** 的 Godot 游戏研发 AI 工具链，覆盖 **策划 → 代码生成 → 场景构建 → 审查 → 测试 → 修复** 全链路。通过多个专业 AI Agent 的协作，实现从自然语言需求到可运行 Godot 项目的自动化生成。
+GameForge 是一个基于 **Multi-Agent 架构** 的 Godot 游戏研发 AI 工具链，覆盖 **需求解析 → 策划 → 规划 → 代码/场景生成 → 审查/测试/修复 → 运行验证** 全链路。通过 LangGraph 状态图编排多个专业 Agent，实现从自然语言需求到可运行 Godot 项目的自动化生成。
 
 ### 核心价值
 
-- **Multi-Agent 协作**：10 个专业 Agent 分工协作，模拟真实游戏开发团队
+- **Multi-Agent 协作**：6 个核心图节点 Agent + 辅助能力（场景 / UI / 音频），审查、重构、测试、修复并入代码生成内部 Pipeline
 - **Godot 4.x 专用**：生成符合规范的 GDScript (`.gd`) 与场景文件 (`.tscn`)
-- **场景 IR 生成**：从 GameDesignModel 到场景描述再到 .tscn 文件的完整管线
+- **场景 IR 生成**：GameDesignModel → Scene IR → `.tscn`，与主工作流并行执行
 - **Headless 编译校验**：Godot headless 模式自动校验脚本编译与场景完整性
 - **Playtest 输入回放**：声明式动作脚本驱动真实玩家操作 + 进程内抓帧，"编译通过 ≠ 可玩"
 - **VLM 视觉审查**：playtest 截图交给多模态模型按失败模式清单打分，高严重度问题触发修复闭环
+- **安全闸门 gd-guard**：扫描生成脚本中的危险/禁止 API，拦截前先做一轮反馈重写
 - **优雅降级**：LLM API 不可用时自动降级到模板生成，保证流程不中断；`GAMEFORGE_LLM_STUB=1` 可全链路离线冒烟
-- **Web 界面**：内置 FastAPI + SSE 流式界面，实时查看 Agent 执行进度
-- **量化评测**：产物级评测体系（运行时冒烟、playtest 证据、视觉审查、项目完整性 → eval/summary.json）
+- **Web 界面**：内置 FastAPI + SSE 流式界面，实时查看 Agent 执行进度；支持预览帧、Web 构建、沙箱任务
+- **量化评测**：产物级评测体系（运行时冒烟、playtest 证据、视觉审查、项目完整性 → `eval/summary.json`）
 
 ---
 
@@ -42,71 +43,83 @@ GameForge 是一个基于 **Multi-Agent 架构** 的 Godot 游戏研发 AI 工�
 用户需求
   │
   ▼
+RequirementAnalyzer ──▶ Game Spec（结构化需求规格）
+  │
+  ▼
 GameDesigner ──▶ GameDesignModel (GDM)
   │                  ├─ genre / camera_mode / core_loop
   │                  ├─ entities (Player, Enemy, Coin, ...)
   │                  ├─ environment (Ground, Platform, ...)
   │                  └─ mvp_scope / win_conditions / fail_conditions
   ▼
-Planner ──▶ TaskPlan (结构化任务列表)
+Planner ──▶ TaskPlan + asset_plan + genre_match
   │
   ▼
-SceneGenerator ──▶ Scene IR ──▶ .tscn 文件
-  │                   ├─ 节点结构 (Node2D / CharacterBody2D / Area2D / ...)
-  │                   ├─ SubResource 复用 (材质 / 碰撞体 / 网格)
-  │                   └─ Script Stub 自动生成
-  ▼
-CodeGenerator ──▶ GDScript 文件
+Orchestrator ⇄ CodeGenerator（Pipeline 内部 Phase）
+  │              ├─ generate → review → refactor → test → fix → final_check
+  │              └─ GDScript / UI / 配置产物，reducer 自动合并
+  │
+  ├─（并行）SceneGenerator ──▶ Scene IR ──▶ .tscn
   │
   ▼
-CodeReviewer ──▶ (fast_mode 可跳过)
-  │
-  ▼
-TestGenerator ──▶ 测试用例 + Godot 引擎反馈
-  │
-  ▼
-MainReviewer ──▶ 终审 + 反思回环 (可选)
+后处理闭环（非图边）
+  ├─ gd-guard 安全扫描（可触发一次重写复检）
+  ├─ Godot headless 编译循环（最多 3 轮 fix）
+  ├─ Runtime smoke test
+  └─ Playtest 回放 + 帧证据 + VLM 视觉审查（可选）
 ```
 
-### 2. 10 个专业 Agent
+图节点（`src/core/graph/workflow.py`）：
 
-| Agent | 职责 | 使用的 LLM 模型 |
-|-------|------|-----------------|
-| GameDesigner | 游戏策划，生成 GameDesignModel | DeepSeek-v4-pro |
-| Planner | 需求解析与任务规划 | DeepSeek-v4-pro |
-| Orchestrator | 流程编排与任务调度 | Mimo-v2.5-pro |
-| CodeGenerator | GDScript 代码生成 | DeepSeek-v4-pro |
-| SceneGenerator | Godot 场景 IR → .tscn 生成 | DeepSeek-v4-pro |
-| CodeReviewer | 代码质量审查 | DeepSeek-v4-pro |
-| Refactor | 代码重构优化 | DeepSeek-v4-pro |
-| TestGenerator | 测试生成，读取 Godot 引擎反馈 | DeepSeek-v4-pro |
-| Debugger | 错误分析，可委派知识库查询 | GLM-4.5-air |
-| MainReviewer | 终审，含反思回环 | DeepSeek-v4-pro |
+```
+requirement_analyzer → game_designer → planner → orchestrator ⇄ code_generator → END
+```
 
-### 3. 多智能体改造（可选开启）
+### 2. Agent 角色
 
-通过 `config.yaml` 中的开关控制：
+| Agent | 职责 | 说明 |
+|-------|------|------|
+| RequirementAnalyzer | 自然语言 → Game Spec (DSL) | 失败时 `_fallback_spec` |
+| GameDesigner | Spec → Game Design Model | 失败时 `_fallback_gdm` |
+| Planner | GDM → 任务计划 / 资产计划 | 品类模板打分匹配 |
+| Orchestrator | 按依赖调度 ready 任务 | 决定 continue / END |
+| CodeGenerator | GDScript + 审查/重构/测试/修复 | 内部 Pipeline Phase |
+| SceneGenerator | Scene IR → `.tscn` | 与主图并行；platformer/shooter/rpg 模板兜底 |
 
-- **审查↔重构对话协商**（`review_refactor.dialogue_enabled`）：CodeReviewer 与 Refactor 进行多轮协商
-- **反思回环**（`reflector.enabled`）：MainReviewer 触发 Reflector 进行反思迭代
-- **消息总线**（`core/state/bus.py`）：Agent 间通过发布-订阅解耦通信
-- **Debugger 动态委派**（`debugger_delegation`）：Debugger 委派知识库查询（默认开启）
-- **Tester 引擎反馈**（`tester_engine_feedback`）：读取 Godot headless 真实编译结果（默认开启）
+辅助能力（不在主图节点中，按配置触发）：
 
-### 4. Godot 引擎集成
+| 模块 | 路径 | 说明 |
+|------|------|------|
+| AudioGenerator | `src/agents/audio_generator/` | TTS 音频资产 |
+| UIGenerator | `src/agents/ui_generator/` | UI 场景生成 |
+| ArtDirector / GenreSpecs | `src/agents/art_director.py` 等 | 美术方向与品类规格 |
 
-- **Headless 编译校验**：`GodotCompiler` 调用 `godot --headless --import` 验证脚本编译
-- **场景构建器**：`SceneBuilder` + `TscnWriter` 将 Scene IR 写入 `.tscn` 文件
+历史角色（code_reviewer / refactor / debugger / test_generator）已归并进 `CodeGeneratorAgent.run_pipeline()` 的 Phase，不再作为独立 LangGraph 节点。
+
+### 3. Godot 引擎集成
+
+- **Headless 编译校验**：`GodotEditor` 调用 `godot --headless --import` 验证脚本编译
+- **场景构建器**：Scene IR → `GodotSceneBuilder` / `TscnWriter` 写入 `.tscn`
+- **gd-guard**：脚本安全扫描，危险 API 拦截 + 有界反馈回路
+- **Playtest**：输入回放 + 抓帧 + `report.json` 证据
 - **Godot 编辑器插件**：`addons/gameforge/` 提供 HTTP 服务 (端口 8765) 与 WebSocket 客户端 (端口 8766)
 - **AI 原生插件**：`addons/ai_native/` 提供 AI 控制器组件
-- **三种编译模式**：`auto`（自动选择）/ `headless`（命令行）/ `http`（编辑器插件）
 
-### 5. 安全特性
+### 4. MCP 工具链（可选）
 
-- 8 层中间件栈：安全头 / CORS / GZip / 请求体限制 / 输入校验 / 指标 / 并发限制 / 限流
+`config/config.yaml` 中 `mcp.enabled` 控制，stdio / in_process 服务器：image、engine、asset、knowledge、test。
+
+### 5. 沙箱与实时预览
+
+- **Sandbox**：隔离工作区、任务级 modify / merge / rollback
+- **Preview**：`/api/v1/preview/frame` 等接口提供运行帧预览
+- **Export / Build**：项目导出、Web 构建、native 启停
+
+### 6. 安全特性
+
+- 多层中间件：安全头 / CORS / GZip / 请求体限制 / 输入校验 / 指标 / 并发限制 / 限流
 - API Key 认证（`GAMEFORGE_API_KEYS` 环境变量）
-- 输入注入检测（2MB 请求限制，50000 字符输入限制）
-- 60/min/IP 速率限制
+- 输入注入检测（请求体与字符上限）
 - loopback 地址强制约束（非 loopback 必须设置 API Key）
 
 ---
@@ -118,33 +131,37 @@ MainReviewer ──▶ 终审 + 反思回环 (可选)
 │                    GameForge Platform                       │
 ├─────────────────────────────────────────────────────────────┤
 │  【Web 界面层】  index.html + app.js + SSE 流式反馈          │
-│                   /app · /api/v1/generate_stream            │
+│                   /app · /dashboard · /api/v1/generate_stream│
 ├─────────────────────────────────────────────────────────────┤
 │  【API 层】  FastAPI + Uvicorn                              │
-│    /api/v1/generate · /generate_stream · /generate_sync     │
-│    /api/v1/task/{id} · /api/v1/agents · /health             │
+│    /api/v1/generate · generate_sync · generate_stream        │
+│    /api/v1/plan · task · agents · history · preview ·        │
+│    projects/…/export|builds|play|native · sandbox/…          │
+│    /api/v1/ext/compile · import · eval                       │
 ├─────────────────────────────────────────────────────────────┤
 │  【Multi-Agent 协调层】  LangGraph StateGraph               │
-│    GameDevWorkflow: game_designer→planner→orchestrator→     │
-│    code_generator→code_reviewer→test_generator→             │
-│    main_reviewer→orchestrator                                │
+│    requirement_analyzer → game_designer → planner →          │
+│    orchestrator ⇄ code_generator（+ 并行 scene_generator）   │
+│    后处理：gd-guard / headless 编译循环 / smoke / playtest   │
 ├─────────────────────────────────────────────────────────────┤
-│  【专业 Agent 层】  10 个 Agent + BaseAgent 基类             │
-│    GameDesigner · Planner · CodeGenerator · SceneGenerator  │
-│    CodeReviewer · Refactor · TestGenerator · Debugger       │
-│    MainReviewer · Reflector                                  │
+│  【专业 Agent 层】  BaseAgent + 6 核心 + 辅助                │
+│    RequirementAnalyzer · GameDesigner · Planner ·            │
+│    Orchestrator · CodeGenerator (Pipeline) · SceneGenerator  │
+│    AudioGenerator · UIGenerator                              │
 ├─────────────────────────────────────────────────────────────┤
 │  【LLM 适配层】  多 Provider 支持                           │
-│    Mimo · DeepSeek · 智谱GLM · Kimi · SenseNova             │
+│    Mimo · DeepSeek · 智谱GLM · Kimi · SenseNova · StepFun   │
 ├─────────────────────────────────────────────────────────────┤
-│  【Godot 引擎层】  Headless 校验 + HTTP/WS 插件             │
-│    GodotCompiler · SceneBuilder · TscnWriter                │
-│    GodotHttpClient (8765) · GodotWsClient (8766)            │
+│  【Godot 引擎层】  Headless 校验 + Playtest + gd-guard      │
+│    GodotEditor · SceneBuilder · Playtest · VisualReview      │
+│    GodotHttpClient (8765) · GodotWsClient (8766)             │
+├─────────────────────────────────────────────────────────────┤
+│  【工具与扩展】  MCP servers · Sandbox · Image/Audio · Eval  │
 ├─────────────────────────────────────────────────────────────┤
 │  【数据与存储层】                                           │
-│    SQLite (SQLAlchemy) · Qdrant (可选) · Redis (可选)       │
+│    MySQL（默认，SQLAlchemy）· Qdrant (可选) · Redis (可选)  │
 ├─────────────────────────────────────────────────────────────┤
-│  【监控与日志】  structlog + LangSmith + Prometheus         │
+│  【监控与日志】  structlog + LangSmith + Prometheus          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -154,11 +171,11 @@ MainReviewer ──▶ 终审 + 反思回环 (可选)
 
 | 类别 | 技术 | 说明 |
 |------|------|------|
-| Agent 框架 | LangGraph + AutoGen | StateGraph 状态图驱动 |
-| LLM (多 Provider) | Mimo / DeepSeek / GLM / Kimi / SenseNova | 按 Agent 角色分配模型 |
+| Agent 框架 | LangGraph | StateGraph 状态图驱动 |
+| LLM (多 Provider) | Mimo / DeepSeek / GLM / Kimi / SenseNova / StepFun | `llm.models.{agent}` 按角色分配 |
 | Web 框架 | FastAPI + Uvicorn | 异步 API + SSE 流式 |
 | 游戏引擎 | **Godot 4.6** | GDScript + .tscn 场景 |
-| 数据库 | MySQL | 任务记录与生成历史 |
+| 数据库 | MySQL（默认）/ PostgreSQL / SQLite | SQLAlchemy，`DATABASE_URL` 可切换 |
 | 向量库 | Qdrant (可选) | 代码检索与知识库 |
 | 缓存 | Redis (可选) | LLM 结果缓存 |
 | 监控 | LangSmith + Prometheus + structlog | 链路追踪与指标 |
@@ -174,6 +191,18 @@ MainReviewer ──▶ 终审 + 反思回环 (可选)
 - Python 3.11-3.13
 - Godot 4.6+（[下载地址](https://godotengine.org/download)）
 - Windows / macOS / Linux
+- MySQL 8+（默认任务历史存储；也可用 `DATABASE_URL` 切到 SQLite）
+
+### 一键安装 Godot（可选）
+
+版本钉死 + SHA512 校验 + 原子发布的安装器，保证 Agent/CI 拿到的引擎工具链可复现（`latest` 被明确拒绝）：
+
+```bash
+python tools/install_godot.py --version 4.6.3 --json
+# 安装到 GAMEFORGE_GODOT_HOME（默认 tools/godot/godot-<版本>/），
+# 并生成 godot_env.sh / godot_env.cmd（导出 GODOT_EDITOR_PATH）
+python tools/install_godot.py --version 4.6.3 --check --reverify --json   # 只校验不下载
+```
 
 ### 安装步骤
 
@@ -193,32 +222,44 @@ source .venv/bin/activate
 pip install -r requirements.txt
 # 或安装为可编辑包（提供 gameforge CLI 命令）
 pip install -e .
+# 开发/测试
+pip install -e ".[dev]"
 
 # 4. 配置环境变量
 cp .env.example .env
-# 编辑 .env，填入 LLM API Key 和 Godot 路径
+# 编辑 .env，填入 LLM API Key、数据库与 Godot 路径
 ```
 
 ### 配置 .env 文件
 
 ```ini
-# LLM API Keys (至少配置一个)
+# LLM API Keys (至少配置一个；完整列表见 .env.example)
 MIMO_API_KEY=your_mimo_key
 DEEPSEEK_API_KEY=your_deepseek_key
-
-# LLM Base URLs
-MIMO_BASE_URL=https://api.mimo.xiaomi.com/v1
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+STEP_API_KEY=your_step_key              # 图像生成
+STEPFUN_TTS_API_KEY=your_stepfun_tts    # TTS
 
 # Godot 引擎路径
 GODOT_EDITOR_PATH=D:/godot/Godot_v4.6.3-stable_win64.exe/Godot_v4.6.3-stable_win64.exe
 GODOT_PROJECT_PATH=D:/game_project
+
+# 数据库（默认 MySQL；分项 env 优先于 DATABASE_URL）
+DBMY_HOST=127.0.0.1
+DBMY_PORT=3306
+DBMY_USER=root
+# DBMY_PASSWORD=...
+DBMY_DATABASE=gameforge
+# 或完整 URL：
+# DATABASE_URL=sqlite:///./gameforge.db
 
 # 应用配置（键名与 config/config.yaml 对应）
 GAMEFORGE_ENV=development
 GAMEFORGE_DEBUG=true
 GAMEFORGE_HOST=127.0.0.1
 GAMEFORGE_PORT=8000
+
+# 可选：全链路 LLM 离线冒烟
+# GAMEFORGE_LLM_STUB=1
 ```
 
 > 各 API Key 的申请方式见 [docs/API_KEYS.md](docs/API_KEYS.md)。
@@ -237,6 +278,8 @@ GAMEFORGE_PORT=8000
 
 ```bash
 python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+# 或
+python -m src.cli serve
 ```
 
 **方式三：Docker Compose**
@@ -252,6 +295,7 @@ docker-compose up -d
 启动服务后打开浏览器访问：
 
 - **Web 界面**：http://127.0.0.1:8000/app
+- **评测看板**：http://127.0.0.1:8000/dashboard
 - **API 文档**：http://127.0.0.1:8000/docs
 - **健康检查**：http://127.0.0.1:8000/health
 
@@ -263,20 +307,26 @@ docker-compose up -d
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/` | GET | 根信息 |
 | `/health` | GET | 健康检查 + 并发统计 |
-| `/app` | GET | Web 前端界面 |
-| `/api/v1/generate` | POST | 异步生成（返回 task_id） |
+| `/stats` · `/metrics` | GET | 运行统计 / Prometheus 指标 |
+| `/app` · `/dashboard` | GET | Web 界面 / 评测看板 |
+| `/api/v1/generate` | POST | 异步生成（返回 task_id，202） |
 | `/api/v1/generate_sync` | POST | 同步生成（等待完成） |
 | `/api/v1/generate_stream` | POST | SSE 流式生成（实时推送 Agent 状态） |
+| `/api/v1/plan` | POST | 仅规划（不进入代码生成） |
 | `/api/v1/task/{id}` | GET | 查询任务状态 |
 | `/api/v1/task/{id}/wait` | POST | 等待任务完成 |
 | `/api/v1/agents` | GET | 列出所有 Agent |
 | `/api/v1/tasks` | GET | 历史任务列表 |
-| `/api/v1/history/{id}` | GET | 生成历史详情 |
+| `/api/v1/history` · `/history/{id}` · `/history/by_task/{id}` | GET | 生成历史 |
+| `/api/v1/preview/frame` · `/preview/stats` | GET | 实时预览帧 / 统计 |
 | `/api/v1/ext/compile` | POST | Godot 编译校验 |
 | `/api/v1/ext/import` | POST | Godot 项目导入 |
 | `/api/v1/ext/eval` | POST | 代码评测 |
+| `/api/v1/projects/{id}/export` | POST | 项目导出 |
+| `/api/v1/projects/{id}/builds/web` · `/play/build` | POST/GET | Web 构建 |
+| `/api/v1/projects/{id}/native/*` · `/play/native/*` | GET/POST | 原生运行启停 / 日志 |
+| `/api/v1/sandbox/{id}/*` | POST/GET/DELETE | 沙箱工作区 / 任务合并回滚 |
 
 ### 生成请求示例
 
@@ -293,10 +343,12 @@ curl http://127.0.0.1:8000/api/v1/task/{task_id}
 ### CLI 工具
 
 ```bash
-# 安装后可直接使用 gameforge 命令
+# 安装后可直接使用 gameforge 命令（或 python -m src.cli）
 gameforge generate --input game_requirements.txt --output output
 gameforge workflow
 gameforge status
+gameforge serve --host 127.0.0.1 --port 8000
+gameforge eval --project GameForge Project
 ```
 
 ---
@@ -315,116 +367,70 @@ game_project/
 │   │   └── schemas/                  # Pydantic 请求/响应模型
 │   ├── agents/                       # 多 Agent 实现
 │   │   ├── base.py                   # BaseAgent 抽象基类
-│   │   ├── orchestrator/             # 编排 Agent
-│   │   ├── planner/                  # 规划 Agent
+│   │   ├── requirement_analyzer/     # 需求解析 Agent
 │   │   ├── game_designer/            # 游戏策划 Agent
-│   │   ├── code_generator/           # 代码生成 Agent
+│   │   ├── planner/                  # 规划 Agent
+│   │   ├── orchestrator/             # 编排 Agent
+│   │   ├── code_generator/           # 代码生成 + 内部 Pipeline
+│   │   │   └── godot_templates.py    # GDScript 运行时模板
 │   │   ├── scene_generator/          # 场景生成 Agent
-│   │   ├── code_reviewer/            # 代码审查 Agent
-│   │   ├── refactor/                 # 重构 Agent
-│   │   ├── test_generator/           # 测试生成 Agent
-│   │   ├── debugger/                 # 调试 Agent
-│   │   ├── reflector/                # 反思 Agent
-│   │   ├── main_reviewer.py          # 主审查 Agent
+│   │   ├── audio_generator/          # TTS 音频 Agent
+│   │   ├── ui_generator/             # UI 生成 Agent
+│   │   ├── art_director.py           # 美术方向
+│   │   ├── genre_specs.py            # 品类规格
 │   │   ├── scene_ir.py               # 场景 IR 定义
 │   │   └── scene_templates.py        # 场景模板
 │   ├── core/                         # 核心模块
-│   │   ├── paths.py                  # 仓库 I/O 路径单一事实源 (产物按 (project_id, run_id) 编址)
-│   │   ├── concurrency.py            # 异步任务队列管理
-│   │   ├── graph/workflow.py          # LangGraph 状态图
-│   │   ├── state/                    # 状态管理
-│   │   │   ├── game_state.py          # GameDevState TypedDict
-│   │   │   └── bus.py                 # 消息总线 (发布-订阅)
-│   │   ├── dialogue/                  # 多轮对话
+│   │   ├── paths.py                  # 仓库 I/O 路径 (project_id/run_id)
+│   │   ├── gdm.py                    # GDM 条目归一化
+│   │   ├── recipes.py                # 已验证配方库 (语义级复用)
+│   │   ├── incremental.py            # 增量生成
+│   │   ├── concurrency.py            # 异步任务队列
+│   │   ├── graph/workflow.py         # LangGraph 状态图
+│   │   ├── state/game_state.py       # GameDevState TypedDict + reducers
+│   │   ├── state/bus.py              # 消息总线
 │   │   ├── memory/                   # 记忆管理
-│   │   ├── knowledge/                 # 知识库查询
+│   │   ├── knowledge/                # 知识库查询
+│   │   ├── dsl/                      # 规格 DSL
 │   │   └── tools/                    # 工具集
 │   ├── adapters/                     # LLM 适配器
-│   │   ├── openai_client.py          # OpenAI 兼容客户端
-│   │   ├── mock_client.py            # Mock 客户端 (测试用)
-│   │   └── factory.py                # 适配器工厂
-│   ├── engine/                       # Godot 引擎集成
-│   │   ├── godot/                    # Godot 工具链
-│   │   │   ├── __init__.py           # GodotEditor + GodotCompiler
-│   │   │   ├── godot_http_client.py  # HTTP 插件客户端 (端口 8765)
-│   │   │   ├── godot_ws_client.py    # WebSocket 客户端 (端口 8766)
-│   │   │   ├── project_generator.py  # 项目生成器
-│   │   │   ├── scene_builder.py      # 场景构建器
-│   │   │   ├── playtest.py           # playtest 运行器 (输入回放+帧证据+评分)
-│   │   │   ├── visual_review.py      # VLM 视觉审查 (失败模式清单打分)
-│   │   │   └── tscn_writer.py        # .tscn 文件写入器
-│   │   └── sandbox/                  # 沙箱执行
-│   ├── db/                           # 数据库
-│   │   ├── models.py                 # SQLAlchemy 模型
-│   │   └── session.py                # SQLite 会话
+│   ├── engine/godot/                 # Godot 工具链
+│   │   ├── __init__.py               # GodotEditor + 编译校验
+│   │   ├── scene_builder.py          # 场景构建器
+│   │   ├── gd_guard.py               # 脚本安全扫描
+│   │   ├── playtest.py               # playtest 回放 + 帧证据
+│   │   ├── visual_review.py          # VLM 视觉审查
+│   │   └── godot_http_client.py      # 编辑器插件客户端
+│   ├── sandbox/                      # 沙箱执行
+│   ├── db/                           # 数据库 (MySQL/PG/SQLite)
 │   ├── eval/                         # 评测体系
-│   │   ├── metrics/                  # 代码静态评测指标
-│   │   ├── artifacts.py              # 产物级评测 (只读已有证据 → eval/summary.json)
-│   │   └── dashboard/                # 评测看板
+│   ├── mcp/                          # MCP servers / adapters
+│   ├── image/ · models/              # 图像与音频模型抽象
 │   └── utils/                        # 工具函数
-│       ├── llm_client.py             # 统一 LLM 客户端 (多模态 + 离线 stub 模式)
-│       ├── code_validator.py         # 代码校验
-│       ├── godot_compatibility_validator.py  # Godot 兼容性校验
-│       ├── vector_store.py           # Qdrant 向量存储
+│       ├── llm_client.py             # 统一 LLM 客户端 (熔断+重试+stub)
+│       ├── unified_validator.py      # 统一代码校验
 │       └── logger.py                 # structlog 日志
 │
 ├── config/                           # 配置文件
-│   ├── config.yaml                   # 主配置 (LLM/Agent/Godot/安全)
-│   └── prompts/                      # Prompt 模板 (11 个)
-│       ├── global_system.txt          # 全局约束 (禁止 Unity, 只生成 Godot)
-│       ├── code_generator_system.txt
-│       ├── scene_generator_system.txt
-│       └── ...
+│   ├── config.yaml                   # 主配置 (LLM/Agent/MCP/Sandbox/Playtest)
+│   ├── prompts/                      # Prompt 模板 (~12 个)
+│   │   ├── global_system.txt         # 全局约束 (禁止 Unity, 只生成 Godot)
+│   │   ├── code_generator_system.txt
+│   │   └── ...
+│   └── templates/godot/              # Godot 代码模板 (7 个)
 │
 ├── static/                           # Web 前端
-│   ├── index.html                    # 主界面
-│   ├── app.js                        # 前端逻辑
-│   ├── style.css                     # 样式
-│   └── lib/                          # 第三方库
-│
-├── scripts/                          # Godot GDScript (游戏代码)
-│   ├── player.gd                     # 玩家控制器
-│   ├── enemy.gd                      # 敌人 AI
-│   ├── pickup.gd                     # 拾取物
-│   ├── score_manager.gd              # 计分系统
-│   ├── hud.gd                        # HUD 界面
-│   └── ...
-│
-├── scenes/                           # Godot 场景文件
-│   ├── Main.tscn                     # 主场景 (project.godot 入口)
-│   ├── ForestPlatformer.tscn         # 森林平台跳跃
-│   ├── GameScene.tscn                # 通用游戏场景
-│   └── generated/                     # AI 生成的场景
-│
-├── autoload/                         # Godot Autoload 脚本
-│   └── game_manager.gd              # 全局 GameManager 单例
-│
-├── addons/                           # Godot 插件
-│   ├── gameforge/                    # GameForge 编辑器插件
-│   │   ├── plugin.gd                 # 插件入口
-│   │   ├── http_server.gd            # HTTP 服务 (端口 8765)
-│   │   ├── websocket_client.gd       # WebSocket 客户端 (端口 8766)
-│   │   ├── syntax_check.gd           # 语法校验
-│   │   └── ui_panel.gd              # 编辑器 UI 面板
-│   └── ai_native/                    # AI 原生控制器
-│       ├── ai_controller.gd          # AIController (autoload)
-│       └── ai_component.gd           # AI 组件
-│
-├── tests/                            # 测试
-│   ├── unit/                         # 单元测试
-│   └── conftest.py                   # pytest 配置
-│
-├── docker/                           # Docker 配置
-│   ├── Dockerfile
-│   └── prometheus.yml                # Prometheus 监控配置
-│
-├── config/templates/godot/           # Godot 代码模板 (7 个)
+├── scripts/ · scenes/ · autoload/    # 本仓库 Godot 侧资源
+├── addons/                           # Godot 插件 (gameforge / ai_native)
+├── projects/ · workspace/            # 生成项目与工作区产物
+├── tests/                            # unit / integration / e2e
+├── tools/install_godot.py            # Godot 版本钉死安装器
+├── docs/                             # 设计与 API 文档
 ├── project.godot                     # Godot 项目配置
 ├── start_server.ps1                  # Windows 启动脚本
 ├── docker-compose.yml                # Docker Compose 配置
 ├── requirements.txt                  # Python 依赖
-├── requirements-full.txt             # 完整依赖 (含可选组件)
-├── pyproject.toml                    # 项目配置 (hatchling)
+├── pyproject.toml                    # 项目配置 (hatchling + 工具链)
 └── .env.example                      # 环境变量模板
 ```
 
@@ -516,9 +522,11 @@ GameForge 在依赖服务不可用时自动降级，保证生成流程不中断�
 
 | 场景 | 触发条件 | 降级策略 |
 |------|----------|----------|
-| LLM API 不可用 | 401/超时 | GameDesigner/SceneGenerator 跳过 LLM，使用 GDM + 模板生成 |
-| Godot HTTP 不可用 | 端口 8765 无响应 | 直接写入 .tscn 文件到磁盘 |
-| 脚本缺失 | 场景引用的 .gd 不存在 | 自动生成桩脚本 (script_stub) |
+| LLM API 不可用 | 401/超时/熔断 | GameDesigner/SceneGenerator 等跳过 LLM，使用 GDM + 模板生成 |
+| LLM stub 模式 | `GAMEFORGE_LLM_STUB=1` | 全部 LLM 调用立即拒绝，走确定性模板 |
+| Godot HTTP 不可用 | 端口 8765 无响应 | 直接写入 `.tscn` 文件到磁盘 |
+| 脚本缺失 | 场景引用的 `.gd` 不存在 | 自动生成桩脚本 (script_stub) |
+| gd-guard 异常 | 扫描器不可用 | 失败开放，不阻塞主流程 |
 | 向量库未安装 | Qdrant 连接失败 | 禁用向量检索功能 |
 | Redis 未安装 | Redis 连接失败 | 禁用 LLM 结果缓存 |
 | Prometheus 未安装 | prometheus-client 缺失 | 禁用指标功能 |
@@ -532,7 +540,10 @@ GameForge 在依赖服务不可用时自动降级，保证生成流程不中断�
 pytest tests/unit/ -v
 
 # 运行特定测试
-pytest tests/unit/test_workflow.py -v
+pytest tests/unit/test_gdm.py -v
+
+# 跳过慢测试
+pytest -m "not slow"
 
 # 运行带覆盖率
 pytest --cov=src --cov-report=html
@@ -542,23 +553,22 @@ pytest --cov=src --cov-report=html
 
 ## 路线图
 
-- [x] Multi-Agent 协作引擎 (10 个 Agent)
+- [x] Multi-Agent 协作引擎（6 核心图节点 + Pipeline 内审查/修复）
 - [x] Godot 4.x 代码与场景生成
 - [x] LangGraph StateGraph 工作流
 - [x] Web 界面 + SSE 流式反馈
 - [x] Godot headless 编译校验
+- [x] Playtest 输入回放 + 帧证据
+- [x] VLM 视觉审查（可选开关）
+- [x] gd-guard 安全闸门
 - [x] Godot 编辑器插件 (HTTP + WebSocket)
 - [x] 量化评测体系
-- [x] 审查↔重构对话协商
-- [x] 反思回环
-- [x] 消息总线 + Debugger 动态委派
+- [x] MCP 工具服务器（image/engine/asset/knowledge/test）
+- [x] 沙箱工作区与 Web/Native 构建接口
 - [x] Docker 容器化部署
-- [x] 多 LLM Provider 支持 (5 家)
-- [ ] 平台高度变化生成 (阶梯式 Y 坐标)
-- [ ] 相机跟随玩家逻辑
-- [ ] 桩脚本 ScoreManager 集成
-- [ ] CI/CD 集成
+- [x] 多 LLM Provider 支持（6 家）
 - [ ] 知识库管理界面
+- [ ] CI/CD 集成
 - [ ] 多人协作
 
 ---
@@ -571,18 +581,25 @@ pytest --cov=src --cov-report=html
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 创建 Pull Request
 
+代码约定简述：
+
+- Python 3.11+，全 `async`；阻塞的 Godot 调用用 `run_in_executor`
+- `structlog` 结构化日志；中文模块 docstring + Google 风格 Args/Returns
+- LLM 调用必须有确定性兜底（模板/规则），禁止流程硬失败
+- 生成 GDScript：只许 Godot 4.x，PascalCase `class_name`、`snake_case` 成员、强类型注解
+- 工具链：`black` / `isort` / `ruff`（line-length 88）；`pytest` `asyncio_mode=auto`
+
 ---
 
 ## 许可证
 
-本项目采用 MIT 许可证 — 详见 [LICENSE](LICENSE) 文件
+本项目采用 MIT 许可证
 
 ---
 
 ## 致谢
 
 - [LangGraph](https://github.com/langchain-ai/langgraph) — Agent 状态图框架
-- [AutoGen](https://github.com/microsoft/autogen) — 多 Agent 对话
 - [FastAPI](https://fastapi.tiangolo.com/) — 异步 Web 框架
 - [Godot Engine](https://godotengine.org/) — 游戏引擎
 

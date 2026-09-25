@@ -22,6 +22,13 @@ from typing import Any, Dict, List, Optional
 import structlog
 
 from src.agents.scene_ir import SceneIR, EntityIR
+from src.engine.godot.layout_planner import (
+    FeelProfile,
+    LayoutPlan,
+    plan_layout,
+    resolve_feel,
+    validate_plan,
+)
 
 logger = structlog.get_logger()
 
@@ -101,14 +108,43 @@ def build_scene_tscn(
     height: int = 360,
     assets: Optional[Dict[str, str]] = None,
     layout_seed: int = 0,
+    feel_overrides: Optional[Dict[str, Any]] = None,
+    layout_plan: Optional[LayoutPlan] = None,
+    player_anim: Optional[Dict[str, Any]] = None,
 ) -> str:
     """生成 Godot 4 兼容的 .tscn 文本。
 
     assets: 可选 {player/enemy/pickup/background: res://assets/gen/*.png}。
-    提供素材时用 Sprite2D 真图覆盖色块视觉；不提供时行为与旧版完全一致。
+    player_anim: character_anim 元数据（idle/run/jump 帧）→ AnimatedSprite2D。
+    layout_seed / feel_overrides: 驱动智能布局规划器（可达跳跃包络）。
+    提供 layout_plan 时跳过内部规划（write_project 共享同一份规划）。
     """
     palette = _theme_for(scene_ir.theme, scene_ir.camera.background if scene_ir.camera else None)
     assets = assets or {}
+    player_anim = player_anim or {}
+    if layout_plan is None:
+        try:
+            layout_plan = plan_layout(
+                scene_ir,
+                width=width,
+                height=height,
+                layout_seed=layout_seed,
+                feel_overrides=feel_overrides,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("layout_planner_failed", error=str(e))
+            layout_plan = None
+    feel: FeelProfile = (
+        layout_plan.feel
+        if layout_plan is not None
+        else resolve_feel(
+            width=width,
+            height=height,
+            genre=getattr(scene_ir, "genre", "platformer") or "platformer",
+            difficulty=getattr(scene_ir, "difficulty", "medium") or "medium",
+            overrides=feel_overrides,
+        )
+    )
 
     # 实体分类（按 role 决定使用什么渲染策略）
     entities: List[EntityIR] = scene_ir.entities
@@ -145,6 +181,7 @@ def build_scene_tscn(
     parallax_script = "res://addons/gameforge/runtime/parallax_bg.gd"
     hud_script    = "res://addons/gameforge/runtime/hud.gd"
     player_script = "res://addons/gameforge/runtime/player.gd"
+    camera_script = "res://addons/gameforge/runtime/camera_follow.gd"
 
     ext_mover = _ext(mover_script, "Script")
     ext_bouncer = _ext(bouncer_script, "Script")
@@ -154,6 +191,7 @@ def build_scene_tscn(
     ext_parallax = _ext(parallax_script, "Script")
     ext_hud = _ext(hud_script, "Script")
     ext_player = _ext(player_script, "Script")
+    ext_camera = _ext(camera_script, "Script")
     game_flow_script = "res://addons/gameforge/runtime/game_flow.gd"
     ext_game_flow = _ext(game_flow_script, "Script")
 
@@ -184,9 +222,19 @@ def build_scene_tscn(
         sub_resources.append(f'[sub_resource type="RectangleShape2D" id="{ident}"]')
         sub_resources.append(f"size = Vector2({w}, {h})")
 
-    # 0. 根节点：位置偏移让内容居中于默认视口（无相机时视口显示世界 (0,0)-(W,H)）
+    # 相机模式：根节点必须停在原点，否则 Camera2D.limit（世界坐标）会与布局局部坐标错位，
+    # 玩家/地面落在可视区外——预览"看不见人、操作无效"的根因。
+    _cam_mode = (scene_ir.camera.mode if scene_ir.camera else "2d_side_view") or "2d_side_view"
+    _use_camera = scene_ir.genre not in GRID_GENRES and _cam_mode in (
+        "2d_side_view", "top_down", "arena",
+    )
+
+    # 0. 根节点：无相机时偏移居中视口；有相机时保持 (0,0) 让局部坐标=世界坐标
     nodes.append(_node_header(scene_name, "Node2D", parent=None))
-    nodes.append(f"position = Vector2({width // 2}, {height // 4})")
+    if _use_camera:
+        nodes.append("position = Vector2(0, 0)")
+    else:
+        nodes.append(f"position = Vector2({width // 2}, {height // 4})")
 
     # 1. 三层视差背景（层节点自带滚动脚本；Deco 子节点周期分布实现无缝循环）
     bg_count = 3
@@ -238,12 +286,36 @@ def build_scene_tscn(
             nodes.append("mouse_filter = 2")
 
     # 2. 平台/地面（StaticBody2D + 与视觉对齐的碰撞形状）
-    for idx, p in enumerate(platforms):
-        nm = f"Platform{idx+1}"
-        if p.role == "ground":
-            x, y, w, h = -width // 2, height // 2 - 24, width, 24
+    # 优先使用智能布局规划器；网格品类或规划失败时回退旧公式
+    use_smart = layout_plan is not None and scene_ir.genre not in GRID_GENRES
+    if use_smart:
+        ground_box = layout_plan.ground
+        gw, gh = int(ground_box.w), int(ground_box.h)
+        gx, gy = int(ground_box.x), int(ground_box.y)
+        _ground_boxes = [(gx - gw // 2, gy - gh // 2, gw, gh)]
+        _platform_boxes = [
+            (int(p.x - p.w // 2), int(p.y - p.h // 2), int(p.w), int(p.h))
+            for p in layout_plan.platforms
+        ]
+    else:
+        _ground_boxes = [(-width // 2, height // 2 - 24, width, 24)]
+        _platform_boxes = [
+            (
+                -200 + idx * 120 + rng.randint(-40, 40),
+                100 - idx * 30 + rng.randint(-16, 16),
+                100,
+                16,
+            )
+            for idx, p in enumerate(platforms)
+            if p.role != "ground"
+        ]
+
+    all_surface_boxes = list(_ground_boxes) + list(_platform_boxes)
+    for idx, (x, y, w, h) in enumerate(all_surface_boxes):
+        if use_smart:
+            nm = "Ground" if idx == 0 else f"Platform{idx}"
         else:
-            x, y, w, h = -200 + idx * 120 + rng.randint(-40, 40), 100 - idx * 30 + rng.randint(-16, 16), 100, 16
+            nm = f"Platform{idx + 1}"
         cx, cy = x + w // 2, y + h // 2
         _sub_rect(f"shape_{nm}", w, h)
         nodes.append(_node_header(nm, "StaticBody2D", parent="."))
@@ -251,7 +323,13 @@ def build_scene_tscn(
         nodes.append(_node_header("CollisionShape2D", "CollisionShape2D", parent=nm))
         nodes.append(f'shape = SubResource("shape_{nm}")')
         nodes.append(_node_header("Visual", "ColorRect", parent=nm))
-        nodes.append("color = " + _rgba(palette["ground"], 1.0))
+        # 地面/平台若与远景 BG 第三层同色会整片"隐形"，抬亮保证可读
+        _plat_rgb = [
+            min(255, int(palette["ground"][0] * 0.45 + 150)),
+            min(255, int(palette["ground"][1] * 0.45 + 130)),
+            min(255, int(palette["ground"][2] * 0.45 + 110)),
+        ]
+        nodes.append("color = " + _rgba(_plat_rgb, 1.0))
         nodes.append(f"offset_left = {-w // 2}")
         nodes.append(f"offset_top = {-h // 2}")
         nodes.append(f"offset_right = {w - w // 2}")
@@ -267,22 +345,42 @@ def build_scene_tscn(
             nodes.append("region_enabled = true")
             nodes.append(f"region_rect = Rect2(0, 0, {w}, {h})")
 
-    # 3. 主角（CharacterBody2D + 碰撞形状 + 弹跳视觉）
+    # 3. 主角（CharacterBody2D + 碰撞形状 + 弹跳视觉）— 坐标与手感由 FeelProfile 驱动
     _sub_rect("shape_player", 32, 48)
-    for _idx, p in enumerate(players):
+    if use_smart and layout_plan is not None:
+        _player_x = int(layout_plan.player.x)
+        _player_y = int(layout_plan.player.y)
+    else:
+        _player_x, _player_y = -width // 2 + 100, height // 2 - 80
+    player_count = len(players) if players else 1
+    for _idx in range(player_count):
         # 多个玩家实体时节点名必须互不相同，否则 .tscn 出现重名节点、场景解析失败
         pnm = "Player" if _idx == 0 else f"Player{_idx + 1}"
         nodes.append(_node_header(pnm, "CharacterBody2D", parent=".", extra_props=' groups=["player"]'))
-        nodes.append(f"position = Vector2({-width // 2 + 100}, {height // 2 - 80})")
+        if _idx == 0:
+            nodes.append(f"position = Vector2({_player_x}, {_player_y})")
+        else:
+            nodes.append(f"position = Vector2({_player_x + _idx * 48}, {_player_y})")
         nodes.append("script = ExtResource(\"" + ext_player + "\")")
-        nodes.append("speed = 120.0")
-        nodes.append("jump_velocity = -260.0")
-        nodes.append("gravity = 600.0")
+        nodes.append(f"speed = {feel.speed:.1f}")
+        nodes.append(f"jump_velocity = {feel.jump_velocity:.1f}")
+        nodes.append(f"gravity = {feel.gravity:.1f}")
+        nodes.append(f"coyote_time = {feel.coyote_time:.2f}")
+        nodes.append(f"jump_buffer = {feel.jump_buffer:.2f}")
+        nodes.append(f"fall_limit = {feel.fall_limit:.1f}")
         nodes.append(_node_header("CollisionShape2D", "CollisionShape2D", parent=pnm))
         nodes.append('shape = SubResource("shape_player")')
         nodes.append(_node_header("PlayerVisual", "ColorRect", parent=pnm))
-        # 有 AI 精灵时色块设为全透明（仅保留动画脚本载体作用），精灵盖在其上
-        nodes.append("color = " + (_rgba([255, 255, 255], 0.0) if ext_player_tex else _rgba(palette["accent"], 1.0)))
+        # 有 AI 精灵/序列帧时色块透明；无精灵时用高对比青白，避免与金色金币撞色
+        _has_player_frames = bool((player_anim.get("anims") or {}))
+        nodes.append(
+            "color = "
+            + (
+                _rgba([255, 255, 255], 0.0)
+                if ext_player_tex or _has_player_frames
+                else _rgba([120, 220, 255], 1.0)
+            )
+        )
         nodes.append("offset_left = -16")
         nodes.append("offset_top = -24")
         nodes.append("offset_right = 16")
@@ -291,8 +389,71 @@ def build_scene_tscn(
         nodes.append("bounce_height = 6.0")
         nodes.append("bounce_speed = 2.5")
         nodes.append("mouse_filter = 2")
-        # AI 玩家精灵（ColorRect 保留作动画脚本载体，精灵盖在其上）
-        if ext_player_tex is not None:
+
+        # 序列帧动画：AnimatedSprite2D + SpriteFrames（idle/run/jump）— 仅主玩家挂一套资源
+        if _has_player_frames and _idx == 0:
+            edge = float(player_anim.get("frame_edge") or 128)
+            scale = 48.0 / edge
+            anims = player_anim.get("anims") or {}
+            # 先为每个帧 texture 注册 ext_resource
+            frame_tex_ids: Dict[str, str] = {}
+            ordered_frames: List[Any] = []
+            for anim_name in ("idle", "run", "jump"):
+                meta = anims.get(anim_name)
+                if not meta:
+                    continue
+                for fr in meta.get("frames") or []:
+                    path = fr.get("path")
+                    if not path or path in frame_tex_ids:
+                        continue
+                    frame_tex_ids[path] = _ext(path, "Texture2D")
+                    ordered_frames.append((anim_name, path, fr.get("index", 0), meta))
+
+            # SpriteFrames subresource
+            sf_id = "SpriteFrames_player"
+            sub_resources.append(f'[sub_resource type="SpriteFrames" id="{sf_id}"]')
+            # Godot 4 SpriteFrames.animations 数组格式
+            anim_blocks: List[str] = []
+            for anim_name in ("idle", "run", "jump"):
+                meta = anims.get(anim_name)
+                if not meta:
+                    continue
+                frames_arr: List[str] = []
+                for fr in meta.get("frames") or []:
+                    path = fr.get("path")
+                    tid = frame_tex_ids.get(path)
+                    if not tid:
+                        continue
+                    frames_arr.append(
+                        "{\n"
+                        f'"duration": 1.0,\n'
+                        f'"texture": ExtResource("{tid}")\n'
+                        "}"
+                    )
+                if not frames_arr:
+                    continue
+                loop = "true" if meta.get("loop", True) else "false"
+                fps = float(meta.get("fps", 8))
+                name_lit = f'&"{anim_name}"'
+                anim_blocks.append(
+                    "{\n"
+                    '"frames": [\n' + ",\n".join(frames_arr) + "\n],\n"
+                    f'"loop": {loop},\n'
+                    f'"name": {name_lit},\n'
+                    f'"speed": {fps}\n'
+                    "}"
+                )
+            sub_resources.append("animations = [" + ",\n".join(anim_blocks) + "]")
+
+            nodes.append(_node_header("Anim", "AnimatedSprite2D", parent=f"{pnm}/PlayerVisual"))
+            nodes.append(f'sprites = SubResource("{sf_id}")')
+            nodes.append("position = Vector2(16, 24)")
+            nodes.append(f"scale = Vector2({scale:.4f}, {scale:.4f})")
+            nodes.append("texture_filter = 1")
+            nodes.append("animation = &\"idle\"")
+            nodes.append("autoplay = \"idle\"")
+            nodes.append("frame = 0")
+        elif ext_player_tex is not None:
             nodes.append(_node_header("Sprite", "Sprite2D", parent=f"{pnm}/PlayerVisual"))
             nodes.append('texture = ExtResource("' + ext_player_tex + '")')
             # Control 子节点坐标原点在左上角，矩形 32x48 → 中心 (16, 24)
@@ -300,14 +461,35 @@ def build_scene_tscn(
             nodes.append(f"scale = Vector2({48 / 512:.4f}, {48 / 512:.4f})")
             nodes.append("texture_filter = 1")
 
-    # 4. 敌人（巡逻）
-    for idx, e in enumerate(enemies):
+    # 3.5 跟随相机（2D 侧视/竞技场：平滑跟随玩家，预览手感关键）
+    # 根节点在相机模式下已是 (0,0)，limit 与布局局部坐标系一致
+    if _use_camera:
+        nodes.append(_node_header("Camera2D", "Camera2D", parent="."))
+        nodes.append("script = ExtResource(\"" + ext_camera + "\")")
+        nodes.append(f"position = Vector2({_player_x}, {_player_y - 20})")
+        nodes.append("position_smoothing_enabled = true")
+        nodes.append("position_smoothing_speed = 6.0")
+        nodes.append("limit_left = " + str(-width // 2))
+        nodes.append("limit_right = " + str(width // 2))
+        nodes.append("limit_top = " + str(-height // 2))
+        nodes.append("limit_bottom = " + str(height // 2 + 40))
+        nodes.append("enabled = true")
+
+    # 4. 敌人（巡逻）— 智能布局时用规划器坐标/巡逻范围
+    if use_smart and layout_plan is not None and layout_plan.enemies:
+        _enemy_iter = [(e.x, e.y, float(e.meta.get("range", 80.0))) for e in layout_plan.enemies]
+    else:
+        enemy_count = len(enemies) if enemies else 0
+        _enemy_iter = [
+            (width // 2 - 80 + idx * 60, height // 2 - 60, 80.0) for idx in range(enemy_count)
+        ]
+    for idx, (ex, ey, erange) in enumerate(_enemy_iter):
         nm = f"Enemy{idx+1}"
         nodes.append(_node_header(nm, "CharacterBody2D", parent=".", extra_props=' groups=["enemy"]'))
-        nodes.append(f"position = Vector2({width // 2 - 80 + idx * 60}, {height // 2 - 60})")
+        nodes.append(f"position = Vector2({int(ex)}, {int(ey)})")
         nodes.append("script = ExtResource(\"" + ext_walker + "\")")
-        nodes.append("speed = 50.0")
-        nodes.append("range = 80.0")
+        nodes.append(f"speed = {max(40.0, feel.speed * 0.28):.1f}")
+        nodes.append(f"range = {erange:.1f}")
         nodes.append("color_seed = " + str(idx * 31))
         nodes.append(_node_header("Visual", "ColorRect", parent=nm))
         nodes.append("color = " + (_rgba([255, 255, 255], 0.0) if ext_enemy_texes else _rgba([220, 80, 80], 1.0)))
@@ -345,11 +527,19 @@ def build_scene_tscn(
             nodes.append(f"scale = Vector2({40 / 512:.4f}, {40 / 512:.4f})")
             nodes.append("texture_filter = 1")
 
-    # 6. 道具（漂浮金币，玩家碰到收集）
-    for idx, pk in enumerate(pickups):
+    # 6. 道具（漂浮金币，玩家碰到收集）— 优先规划器落点（平台上空）
+    if use_smart and layout_plan is not None and layout_plan.pickups:
+        _pickup_iter = [(p.x, p.y) for p in layout_plan.pickups]
+    else:
+        pickup_count = len(pickups) if pickups else 0
+        _pickup_iter = [
+            (-200 + idx * 80 + rng.randint(-30, 30), 60 + (idx % 2) * 40 + rng.randint(-16, 16))
+            for idx in range(pickup_count)
+        ]
+    for idx, (pkx, pky) in enumerate(_pickup_iter):
         nm = f"Pickup{idx+1}"
         nodes.append(_node_header(nm, "Area2D", parent="."))
-        nodes.append(f"position = Vector2({-200 + idx * 80 + rng.randint(-30, 30)}, {60 + (idx % 2) * 40 + rng.randint(-16, 16)})")
+        nodes.append(f"position = Vector2({int(pkx)}, {int(pky)})")
         nodes.append("script = ExtResource(\"" + ext_pickup + "\")")
         nodes.append(_node_header("Visual", "ColorRect", parent=nm))
         nodes.append("color = " + (_rgba([255, 255, 255], 0.0) if ext_pickup_tex else _rgba([255, 220, 60], 1.0)))
@@ -375,10 +565,21 @@ def build_scene_tscn(
         )
 
     # 7. 装饰物（树/石头，立在地面附近）
-    for idx, d in enumerate(decorations):
+    if use_smart and layout_plan is not None and layout_plan.decorations:
+        _deco_iter = [(d.x, d.y) for d in layout_plan.decorations]
+    else:
+        deco_count_n = len(decorations) if decorations else 0
+        _deco_iter = [
+            (
+                -width // 2 + 60 + idx * 90 + rng.randint(-24, 24),
+                height // 2 - 40 - (idx % 3) * 24 + rng.randint(-8, 8),
+            )
+            for idx in range(deco_count_n)
+        ]
+    for idx, (dx, dy) in enumerate(_deco_iter):
         nm = f"Prop{idx+1}"
         nodes.append(_node_header(nm, "Node2D", parent="."))
-        nodes.append(f"position = Vector2({-width // 2 + 60 + idx * 90 + rng.randint(-24, 24)}, {height // 2 - 40 - (idx % 3) * 24 + rng.randint(-8, 8)})")
+        nodes.append(f"position = Vector2({int(dx)}, {int(dy)})")
         nodes.append(_node_header("Visual", "ColorRect", parent=nm))
         nodes.append("color = " + _rgba(palette["ground"], 0.9))
         nodes.append("offset_left = -8")
@@ -688,6 +889,17 @@ func _ready() -> void:
     # 预览/截图模式：自动开始（否则截图永远停在开始画面，玩家无法点击）
     if OS.get_environment("GAMEFORGE_PREVIEW_AUTOSTART").to_lower().strip_edges() == "1":
         start_game()
+        return
+    # 手动预览：0.8s 后自动开始，避免"窗口点不进去 / 不知道要先点一下"
+    var auto := Timer.new()
+    auto.wait_time = 0.8
+    auto.one_shot = true
+    auto.timeout.connect(start_game)
+    add_child(auto)
+    auto.start()
+    var title: Label = get_node_or_null("BootPanel/Title") as Label
+    if title:
+        title.text = "即将开始 · 方向键移动 · 空格跳跃"
 
 func _unhandled_input(event: InputEvent) -> void:
     var key := event as InputEventKey
@@ -794,39 +1006,91 @@ func _process(_delta: float) -> void:
 
     "player.gd": '''extends CharacterBody2D
 ## 玩家：键盘输入控制 + 重力跳跃 + 死亡判定（坠出屏幕 / 触碰敌人）
-@export var speed: float = 120.0
-@export var jump_velocity: float = -260.0
-@export var gravity: float = 600.0
-@export var fall_limit: float = 420.0
+## 手感参数由 scene_to_godot / FeelProfile 注入（@export 可在编辑器微调）
+@export var speed: float = 180.0
+@export var jump_velocity: float = -420.0
+@export var gravity: float = 980.0
+@export var fall_limit: float = 480.0
+@export var coyote_time: float = 0.10
+@export var jump_buffer: float = 0.10
+@export var cut_jump_on_release: bool = true
 
 signal died
 
 var _dead: bool = false
+var _coyote: float = 0.0
+var _jump_buffer: float = 0.0
+var _sfx_cache: Dictionary = {}
+var _jump_held_prev: bool = false
+
+func _move_dir() -> float:
+    var dir := 0.0
+    if InputMap.has_action("ui_left") and InputMap.has_action("ui_right"):
+        dir = Input.get_axis("ui_left", "ui_right")
+    if is_zero_approx(dir):
+        var left := Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT)
+        var right := Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT)
+        dir = (1.0 if right else 0.0) - (1.0 if left else 0.0)
+    return clampf(dir, -1.0, 1.0)
+
+func _jump_down() -> bool:
+    if Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_ENTER):
+        return true
+    return InputMap.has_action("ui_accept") and Input.is_action_pressed("ui_accept")
+
+func _anim_root() -> AnimatedSprite2D:
+    var n := get_node_or_null("PlayerVisual/Anim") as AnimatedSprite2D
+    return n
+
+func _update_anim() -> void:
+    var spr := _anim_root()
+    if spr == null or spr.sprite_frames == null:
+        return
+    var next := "idle"
+    if not is_on_floor():
+        next = "jump" if spr.sprite_frames.has_animation("jump") else "idle"
+    elif absf(velocity.x) > 8.0:
+        next = "run" if spr.sprite_frames.has_animation("run") else "idle"
+        spr.flip_h = velocity.x < 0.0
+    if spr.sprite_frames.has_animation(next) and spr.animation != next:
+        spr.play(next)
 
 func _physics_process(delta: float) -> void:
     if _dead:
         return
-    var dir := Input.get_axis("ui_left", "ui_right")
-    velocity.x = dir * speed
-    if is_on_floor() and Input.is_action_just_pressed("ui_accept"):
+    velocity.x = _move_dir() * speed
+    _update_anim()
+
+    if is_on_floor():
+        _coyote = coyote_time
+    else:
+        _coyote = maxf(0.0, _coyote - delta)
+
+    var jump_now := _jump_down()
+    var jump_released := _jump_held_prev and not jump_now
+    if jump_now and not _jump_held_prev:
+        _jump_buffer = jump_buffer
+    _jump_held_prev = jump_now
+    _jump_buffer = maxf(0.0, _jump_buffer - delta)
+
+    if _coyote > 0.0 and _jump_buffer > 0.0:
         velocity.y = jump_velocity
+        _coyote = 0.0
+        _jump_buffer = 0.0
         _sfx("jump")
+    if cut_jump_on_release and velocity.y < 0.0 and jump_released:
+        velocity.y *= 0.45
+
     velocity.y += gravity * delta
     move_and_slide()
-    # 触碰敌人（按命名约定 Enemy*）即死亡
+
     for i in get_slide_collision_count():
         var col := get_slide_collision(i).get_collider()
         if col is Node and (col as Node).name.begins_with("Enemy"):
             _die()
             return
-    # 坠出屏幕底部
     if position.y > fall_limit:
         _die()
-    # 横向 wrap 保持关卡连续
-    if position.x > 320.0:
-        position.x = -320.0
-    elif position.x < -320.0:
-        position.x = 320.0
 
 func _die() -> void:
     if _dead:
@@ -840,14 +1104,56 @@ func _die() -> void:
         gf.on_game_over()
 
 func _sfx(n: String) -> void:
-    var stream := load("res://assets/sfx/" + n + ".wav")
-    if stream == null:
+    var path := "res://assets/sfx/%s.wav" % n
+    if not ResourceLoader.exists(path):
         return
+    var stream := _sfx_cache.get(path) as AudioStream
+    if stream == null:
+        stream = ResourceLoader.load(path, "AudioStream") as AudioStream
+        if stream == null:
+            return
+        _sfx_cache[path] = stream
     var p := AudioStreamPlayer.new()
     p.stream = stream
+    p.volume_db = -6.0
     add_child(p)
     p.finished.connect(p.queue_free)
     p.play()
+
+''',
+
+    "camera_follow.gd": '''extends Camera2D
+## 平滑跟随玩家（2D 侧视/竞技场预览）
+@export var target_path: NodePath = NodePath(^"../Player")
+@export var look_ahead: float = 36.0
+@export var vertical_bias: float = -12.0
+
+var _target: Node2D = null
+
+func _ready() -> void:
+    enabled = true
+    make_current()
+    _resolve_target()
+
+func _resolve_target() -> void:
+    _target = get_node_or_null(target_path) as Node2D
+    if _target == null:
+        _target = get_tree().get_first_node_in_group("player") as Node2D
+
+func _process(delta: float) -> void:
+    if _target == null or not is_instance_valid(_target):
+        _resolve_target()
+        if _target == null:
+            return
+    var ahead := 0.0
+    if _target is CharacterBody2D:
+        ahead = signf((_target as CharacterBody2D).velocity.x) * look_ahead
+    var goal := Vector2(
+        _target.global_position.x + ahead,
+        _target.global_position.y + vertical_bias
+    )
+    # 直接跟随 + 轻平滑；limit 已在 .tscn 里按关卡范围写死
+    global_position = global_position.lerp(goal, 1.0 - exp(-10.0 * delta))
 
 ''',
 
@@ -1478,11 +1784,13 @@ def write_project(
     height: int = 360,
     assets: Optional[Dict[str, str]] = None,
     layout_seed: int = 0,
+    feel_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """把 SceneIR 完整写入一个 Godot 项目。
 
     assets: 可选 AI 素材（见 asset_forge.forge_assets），缺省用色块视觉。
-    返回 {"tscn_path": ..., "scene_count": ..., "entity_count": ...}
+    feel_overrides: 覆盖速度/跳跃/重力（与 GDM physics_settings 对齐）。
+    返回 {"tscn_path": ..., "layout": {...}, ...}
     """
     # 1. 写运行时脚本（被 .tscn 引用）
     runtime_dir = os.path.join(project_path, "addons", "gameforge", "runtime")
@@ -1491,11 +1799,78 @@ def write_project(
         with open(os.path.join(runtime_dir, fn), "w", encoding="utf-8") as f:
             f.write(code)
 
+    # 1.5 智能布局：与 .tscn 生成共享同一规划，落盘 layout_report 供 playtest/eval 读取
+    layout_plan = None
+    layout_report: Dict[str, Any] = {}
+    try:
+        layout_plan = plan_layout(
+            scene_ir,
+            width=width,
+            height=height,
+            layout_seed=layout_seed,
+            feel_overrides=feel_overrides,
+        )
+        layout_report = {
+            "schema": "gameforge.layout_report.v1",
+            "genre": getattr(scene_ir, "genre", ""),
+            "seed": layout_seed,
+            "feel": layout_plan.feel.to_overrides(),
+            "player": {"x": layout_plan.player.x, "y": layout_plan.player.y},
+            "platforms": [
+                {"x": p.x, "y": p.y, "w": p.w, "h": p.h, "name": p.name}
+                for p in layout_plan.platforms
+            ],
+            "validation": validate_plan(layout_plan),
+        }
+        report_path = os.path.join(project_path, "layout_report.json")
+        os.makedirs(project_path, exist_ok=True)
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(layout_report, f, ensure_ascii=False, indent=2)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write_project.layout_failed", error=str(e))
+
+    # 1.6 AI 美术：asset_forge（背景/角色/金币/地面贴图）；无 key/失败则保持色块
+    if not assets:
+        try:
+            from src.engine.godot.asset_forge import forge_assets
+
+            assets = forge_assets(scene_ir, project_path) or {}
+            if assets:
+                logger.info("write_project.assets_forged", keys=sorted(assets.keys()))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("write_project.asset_forge_failed", error=str(e))
+            assets = assets or {}
+    assets = assets or {}
+
+    # 1.7 角色序列帧（即使 assets 已有静态图也要建 idle/run/jump）
+    player_anim: Dict[str, Any] = {}
+    try:
+        from src.engine.godot.character_anim import build_player_animations
+
+        player_anim = build_player_animations(project_path) or {}
+        if player_anim.get("ok"):
+            logger.info(
+                "write_project.player_anim",
+                source=player_anim.get("source"),
+                anims=list((player_anim.get("anims") or {}).keys()),
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write_project.player_anim_failed", error=str(e))
+
     # 2. 写 .tscn（固定文件名 main.tscn，与 API 自动生成检测、_pick_scene 约定一致）
     scenes_dir = os.path.join(project_path, "scenes")
     os.makedirs(scenes_dir, exist_ok=True)
     scene_name = _sanitize_node_name(scene_ir.scene_name or "GameScene")
-    tscn_text = build_scene_tscn(scene_ir, width=width, height=height, assets=assets, layout_seed=layout_seed)
+    tscn_text = build_scene_tscn(
+        scene_ir,
+        width=width,
+        height=height,
+        assets=assets,
+        layout_seed=layout_seed,
+        feel_overrides=feel_overrides,
+        layout_plan=layout_plan,
+        player_anim=player_anim,
+    )
     tscn_path = os.path.join(scenes_dir, "main.tscn")
     with open(tscn_path, "w", encoding="utf-8") as f:
         f.write(tscn_text)
@@ -1514,6 +1889,10 @@ def write_project(
             write_sfx(project_path)
         except Exception as e2:  # noqa: BLE001
             logger.warning("write_project.sfx_fallback_failed", error=str(e2))
+    try:
+        _ensure_audio_import_stubs(project_path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write_project.audio_import_stub_failed", error=str(e))
     try:
         from src.engine.godot.export_kit import write_export_presets
 
@@ -1556,7 +1935,52 @@ def write_project(
         "scene_name": scene_name,
         "entity_count": sum(1 + max(0, e.count - 1) for e in scene_ir.entities),
         "runtime_scripts": list(RUNTIME_SCRIPTS.keys()),
+        "layout": layout_report,
+        "feel": layout_plan.feel.to_overrides() if layout_plan else {},
+        "assets": assets or {},
+        "player_anim": {
+            "source": player_anim.get("source"),
+            "anims": list((player_anim.get("anims") or {}).keys()),
+            "ok": player_anim.get("ok", False),
+        },
     }
+
+
+def _ensure_audio_import_stubs(project_path: str) -> None:
+    """为 assets/sfx/*.wav 写最小 .import 桩，避免裸 wav 触发 No loader found。
+
+    完整 uid/dest 仍由 `godot --headless --import` 补全；桩文件让编辑器知道导入类型。
+    """
+    sfx_dir = os.path.join(project_path, "assets", "sfx")
+    if not os.path.isdir(sfx_dir):
+        return
+    for name in os.listdir(sfx_dir):
+        if not name.endswith(".wav"):
+            continue
+        imp_path = os.path.join(sfx_dir, name + ".import")
+        if os.path.isfile(imp_path):
+            continue
+        src = "res://assets/sfx/" + name
+        try:
+            with open(imp_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "[remap]\n\n"
+                    'importer="wav"\n'
+                    'type="AudioStreamWAV"\n\n'
+                    "[deps]\n\n"
+                    f'source_file="{src}"\n\n'
+                    "[params]\n\n"
+                    "force/mono=false\n"
+                    "force/max_rate=false\n"
+                    "force/max_rate_hz=44100\n"
+                    "compress/mode=0\n"
+                    "compress/quality=0.5\n"
+                    "loop_mode=0\n"
+                    "loop_start=0\n"
+                    "loop_end=-1\n"
+                )
+        except OSError:
+            pass
 
 
 def _minimal_project_godot(scene_name: str, *, width: int = 640, height: int = 360) -> str:

@@ -1,0 +1,303 @@
+[gd_scene load_steps=1 format=3]
+
+[node name="PlatformerLevel1" type="Node2D"]
+
+[node name="Background" type="ColorRect" parent="."]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -320.0
+offset_top = -180.0
+offset_right = 320.0
+offset_bottom = 180.0
+color = Color(0.53, 0.81, 0.92, 1.0)
+z_index = -100
+mouse_filter = 2
+
+[node name="Camera" type="Camera2D" parent="."]
+zoom = Vector2(0.3, 0.3)
+position = Vector2(0.0, 0.0)
+
+[node name="Light" type="DirectionalLight2D" parent="."]
+energy = 1.0
+
+[node name="Player" type="CharacterBody2D" parent="."]
+position = Vector2(-30.0, 0.0)
+[node name="Mesh" type="ColorRect" parent="Player"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.5
+offset_top = -0.5
+offset_right = 0.5
+offset_bottom = 0.5
+color = Color(0.2, 0.4, 0.9, 1.0)
+mouse_filter = 2
+
+[node name="Ground" type="StaticBody2D" parent="."]
+position = Vector2(-27.0, -3.0)
+[node name="Mesh" type="ColorRect" parent="Ground"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -10.0
+offset_top = -0.25
+offset_right = 10.0
+offset_bottom = 0.25
+color = Color(0.36, 0.25, 0.15, 1.0)
+mouse_filter = 2
+
+[node name="Platform1" type="StaticBody2D" parent="."]
+position = Vector2(-24.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Platform1"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -2.0
+offset_top = -0.25
+offset_right = 2.0
+offset_bottom = 0.25
+color = Color(0.5, 0.5, 0.4, 1.0)
+mouse_filter = 2
+
+[node name="Platform2" type="StaticBody2D" parent="."]
+position = Vector2(-21.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Platform2"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -2.0
+offset_top = -0.25
+offset_right = 2.0
+offset_bottom = 0.25
+color = Color(0.5, 0.5, 0.4, 1.0)
+mouse_filter = 2
+
+[node name="Platform3" type="StaticBody2D" parent="."]
+position = Vector2(-18.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Platform3"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -2.0
+offset_top = -0.25
+offset_right = 2.0
+offset_bottom = 0.25
+color = Color(0.5, 0.5, 0.4, 1.0)
+mouse_filter = 2
+
+[node name="Platform4" type="StaticBody2D" parent="."]
+position = Vector2(-15.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Platform4"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -2.0
+offset_top = -0.25
+offset_right = 2.0
+offset_bottom = 0.25
+color = Color(0.5, 0.5, 0.4, 1.0)
+mouse_filter = 2
+
+[node name="Platform5" type="StaticBody2D" parent="."]
+position = Vector2(-12.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Platform5"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -2.0
+offset_top = -0.25
+offset_right = 2.0
+offset_bottom = 0.25
+color = Color(0.5, 0.5, 0.4, 1.0)
+mouse_filter = 2
+
+[node name="Coin1" type="Area2D" parent="."]
+position = Vector2(-9.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin1"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin2" type="Area2D" parent="."]
+position = Vector2(-6.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin2"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin3" type="Area2D" parent="."]
+position = Vector2(-3.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin3"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin4" type="Area2D" parent="."]
+position = Vector2(0.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin4"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin5" type="Area2D" parent="."]
+position = Vector2(3.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin5"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin6" type="Area2D" parent="."]
+position = Vector2(6.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin6"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin7" type="Area2D" parent="."]
+position = Vector2(9.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin7"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin8" type="Area2D" parent="."]
+position = Vector2(12.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin8"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin9" type="Area2D" parent="."]
+position = Vector2(15.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin9"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Coin10" type="Area2D" parent="."]
+position = Vector2(18.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Coin10"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.25
+offset_top = -0.25
+offset_right = 0.25
+offset_bottom = 0.25
+color = Color(1.0, 0.85, 0.2, 1.0)
+mouse_filter = 2
+
+[node name="Enemy1" type="CharacterBody2D" parent="."]
+position = Vector2(21.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Enemy1"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.5
+offset_top = -0.5
+offset_right = 0.5
+offset_bottom = 0.5
+color = Color(0.8, 0.15, 0.1, 1.0)
+mouse_filter = 2
+
+[node name="Enemy2" type="CharacterBody2D" parent="."]
+position = Vector2(24.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Enemy2"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.5
+offset_top = -0.5
+offset_right = 0.5
+offset_bottom = 0.5
+color = Color(0.8, 0.15, 0.1, 1.0)
+mouse_filter = 2
+
+[node name="Enemy3" type="CharacterBody2D" parent="."]
+position = Vector2(27.0, 1.0)
+[node name="Mesh" type="ColorRect" parent="Enemy3"]
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 0.0
+anchor_bottom = 0.0
+offset_left = -0.5
+offset_top = -0.5
+offset_right = 0.5
+offset_bottom = 0.5
+color = Color(0.8, 0.15, 0.1, 1.0)
+mouse_filter = 2

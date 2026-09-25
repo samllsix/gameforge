@@ -176,6 +176,17 @@ def test_export_gate_passes_when_allow(monkeypatch, tmp_path):
         export_kit, "export_project",
         lambda *a, **k: {"ok": True, "out_path": "x", "stderr_tail": ""},
     )
+    # Web 预设走 export_web_build（版本化构建），需一并桩掉
+    monkeypatch.setattr(
+        export_kit, "export_web_build",
+        lambda *a, **k: {
+            "ok": True,
+            "out_path": "x",
+            "stderr_tail": "",
+            "build_id": "test-build",
+            "manifest": {"build_id": "test-build"},
+        },
+    )
 
     client = TestClient(main_mod.app)
     r = client.post("/api/v1/projects/demo_jump_v2/export")

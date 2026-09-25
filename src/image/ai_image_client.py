@@ -177,6 +177,12 @@ class StepImageProvider(BaseImageProvider):
                 "n": 1,
             }
 
+            # i2i（P3）：参考图 data URI。step-image-edit-2 在 /images/generations
+            # 上接受 image_urls，实测为真编辑语义（参考图黑边框可被完整保留）。
+            image_urls = kwargs.get("image_urls")
+            if image_urls:
+                payload["image_urls"] = list(image_urls)
+
             if seed is not None:
                 payload["seed"] = seed
 
@@ -416,12 +422,43 @@ class AIImageClient:
             # 没有运行的事件循环
             return asyncio.run(coro)
 
+    def _reference_data_uris(self, paths: Optional[List[str]]) -> List[str]:
+        """把本地参考图路径转成 data URI 列表（P3 i2i）。
+
+        不存在/读取失败/非图片的文件跳过——参考图是增强项，
+        缺一张不应让整次生成失败（退化为文生图）。
+        """
+        if not paths:
+            return []
+        uris: List[str] = []
+        for p in paths:
+            try:
+                with open(p, "rb") as f:
+                    raw = f.read()
+                if not raw:
+                    continue
+                ext = os.path.splitext(p)[1].lower()
+                mime = {
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".webp": "image/webp",
+                }.get(ext, "image/png")
+                uris.append(f"data:{mime};base64,{base64.b64encode(raw).decode()}")
+            except OSError:
+                continue
+        return uris
+
     def generate_image(
         self,
         prompt: str,
         size: Optional[List[int]] = None,
         seed: Optional[int] = None,
         provider: Optional[str] = None,
+        genre: Optional[str] = None,
+        palette_base: Optional[str] = None,
+        camera: Optional[str] = None,
+        reference_image_paths: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """生成图像（同步接口）
@@ -431,13 +468,26 @@ class AIImageClient:
             size: [width, height]
             seed: 随机种子
             provider: 指定提供者（step 或 sensenova），None 表示自动选择
+            genre: 游戏品类（推断相机视角，见 style.apply_art_style）
+            palette_base: 主题包调色板基色（决定调色倾向）
+            camera: 相机模式（2d_side_view / top_down / ...）
+            reference_image_paths: 参考图本地路径（i2i 图生图，P3）。
+                Step 的 step-image-edit-2 走 /images/generations + image_urls
+                （实测编辑语义有效：黑边框参考图可被完整保留）；
+                SenseNova 等不支持的 provider 会静默忽略，退化为文生图。
 
         Returns:
             生成结果字典
         """
         from src.image.style import apply_art_style
         # 全局美术风格约束：所有 AI 生图统一为类星露谷 2D 像素风
-        prompt = apply_art_style(prompt)
+        # （视角/调色按 scene_ir 上下文参数化，P1 见 src/image/style.py）
+        prompt = apply_art_style(prompt, genre=genre, palette_base=palette_base, camera=camera)
+
+        # i2i：本地参考图 → data URI，经 kwargs 透传给 provider（P3）
+        ref_uris = self._reference_data_uris(reference_image_paths)
+        if ref_uris:
+            kwargs["image_urls"] = ref_uris
 
         if size is None:
             size = [512, 512]

@@ -96,11 +96,16 @@ def test_result_to_dict_contract():
     assert d["scene_path"] == "res://scenes/Main.tscn"
     assert d["frame_count"] == 60
     assert d["elapsed_seconds"] == 1.234
-    # 契约字段集：下游事件回调只读这些键
+    # 契约字段集：src/core/result 信封键 + 本操作旧键（下游事件回调只读这些键）
     assert set(d.keys()) == {
+        # 信封（gameforge.operation_result.v1）
+        "schema", "operation", "ok", "skipped", "skip_reason", "artifacts",
+        # 本操作旧键
         "runnable", "exit_code", "errors", "warnings",
         "frame_count", "elapsed_seconds", "scene_path",
     }
+    assert d["operation"] == "runtime_smoke.run_scene"
+    assert d["ok"] is True and d["skipped"] is False and d["skip_reason"] is None
 
 
 def test_result_with_runtime_errors_is_not_runnable():

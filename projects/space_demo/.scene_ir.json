@@ -1,0 +1,67 @@
+{
+  "project_id": "space_demo",
+  "requirements": "太空射击",
+  "scene_ir": {
+    "scene_name": "GameScene",
+    "genre": "shooter",
+    "layout": "linear",
+    "difficulty": "medium",
+    "camera": {
+      "mode": "2d_side_view",
+      "follow_target": "Player",
+      "background": "space_black"
+    },
+    "entities": [
+      {
+        "name": "Player",
+        "role": "player",
+        "count": 1,
+        "spawn_zone": "bottom",
+        "script": "PlayerController"
+      },
+      {
+        "name": "Ground",
+        "role": "ground",
+        "count": 1,
+        "spawn_zone": "bottom",
+        "script": null
+      },
+      {
+        "name": "Invader1",
+        "role": "enemy",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "EnemyController"
+      },
+      {
+        "name": "Invader2",
+        "role": "enemy",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "EnemyController"
+      },
+      {
+        "name": "Invader3",
+        "role": "enemy",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "EnemyController"
+      },
+      {
+        "name": "Invader4",
+        "role": "enemy",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "EnemyController"
+      },
+      {
+        "name": "Powerup",
+        "role": "pickup",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "CoinController"
+      }
+    ],
+    "theme": "space_black"
+  }
+}

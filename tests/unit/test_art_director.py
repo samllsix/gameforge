@@ -65,6 +65,38 @@ class _FakeLLM:
             "platform", "decoration", "npc", "icon"]})
 
 
+class _CapturingLLM:
+    """捕获 prompt 与采样参数，用于 P2 断言。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def chat_sync(self, messages, **kw):
+        self.calls.append({"content": messages[0]["content"], "kw": kw})
+        import json
+
+        return json.dumps({"background": "cyber skyline"})
+
+
+def test_llm_prompt_allows_style_words_with_shared_design_language(monkeypatch):
+    """P2：art_director prompt 放开风格词（光照/描边/剪影），降温到 0.4。"""
+    monkeypatch.setenv("GAMEFORGE_SMART_PROMPTS", "1")
+    fake = _CapturingLLM()
+    monkeypatch.setattr("src.utils.llm_client.get_llm_client", lambda config: fake)
+    ir = default_scene_ir(theme="neon_city", genre="shooter")
+
+    plan_art(ir)
+    assert fake.calls, "LLM 应被调用一次"
+    content = fake.calls[0]["content"]
+    # 不再禁止风格词；改为要求统一画法
+    assert "no style keywords" not in content
+    assert "lighting" in content
+    assert "outline" in content
+    assert "silhouette" in content
+    # 0.8 偏高 → 0.4（同主题两次运行视觉差异大）
+    assert fake.calls[0]["kw"].get("temperature") == 0.4
+
+
 def test_forge_assets_accepts_art_prompts(monkeypatch, tmp_path):
     from src.engine.godot import asset_forge
     from src.engine.godot.scene_to_godot import default_scene_ir
@@ -78,14 +110,15 @@ def test_forge_assets_accepts_art_prompts(monkeypatch, tmp_path):
 
     captured = {}
 
-    def fake_generate_one(key, project_path, timeout, prompt=None):
-        captured[key] = prompt
-        out = os.path.join(project_path, "assets", "gen", f"{key}.png")
+    def fake_generate_one(key, project_path, timeout, prompt=None, pixel_ctx=None, style_ctx=None,
+                          reference_paths=None, out_key="", same_subject=False):
+        captured[out_key or key] = prompt
+        out = os.path.join(project_path, "assets", "gen", f"{out_key or key}.png")
         os.makedirs(os.path.dirname(out), exist_ok=True)
         from PIL import Image
 
         Image.new("RGBA", (128, 128), (10, 10, 10, 255)).save(out)
-        return "res://assets/gen/" + key + ".png"
+        return "res://assets/gen/" + (out_key or key) + ".png"
 
     monkeypatch.setattr(asset_forge, "_generate_one", fake_generate_one)
     art = {"player": "cyber courier with jetpack", "enemy": "rogue patrol drone"}
@@ -94,4 +127,9 @@ def test_forge_assets_accepts_art_prompts(monkeypatch, tmp_path):
     )
     assert captured["player"] == "cyber courier with jetpack"
     assert captured["enemy"] == "rogue patrol drone"
-    assert len(assets) == 9
+    # 静态素材 9 件 + 玩家序列帧产物（player_anim / player_frames）
+    assert set(assets) >= {
+        "background", "player", "enemy", "pickup", "icon",
+        "ground", "platform", "decoration", "npc",
+    }
+    assert "player_anim" in assets

@@ -201,8 +201,8 @@
   .pv-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto}
   .pv-wrap{flex:1;min-height:0;border-radius:12px;border:1px solid rgba(105,184,255,.22);background:
     radial-gradient(60% 60% at 50% 45%,rgba(20,40,80,.5),rgba(4,8,18,.9));position:relative;overflow:hidden;display:grid;place-items:center}
-  .pv-wrap img{max-width:100%;max-height:100%;object-fit:contain;display:none;box-shadow:0 12px 40px rgba(0,0,0,.5)}
-  .pv-wrap.live img{display:block}
+  .pv-wrap iframe{width:100%;height:100%;border:0;display:none;background:#050a13}
+  .pv-wrap.live iframe{display:block}
   .pv-wait{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-3);font-size:var(--fs-sub);letter-spacing:1px}
   .pv-wrap.live .pv-wait{display:none}
   .pv-radar{width:64px;height:64px;border-radius:50%;position:relative;border:1px solid rgba(105,184,255,.3)}
@@ -212,6 +212,11 @@
   @keyframes radar{to{transform:rotate(360deg)}}
   .pv-tag{position:absolute;left:12px;bottom:10px;z-index:5;display:flex;gap:6px;flex-wrap:wrap}
   .pv-tag .dchip{font-family:var(--mono);font-size:10px}
+  .pv-actions{margin-left:auto;display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .pv-actions .btn{padding:7px 11px;font-size:11px;min-height:36px}
+  .pv-actions .btn:disabled{cursor:wait;opacity:.55;filter:saturate(.5)}
+  .pv-console{position:absolute;right:10px;bottom:10px;left:10px;z-index:6;max-height:28%;overflow:auto;padding:8px 10px;border:1px solid rgba(105,184,255,.18);border-radius:7px;background:rgba(3,8,18,.84);color:#b7d4ee;font:10px/1.5 var(--mono);white-space:pre-wrap;display:none}
+  .pv-console.show{display:block}
 
   /* —— 测试/审查卡片 —— */
   .qa-card{border:1px solid rgba(120,170,230,.14);border-radius:10px;background:rgba(8,15,30,.5);padding:11px 13px;flex:0 0 auto}
@@ -577,18 +582,24 @@
       <!-- 实时预览 -->
       <section class="view" data-view="scene">
         <div class="vpanel hud" style="padding:12px 14px"><span class="grid"></span>
-          <div class="pv-bar">
-            <div class="ph" style="margin:0">实时预览 <span class="en">GODOT LIVE</span></div>
-            <span class="chip c-mut" id="pvState">待机</span>
-            <span class="chip c-mut" id="pvSource" hidden></span>
-            <span class="chip c-mut" id="pvRes" hidden></span>
-            <span class="chip c-mut" id="pvScene" hidden></span>
-          </div>
-          <div class="pv-wrap" id="pvWrap">
-            <img id="pvImg" alt="Godot 实时画面">
-            <div class="pv-wait"><div class="pv-radar"></div><span id="pvWaitText">等待 Godot 画面…</span></div>
-            <div class="pv-tag" id="pvTag"></div>
-          </div>
+            <div class="pv-bar">
+              <div class="ph" style="margin:0">试玩工作台 <span class="en">GODOT WEB</span></div>
+              <span class="chip c-mut" id="pvState">待机</span>
+              <span class="chip c-mut" id="pvRes" hidden></span>
+              <span class="chip c-mut" id="pvScene" hidden></span>
+              <div class="pv-actions">
+                <button class="btn" id="pvBuildBtn" type="button">构建试玩版</button>
+                <button class="btn" id="pvNativeBtn" type="button">启动原生版</button>
+                <button class="btn" id="pvLogsBtn" type="button">运行日志</button>
+                <button class="btn" id="pvShotBtn" type="button">诊断截图</button>
+              </div>
+            </div>
+            <div class="pv-wrap" id="pvWrap">
+              <iframe id="pvGame" title="Godot Web 试玩" sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-forms" allow="autoplay; fullscreen; gamepad" referrerpolicy="no-referrer"></iframe>
+              <div class="pv-wait"><div class="pv-radar"></div><span id="pvWaitText">构建完成后，在此加载可交互 Godot Web 试玩版</span></div>
+              <div class="pv-tag" id="pvTag"></div>
+              <pre class="pv-console" id="pvConsole" aria-live="polite"></pre>
+            </div>
         </div>
       </section>
 
@@ -697,12 +708,9 @@ const $=(s)=>document.querySelector(s);
 const $$=(s)=>Array.from(document.querySelectorAll(s));
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-/* 后端 base URL：file:// 或 localhost 打开时直连本地服务；其余走同源（反代部署） */
+/* 后端 base URL：服务页面走同源；file:// 直开时回退本地开发服务。 */
 const IS_FILE = location.protocol === 'file:';
-const PREVIEW_BACKEND = (IS_FILE
-  || location.hostname === '127.0.0.1'
-  || location.hostname === 'localhost')
-  ? 'http://127.0.0.1:8000' : '';
+const PREVIEW_BACKEND = IS_FILE ? 'http://127.0.0.1:8000' : '';
 
 async function apiFetch(path, options) {
   const response = await fetch(`${PREVIEW_BACKEND}${path}`, options);
@@ -966,7 +974,7 @@ function showView(v,fromUser){
     el.classList.toggle('active',el.dataset.view===v);
     if(el.dataset.view===v)el.classList.remove('busy');});
   if(v==='overview'&&gx.clientWidth>4)sizeC(gx);
-  if(v==='scene'){const w=$('#pvWrap');if(w&&w.classList.contains('live')===false&&S.projectId)startPreview();}
+  if(v==='scene'&&S.projectId)loadPlayableBuild(false);
   if(v==='log'){renderLogInto($('#logFull'),300);}
 }
 $$('.nav-item').forEach(it=>it.addEventListener('click',()=>showView(it.dataset.view,true)));
@@ -1208,40 +1216,50 @@ function setBuildResult(html,bad){
   if(!html){el.hidden=true;el.innerHTML='';return;}
   el.hidden=false;el.className='build-result'+(bad?' bad':'');el.innerHTML=html;}
 
-/* ═══════════ 实时预览（Godot 真渲染） ═══════════ */
-const pvImg=$('#pvImg'),pvWrap=$('#pvWrap');
+/* ═══════════ 试玩工作台（真实 Godot Web 导出） ═══════════ */
+const pvGame=$('#pvGame'),pvWrap=$('#pvWrap'),pvConsole=$('#pvConsole');
 function setPvState(txt,cls){const c=$('#pvState');c.textContent=txt;c.className='chip '+(cls||'c-mut');}
-function startPreview(){
-  if(S.preview.active||!S.projectId)return;
-  S.preview.active=true;S.preview.fails=0;
-  clearTimeout(S.preview.timer);
-  pollFrame();}
-function stopPreview(){S.preview.active=false;clearTimeout(S.preview.timer);}
-async function pollFrame(){
-  if(!S.preview.active||!S.projectId)return;
+function setPvConsole(lines){pvConsole.textContent=(lines||[]).join('\n');pvConsole.classList.toggle('show',Boolean(lines&&lines.length));}
+function playableUrl(url){return PREVIEW_BACKEND+url+(url.includes('?')?'&':'?')+'t='+Date.now();}
+async function loadPlayableBuild(notify){
+  if(!S.projectId||S.preview.loading)return;
+  S.preview.loading=true;
   try{
-    const resp=await fetch(PREVIEW_BACKEND+'/api/v1/preview/frame?project_id='+encodeURIComponent(S.projectId)+'&width=1024&height=576&_='+Date.now(),{cache:'no-store'});
-    if(resp.ok){
-      const blob=await resp.blob();
-      if(S.preview.url)URL.revokeObjectURL(S.preview.url);
-      S.preview.url=URL.createObjectURL(blob);
-      pvImg.src=S.preview.url;
-      pvWrap.classList.add('live');
-      const src=resp.headers.get('X-Preview-Source')||'';
-      if(src){S.preview.source=src;$('#pvSource').hidden=false;$('#pvSource').textContent=src;}
-      $('#pvRes').hidden=false;$('#pvRes').textContent='1024×576';
-      setPvState('实时渲染中','c-run');
-      S.preview.fails=0;S.preview.lastOk=Date.now();
-    }else{
-      S.preview.fails++;
-      if(resp.status===404)setPvState('等待场景落盘…','c-mut');
-      else if(resp.status===502||resp.status===504)setPvState('Godot 启动中…','c-warn');
-      else setPvState('预览异常 · HTTP '+resp.status,'c-err');
-    }
-  }catch(_){S.preview.fails++;}
-  if(!S.generating&&S.genEndAt&&Date.now()-S.genEndAt>90000){stopPreview();setPvState('已挂起（空闲）','c-mut');return;}
-  const delay=S.preview.fails>8?3000:900;
-  if(S.preview.active)S.preview.timer=setTimeout(pollFrame,delay);}
+    const x=await apiFetch('/api/v1/projects/'+encodeURIComponent(S.projectId)+'/play/build',{cache:'no-store'});
+    S.preview.build=x.build;pvGame.src=playableUrl(x.play_url);pvWrap.classList.add('live');
+    $('#pvRes').hidden=false;$('#pvRes').textContent='Web · '+(x.build.build_id||'current').slice(0,18);
+    setPvState('可试玩 · 点击画面获取控制权','c-done');
+    if(notify)showToast('试玩版已加载，点击画面后使用游戏内控制','ok');
+  }catch(e){pvWrap.classList.remove('live');pvGame.removeAttribute('src');setPvState('尚无试玩构建','c-mut');if(notify)showToast(e.message||'请先构建试玩版','warn');}
+  finally{S.preview.loading=false;}
+}
+async function buildPlayable(){
+  if(!S.projectId){showToast('先完成一次游戏构建','warn');return;}
+  const btn=$('#pvBuildBtn');btn.disabled=true;setPvState('正在构建 Web 试玩版…','c-run');
+  try{const x=await apiFetch('/api/v1/projects/'+encodeURIComponent(S.projectId)+'/play/build',{method:'POST'});
+    S.exported=true;renderDeployResult();setPvExportChip('已发布','c-done');pushLog('Web 试玩构建完成 · '+(x.build_id||''),'ok');await loadPlayableBuild(true);
+  }catch(e){setPvState('构建失败','c-err');setPvConsole([e.message||'Web 构建失败']);showToast('试玩构建失败','err');}
+  finally{btn.disabled=false;}
+}
+async function toggleNativeRun(){
+  if(!S.projectId){showToast('先完成一次游戏构建','warn');return;}
+  const btn=$('#pvNativeBtn');btn.disabled=true;
+  try{const base='/api/v1/projects/'+encodeURIComponent(S.projectId)+'/play/native/';const x=await apiFetch(base+(S.preview.nativeRunning?'stop':'start'),{method:'POST'});
+    S.preview.nativeRunning=x.status==='running';btn.textContent=S.preview.nativeRunning?'停止原生版':'启动原生版';setPvState(S.preview.nativeRunning?'原生版运行中':'原生版已停止',S.preview.nativeRunning?'c-run':'c-mut');
+  }catch(e){setPvState('原生运行失败','c-err');setPvConsole([e.message||'无法启动原生版']);}finally{btn.disabled=false;}
+}
+async function showNativeLogs(){
+  if(!S.projectId)return;
+  try{const x=await apiFetch('/api/v1/projects/'+encodeURIComponent(S.projectId)+'/play/native/logs',{cache:'no-store'});setPvConsole([].concat(x.stdout_tail||[],x.stderr_tail||[]).slice(-80));}
+  catch(e){setPvConsole([e.message||'读取运行日志失败']);}
+}
+async function captureDiagnosticShot(){
+  if(!S.projectId)return;setPvState('获取诊断截图…','c-warn');
+  try{const r=await fetch(PREVIEW_BACKEND+'/api/v1/preview/frame?project_id='+encodeURIComponent(S.projectId)+'&width=1024&height=576',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);const url=URL.createObjectURL(await r.blob());window.open(url,'_blank','noopener');setPvState('诊断截图已打开','c-warn');}
+  catch(e){setPvState('诊断截图失败','c-err');setPvConsole([e.message||'截图不可用']);}
+}
+$('#pvBuildBtn').addEventListener('click',buildPlayable);$('#pvNativeBtn').addEventListener('click',toggleNativeRun);$('#pvLogsBtn').addEventListener('click',showNativeLogs);$('#pvShotBtn').addEventListener('click',captureDiagnosticShot);
+pvGame.addEventListener('load',()=>{if(pvGame.src)setPvState('可试玩 · 点击画面获取控制权','c-done');});
 
 /* ═══════════ 发布 ═══════════ */
 async function exportOnce(pid){
@@ -1268,7 +1286,8 @@ async function exportProject(pid){
       setPvExportChip('已发布','c-done');
       $('#exportErr').style.display='none';
       pushLog('打包完成，可试玩','ok');
-      setBuildResult('项目已就绪 · <a href="'+PREVIEW_BACKEND+esc(x.web_url)+'" target="_blank">▶ 打开试玩</a>');
+      setBuildResult('项目已就绪 · <a href="'+PREVIEW_BACKEND+esc(x.web_url)+'" target="_blank" rel="noopener">▶ 打开试玩</a>');
+      await loadPlayableBuild(false);
       showToast('Web 版打包完成','ok');
     }else{
       setPvExportChip('未通过','c-err');
@@ -1284,25 +1303,10 @@ async function exportProject(pid){
 function setPvExportChip(t,cls){const c=$('#deployChip');c.textContent=t;c.className='chip '+(cls||'c-mut');}
 $('#exportBtn').addEventListener('click',()=>{if(S.projectId)exportProject(S.projectId);else showToast('还没有可打包的项目，先完成一次构建','warn');});
 
-async function ensureSceneReady(pid){
-  /* 场景落盘由后端在首个预览请求时自动重建（Godot headless，可能需要数十秒）。
-     轮询小尺寸帧直到出帧或超时，保证打包前 scenes/main.tscn 已存在。 */
-  const t0=Date.now();
-  while(Date.now()-t0<90000){
-    try{
-      const r=await fetch(PREVIEW_BACKEND+'/api/v1/preview/frame?project_id='+encodeURIComponent(pid)+'&width=320&height=180&_='+Date.now(),{cache:'no-store'});
-      if(r.ok)return true;
-    }catch(_){}
-    await new Promise(res=>setTimeout(res,2500));
-  }
-  return false;}
-
 async function autoPublish(pid){
   S.exported=false;
-  setPvExportChip('等待场景…','c-run');
-  pushLog('等待 Godot 场景落盘（自动重建）…');
-  const ready=await ensureSceneReady(pid);
-  if(!ready){pushLog('场景落盘等待超时，仍将尝试打包','wa');}
+  setPvExportChip('打包中…','c-run');
+  pushLog('场景已由生成流程落盘，开始构建可试玩 Web 版…');
   await exportProject(pid);}
 
 /* ═══════════ SSE 构建主流程 ═══════════ */
@@ -1408,7 +1412,6 @@ function handleStreamEvent(data){
   if(coreStatus&&msg)coreStatus.textContent=msg.slice(0,40);
   /* 后端事件里出现可信 project_id 时立即采用并启动预览 */
   if(data.project_id&&data.project_id!==S.projectId){S.projectId=data.project_id;}
-  if((ev==='phase_start')&&S.projectId)startPreview();
   switch(ev){
     case 'phase_start':
       setPhaseActive(data.phase||'',msg);
@@ -1470,14 +1473,12 @@ function handleStreamEvent(data){
       break;
     case 'scene_start':
       setPhaseActive('scene',msg);pushLog(msg||'场景构建中…');
-      if(S.projectId)startPreview();
       break;
     case 'scene_complete':
       S.sceneInfo=data;
       setPhaseDone('scene',data.scene_name||data.scene_path||'场景完成');
       pushLog('场景已生成：'+(data.scene_name||data.scene_path||''),'ok');
       renderAssets();
-      if(S.projectId)startPreview();
       if(S.follow)showView('scene',false);
       break;
     case 'scene_skipped':
@@ -1502,7 +1503,6 @@ function handleStreamEvent(data){
       $('#coreStatus').textContent='构建完成，可试玩';
       $('#pipelineMetric').textContent='READY';
       $('#consoleHint').textContent='构建完成 ✓ 可打包发布或继续调整';
-      if(S.projectId)startPreview();
       if(S.follow)showView('deploy',false);
       if(data.project_id)autoPublish(data.project_id);
       loadHistory();

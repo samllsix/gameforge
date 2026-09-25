@@ -30,6 +30,7 @@ langsmith>=0.1.0
 structlog>=24.0.0
 
 # Utilities
+pillow>=10.0.0            # playtest 空帧检测（dummy 渲染器空帧判定）
 python-dotenv>=1.0.0
 pyyaml>=6.0.0
 jinja2>=3.1.0

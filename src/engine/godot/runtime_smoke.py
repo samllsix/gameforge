@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
+from src.core.result import OPERATION_RESULT_SCHEMA
+
 logger = structlog.get_logger()
 
 # 匹配 Godot 4 headless stderr 里的运行时错误关键字
@@ -45,7 +47,12 @@ _NOISE_PATTERNS = [
 
 @dataclass
 class RuntimeSmokeResult:
-    """冒烟测试结果"""
+    """冒烟测试结果
+
+    ``to_dict()`` 输出遵循 src/core/result 契约（信封键 + 本操作旧键平铺），
+    ``runnable``/``errors`` 等旧键保留供既有消费方（workflow 修复循环、
+    产物级评测）继续使用。
+    """
 
     runnable: bool
     exit_code: int
@@ -55,9 +62,22 @@ class RuntimeSmokeResult:
     output: str = ""
     elapsed_seconds: float = 0.0
     scene_path: str = ""
+    skip_reason: Optional[str] = None
+
+    @property
+    def skipped(self) -> bool:
+        return self.skip_reason is not None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            # 信封（gameforge.operation_result.v1）
+            "schema": OPERATION_RESULT_SCHEMA,
+            "operation": "runtime_smoke.run_scene",
+            "ok": bool(self.runnable),
+            "skipped": self.skipped,
+            "skip_reason": self.skip_reason,
+            "artifacts": {},
+            # 本操作旧键（评测读 runnable；workflow 把 errors 喂给修复循环）
             "runnable": self.runnable,
             "exit_code": self.exit_code,
             "errors": self.errors,
@@ -176,6 +196,7 @@ class GodotRuntimeSmoke:
                     exit_code=0,
                     errors=[{"pattern": "SKIPPED", "snippet": why}],
                     scene_path=scene_path,
+                    skip_reason=why,
                 )
             return RuntimeSmokeResult(
                 runnable=False, exit_code=-1,

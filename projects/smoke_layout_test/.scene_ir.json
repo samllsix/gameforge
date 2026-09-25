@@ -1,0 +1,53 @@
+{
+  "project_id": "smoke_layout_test",
+  "requirements": "创建一个2D平台跳跃游戏，玩家可以左右移动和跳跃，收集金币，避开敌人",
+  "scene_ir": {
+    "scene_name": "PlatformerLevel1",
+    "genre": "platformer",
+    "layout": "linear",
+    "difficulty": "easy",
+    "camera": {
+      "mode": "2d_side_view",
+      "follow_target": "Player",
+      "background": "sky_blue"
+    },
+    "entities": [
+      {
+        "name": "Player",
+        "role": "player",
+        "count": 1,
+        "spawn_zone": "center",
+        "script": "PlayerController"
+      },
+      {
+        "name": "Ground",
+        "role": "ground",
+        "count": 1,
+        "spawn_zone": "bottom",
+        "script": null
+      },
+      {
+        "name": "Platform",
+        "role": "platform",
+        "count": 5,
+        "spawn_zone": "random",
+        "script": null
+      },
+      {
+        "name": "Coin",
+        "role": "pickup",
+        "count": 10,
+        "spawn_zone": "random",
+        "script": "CoinPickup"
+      },
+      {
+        "name": "Enemy",
+        "role": "enemy",
+        "count": 3,
+        "spawn_zone": "random",
+        "script": "EnemyController"
+      }
+    ],
+    "theme": "森林"
+  }
+}

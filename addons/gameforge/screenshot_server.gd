@@ -30,6 +30,10 @@ var fps_target: float = 60.0        ## 帧率，用于 dt→frame 换算
 var sub_viewport: SubViewport = null
 
 var _running: bool = false
+var _pending_requests: Array[Dictionary] = []
+
+const MAX_READ := 8192
+const REQUEST_TIMEOUT_MS := 10000
 
 
 func _ready() -> void:
@@ -73,28 +77,39 @@ func _exit_tree() -> void:
 func _process(_delta: float) -> void:
 	if not _running or tcp_server == null:
 		return
-	if not tcp_server.is_connection_available():
-		return
-	var conn := tcp_server.take_connection()
-	if conn == null:
-		return
-	_handle(conn)
+	while tcp_server.is_connection_available():
+		var conn := tcp_server.take_connection()
+		if conn != null:
+			_pending_requests.append({
+				"conn": conn,
+				"raw": "",
+				"received_at": Time.get_ticks_msec(),
+			})
+	_process_pending_requests()
 
 
-func _handle(conn: StreamPeerTCP) -> void:
-	# 读取整个 HTTP 请求（最多 8KB，超过则截断）
-	var raw := ""
-	var total_bytes := 0
-	const MAX_READ := 8192
-	while total_bytes < MAX_READ and conn.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+func _process_pending_requests() -> void:
+	for index in range(_pending_requests.size() - 1, -1, -1):
+		var pending := _pending_requests[index]
+		var conn: StreamPeerTCP = pending["conn"]
+		if conn.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+			_pending_requests.remove_at(index)
+			continue
+		var raw: String = pending["raw"]
 		var avail := conn.get_available_bytes()
-		if avail <= 0:
-			break
-		raw += conn.get_utf8_string(avail)
-		total_bytes += avail
+		if avail > 0:
+			raw += conn.get_utf8_string(min(avail, MAX_READ - raw.to_utf8_buffer().size()))
+			pending["raw"] = raw
 		if raw.find("\r\n\r\n") >= 0:
-			break
+			_pending_requests.remove_at(index)
+			_handle(conn, raw)
+		elif raw.to_utf8_buffer().size() >= MAX_READ or Time.get_ticks_msec() - int(pending["received_at"]) > REQUEST_TIMEOUT_MS:
+			_pending_requests.remove_at(index)
+			conn.disconnect_from_host()
 
+
+func _handle(conn: StreamPeerTCP, raw: String) -> void:
+	# 请求由 _process_pending_requests 跨帧读取，直到收到完整 HTTP 头。
 	if raw.is_empty():
 		conn.disconnect_from_host()
 		return

@@ -33,7 +33,9 @@ import os
 import re
 import socket
 import subprocess
+import threading
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -44,6 +46,7 @@ logger = structlog.get_logger()
 
 try:
     import httpx
+
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
@@ -88,6 +91,22 @@ class ProjectProc:
         return self.proc is not None and self.proc.poll() is None
 
 
+@dataclass
+class NativeRunSession:
+    """仅记录本 supervisor 亲自创建的原生 Godot 进程。"""
+
+    project_id: str
+    project_path: str
+    scene_path: Optional[str]
+    proc: subprocess.Popen
+    started_at: float = field(default_factory=time.time)
+    stdout_tail: deque = field(default_factory=lambda: deque(maxlen=200))
+    stderr_tail: deque = field(default_factory=lambda: deque(maxlen=200))
+
+    def is_alive(self) -> bool:
+        return self.proc.poll() is None
+
+
 # ============ Supervisor 单例 ============
 
 
@@ -108,13 +127,18 @@ class GodotSupervisor:
         self.config = config
         preview_cfg = (config or {}).get("preview", {}) or {}
         self.enabled: bool = bool(preview_cfg.get("enabled", True))
-        self.token: str = (
-            os.getenv(preview_cfg.get("screenshot_token_env", "GAMEFORGE_PREVIEW_TOKEN"), "").strip()
-            or str(preview_cfg.get("default_token", "gf_screenshot_local"))
+        self.token: str = os.getenv(
+            preview_cfg.get("screenshot_token_env", "GAMEFORGE_PREVIEW_TOKEN"), ""
+        ).strip() or str(preview_cfg.get("default_token", "gf_screenshot_local"))
+        self.startup_timeout: float = float(
+            preview_cfg.get("startup_timeout_seconds", 8)
         )
-        self.startup_timeout: float = float(preview_cfg.get("startup_timeout_seconds", 8))
-        self.request_timeout: float = float(preview_cfg.get("request_timeout_seconds", 5))
-        self.health_interval: float = float(preview_cfg.get("health_check_interval_seconds", 3))
+        self.request_timeout: float = float(
+            preview_cfg.get("request_timeout_seconds", 5)
+        )
+        self.health_interval: float = float(
+            preview_cfg.get("health_check_interval_seconds", 3)
+        )
         self.max_age: float = float(preview_cfg.get("max_process_age_seconds", 1800))
         # 无任务空闲停止：无帧请求超过该秒数即停 Godot 进程（前端任务结束后停轮询，
         # 常驻渲染空烧 GPU/CPU；下次帧请求到达时按需重启）
@@ -122,15 +146,21 @@ class GodotSupervisor:
         self.backoff: List[int] = list(preview_cfg.get("restart_backoff", [1, 3, 9]))
         self.legacy_only: bool = bool(preview_cfg.get("legacy_only", False))
         win = preview_cfg.get("window_position") or [20000, 20000]
-        self.window_position: List[int] = list(win) if isinstance(win, list) else [20000, 20000]
+        self.window_position: List[int] = (
+            list(win) if isinstance(win, list) else [20000, 20000]
+        )
 
         godot_cfg = (config or {}).get("godot", {}) or {}
         from src.engine.godot import _normalize_godot_path, _resolve_env
-        self.editor_path: str = _normalize_godot_path(_resolve_env(
-            godot_cfg.get("editor_path", "") or os.getenv("GODOT_EDITOR_PATH", "")
-        ))
+
+        self.editor_path: str = _normalize_godot_path(
+            _resolve_env(
+                godot_cfg.get("editor_path", "") or os.getenv("GODOT_EDITOR_PATH", "")
+            )
+        )
 
         self._procs: Dict[str, ProjectProc] = {}
+        self._native_sessions: Dict[str, NativeRunSession] = {}
         self._registry_lock = asyncio.Lock()
         self._health_task: Optional[asyncio.Task] = None
         self._stopped: bool = False
@@ -150,7 +180,9 @@ class GodotSupervisor:
     async def start_health_loop(self) -> None:
         if self._health_task is not None and not self._health_task.done():
             return
-        self._health_task = asyncio.create_task(self._health_loop(), name="godot-supervisor-health")
+        self._health_task = asyncio.create_task(
+            self._health_loop(), name="godot-supervisor-health"
+        )
 
     async def _health_loop(self) -> None:
         """后台每 health_interval 秒探一次所有进程"""
@@ -163,7 +195,9 @@ class GodotSupervisor:
                 try:
                     await self._health_check_one(pid)
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("supervisor.health_check_error", project_id=pid, error=str(e))
+                    logger.warning(
+                        "supervisor.health_check_error", project_id=pid, error=str(e)
+                    )
 
     async def _health_check_one(self, project_id: str) -> None:
         pp = self._procs.get(project_id)
@@ -173,13 +207,17 @@ class GodotSupervisor:
         idle = time.time() - pp.last_used_at
         if idle > self.idle_timeout:
             logger.info(
-                "supervisor.idle_stopped", project_id=project_id, idle_seconds=round(idle, 1)
+                "supervisor.idle_stopped",
+                project_id=project_id,
+                idle_seconds=round(idle, 1),
             )
             await self.stop(project_id)
             return
         # LRU 滚动重启
         if pp.age() > self.max_age:
-            logger.info("supervisor.rolling_restart", project_id=project_id, age=pp.age())
+            logger.info(
+                "supervisor.rolling_restart", project_id=project_id, age=pp.age()
+            )
             await self.stop(project_id)
             return
         if not pp.is_alive():
@@ -192,7 +230,9 @@ class GodotSupervisor:
                     pp.last_health_ok_at = time.time()
                     pp.consecutive_health_failures = 0
                 else:
-                    self._mark_failure(project_id, reason=f"health_status_{r.status_code}")
+                    self._mark_failure(
+                        project_id, reason=f"health_status_{r.status_code}"
+                    )
         except Exception as e:  # noqa: BLE001
             self._mark_failure(project_id, reason=f"health_error: {e}")
 
@@ -221,7 +261,9 @@ class GodotSupervisor:
         pp = self._procs.get(project_id)
         return pp is not None and pp.is_alive()
 
-    async def start(self, project_id: str, project_path: str, scene_path: Optional[str] = None) -> None:
+    async def start(
+        self, project_id: str, project_path: str, scene_path: Optional[str] = None
+    ) -> None:
         """启动（或复用）指定项目的 Godot 截图进程"""
         async with self._registry_lock:
             pp = self._procs.get(project_id)
@@ -232,12 +274,16 @@ class GodotSupervisor:
             try:
                 pp = await self._spawn(project_id, project_path, port, scene_path)
             except Exception as e:
-                logger.error("supervisor.spawn_failed", project_id=project_id, error=str(e))
+                logger.error(
+                    "supervisor.spawn_failed", project_id=project_id, error=str(e)
+                )
                 raise
             self._procs[project_id] = pp
             logger.info("supervisor.started", project_id=project_id, port=port)
 
-    async def get_frame(self, project_id: str, frame_index: int = 0, width: int = 640, height: int = 360) -> bytes:
+    async def get_frame(
+        self, project_id: str, frame_index: int = 0, width: int = 640, height: int = 360
+    ) -> bytes:
         """获取一帧 PNG。
 
         实现：httpx 调 Godot 端 screenshot_server.gd 的 /screenshot 端点。
@@ -294,6 +340,8 @@ class GodotSupervisor:
                 pass
         for pid in list(self._procs.keys()):
             await self.stop(pid)
+        for pid in list(self._native_sessions.keys()):
+            await self.stop_native(pid)
 
     async def stats(self) -> Dict[str, Any]:
         return {
@@ -311,6 +359,110 @@ class GodotSupervisor:
             },
         }
 
+    async def start_native(
+        self, project_id: str, project_path: str, scene_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """以官方原生运行语法启动项目；不会接管外部进程。"""
+        async with self._registry_lock:
+            existing = self._native_sessions.get(project_id)
+            if existing and existing.is_alive():
+                return self._native_status(existing)
+            if not self.editor_path or not os.path.isfile(self.editor_path):
+                raise FileNotFoundError(
+                    f"Godot 编辑器未配置或不存在: {self.editor_path}"
+                )
+            if not os.path.isfile(os.path.join(project_path, "project.godot")):
+                raise FileNotFoundError("项目目录中找不到 project.godot")
+            cmd = [self.editor_path, "--path", project_path]
+            if scene_path:
+                cmd.append(scene_path)
+            proc = subprocess.Popen(
+                cmd,
+                cwd=project_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                if os.name == "nt"
+                else 0,
+            )
+            session = NativeRunSession(project_id, project_path, scene_path, proc)
+            self._native_sessions[project_id] = session
+            self._start_log_reader(proc.stdout, session.stdout_tail)
+            self._start_log_reader(proc.stderr, session.stderr_tail)
+            return self._native_status(session)
+
+    async def stop_native(self, project_id: str) -> Dict[str, Any]:
+        """只终止本实例记录的原生运行会话。"""
+        async with self._registry_lock:
+            session = self._native_sessions.pop(project_id, None)
+        if session is None:
+            return {"project_id": project_id, "managed": False, "status": "not_found"}
+        await asyncio.to_thread(self._terminate_native_proc, session.proc)
+        status = self._native_status(session)
+        status["managed"] = True
+        return status
+
+    async def native_status(self, project_id: str) -> Dict[str, Any]:
+        session = self._native_sessions.get(project_id)
+        if session is None:
+            return {"project_id": project_id, "managed": False, "status": "not_found"}
+        return self._native_status(session)
+
+    async def native_logs(self, project_id: str) -> Dict[str, Any]:
+        session = self._native_sessions.get(project_id)
+        if session is None:
+            return {
+                "project_id": project_id,
+                "managed": False,
+                "stdout_tail": [],
+                "stderr_tail": [],
+            }
+        return {
+            "project_id": project_id,
+            "managed": True,
+            "stdout_tail": list(session.stdout_tail),
+            "stderr_tail": list(session.stderr_tail),
+        }
+
+    @staticmethod
+    def _start_log_reader(stream: Any, target: deque) -> None:
+        def _read() -> None:
+            if stream is None:
+                return
+            try:
+                for line in iter(stream.readline, ""):
+                    target.append(line.rstrip("\r\n"))
+            finally:
+                stream.close()
+
+        threading.Thread(target=_read, daemon=True).start()
+
+    @staticmethod
+    def _terminate_native_proc(proc: subprocess.Popen) -> None:
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+
+    @staticmethod
+    def _native_status(session: NativeRunSession) -> Dict[str, Any]:
+        return {
+            "project_id": session.project_id,
+            "managed": True,
+            "status": "running" if session.is_alive() else "exited",
+            "pid": session.proc.pid,
+            "scene_path": session.scene_path,
+            "started_at": session.started_at,
+            "returncode": session.proc.poll(),
+        }
+
     # ============ 内部工具 ============
 
     async def _pick_free_port(self) -> int:
@@ -319,7 +471,9 @@ class GodotSupervisor:
         start = int(preview_cfg.get("screenshot_port", 8769))
         for offset in range(20):
             port = start + offset
-            if await asyncio.get_event_loop().run_in_executor(None, _port_is_free, port):
+            if await asyncio.get_event_loop().run_in_executor(
+                None, _port_is_free, port
+            ):
                 return port
         # 兜底：让 OS 分配
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -336,9 +490,7 @@ class GodotSupervisor:
         scene_path: Optional[str],
     ) -> ProjectProc:
         if not self.editor_path or not os.path.isfile(self.editor_path):
-            raise FileNotFoundError(
-                f"Godot 编辑器未配置或不存在: {self.editor_path}"
-            )
+            raise FileNotFoundError(f"Godot 编辑器未配置或不存在: {self.editor_path}")
         if not project_path or not os.path.isdir(project_path):
             raise FileNotFoundError(f"项目目录不存在: {project_path}")
         if not os.path.isfile(os.path.join(project_path, "project.godot")):
@@ -353,25 +505,40 @@ class GodotSupervisor:
                 ensure_imported(project_path, self.editor_path)
                 logger.info("supervisor.preimport_done", project_id=project_id)
             except Exception as e:  # noqa: BLE001
-                logger.warning("supervisor.preimport_failed", project_id=project_id, error=str(e))
+                logger.warning(
+                    "supervisor.preimport_failed", project_id=project_id, error=str(e)
+                )
 
         # 把 preview_runner.gd 与 screenshot_server.gd 复制到目标项目的 addons/gameforge/
         # 让 Godot 启动时能找到这两个脚本（项目独立，源 addon 不一定挂载）
         addon_dir = os.path.join(project_path, "addons", "gameforge")
         os.makedirs(addon_dir, exist_ok=True)
         source_addon = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-            "addons", "gameforge",
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            ),
+            "addons",
+            "gameforge",
         )
-        for fn in ("preview_runner.gd", "screenshot_server.gd", "settings.gd", "config.cfg"):
+        for fn in (
+            "preview_runner.gd",
+            "screenshot_server.gd",
+            "settings.gd",
+            "config.cfg",
+        ):
             src = os.path.join(source_addon, fn)
             dst = os.path.join(addon_dir, fn)
             if os.path.isfile(src):
                 try:
-                    with open(src, "r", encoding="utf-8") as sf, open(dst, "w", encoding="utf-8") as df:
+                    with (
+                        open(src, "r", encoding="utf-8") as sf,
+                        open(dst, "w", encoding="utf-8") as df,
+                    ):
                         df.write(sf.read())
                 except Exception as e:
-                    logger.warning("supervisor.copy_addon_failed", file=fn, error=str(e))
+                    logger.warning(
+                        "supervisor.copy_addon_failed", file=fn, error=str(e)
+                    )
 
         # 注入 preview_runner 到 project.godot 的 autoload 段（如尚未注入）
         self._inject_autoload(project_path)
@@ -392,14 +559,20 @@ class GodotSupervisor:
         wx, wy = int(self.window_position[0]), int(self.window_position[1])
         cmd = [
             self.editor_path,
-            "--rendering-driver", "opengl3",
-            "--audio-driver", "Dummy",
-            "--path", project_path,
+            "--rendering-driver",
+            "opengl3",
+            "--audio-driver",
+            "Dummy",
+            "--path",
+            project_path,
             # 窗口从创建起就是 64x64 屏幕外小点（用户不可见）：
             # 渲染交给 preview_runner.gd 里的 640x360 SubViewport，与窗口尺寸无关
-            "--resolution", "64x64",
-            "--position", f"{wx},{wy}",
-            "--max-fps", "60",
+            "--resolution",
+            "64x64",
+            "--position",
+            f"{wx},{wy}",
+            "--max-fps",
+            "60",
             # 不加 --headless：dummy 渲染器抓不到真画面（实测只出占位图）
             # 不加 --script：走 project.godot 的 main_scene + autoload
             # 绝不能最小化：最小化会停掉 OpenGL 渲染，截图全黑
@@ -419,7 +592,8 @@ class GodotSupervisor:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            if os.name == "nt" else 0,
+            if os.name == "nt"
+            else 0,
         )
 
         pp = ProjectProc(
@@ -483,7 +657,9 @@ class GodotSupervisor:
                     pp.proc.kill()
                     pp.proc.wait(timeout=2)
         except Exception as e:
-            logger.warning("supervisor.terminate_error", project_id=pp.project_id, error=str(e))
+            logger.warning(
+                "supervisor.terminate_error", project_id=pp.project_id, error=str(e)
+            )
 
     def _pick_scene(self, project_path: str) -> Optional[str]:
         candidates = [

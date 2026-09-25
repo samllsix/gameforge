@@ -223,6 +223,8 @@ playtest:
   duration_tail: 1.0      # 最后一个动作之后再跑多少秒
   timeout_seconds: 90
   max_fix_attempts: 1     # 未通过时喂给 debugger 修复并重放的最大额外轮数
+  rendering_mode: auto    # auto=headless 优先、帧证据缺失/空帧自动回退窗口；headless；windowed
+  # blank_frame_std_threshold: 2.0   # 空帧判定阈值（灰度 stddev）
   # actions: []            # 自定义动作脚本；缺省用内置通用计划（左右移动+跳跃+交互）
 
 # VLM 视觉审查：playtest 帧交给多模态模型按失败模式清单打分

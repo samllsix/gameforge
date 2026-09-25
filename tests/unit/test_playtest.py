@@ -160,3 +160,166 @@ class TestPathsIntegration:
             projects / "p1" / ".gameforge" / "r9" / "playtest"
         assert paths.playtest_actions_path("p1", "r9").name == "actions.json"
         assert paths.playtest_report_path("p1", "r9").name == "report.json"
+
+
+# ── 空帧检测与渲染模式回退 ───────────────────────────────────────────────────
+
+
+def _png_pixels(gray_values) -> bytes:
+    import io
+
+    from PIL import Image
+
+    img = Image.new("L", (4, 4))
+    img.putdata(list(gray_values))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _solid_png() -> bytes:
+    """纯黑帧——headless dummy 渲染器空帧的形态。"""
+    return _png_pixels([0] * 16)
+
+
+def _noise_png() -> bytes:
+    import random
+
+    return _png_pixels([random.randint(0, 255) for _ in range(16)])
+
+
+def _patch_engine(monkeypatch, behavior_by_mode):
+    """把 subprocess.run 换成按渲染模式（--headless 有无）分派的假引擎。"""
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    def fake_run(cmd, **kwargs):
+        out_dir = Path(kwargs["env"]["GAMEFORGE_PLAYTEST_OUT"])
+        frames_dir = out_dir / "frames"
+        mode = "headless" if "--headless" in cmd else "windowed"
+        behavior_by_mode[mode](out_dir, frames_dir)
+        return MagicMock(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr("src.engine.godot.playtest.subprocess.run", fake_run)
+
+
+def _write_report(out_dir, actions_executed, frames_captured):
+    import json
+
+    (out_dir / "report.json").write_text(json.dumps({
+        "schema": REPORT_SCHEMA,
+        "ok": True, "actions_executed": actions_executed, "frames_captured": frames_captured,
+    }), encoding="utf-8")
+
+
+class TestBlankFrames:
+    def test_solid_frames_detected_blank(self, tmp_path):
+        from src.engine.godot.playtest import detect_blank_frames
+
+        d = tmp_path / "f"
+        d.mkdir(parents=True, exist_ok=True)  # basetemp 残留目录容忍
+        for i in range(3):
+            (d / f"f{i}.png").write_bytes(_solid_png())
+        assert detect_blank_frames(d, ["f0.png", "f1.png", "f2.png"])["blank"] is True
+
+    def test_noise_frames_not_blank(self, tmp_path):
+        from src.engine.godot.playtest import detect_blank_frames
+
+        d = tmp_path / "f"
+        d.mkdir(parents=True, exist_ok=True)  # basetemp 残留目录容忍
+        for i in range(3):
+            (d / f"f{i}.png").write_bytes(_noise_png())
+        assert detect_blank_frames(d, ["f0.png", "f1.png", "f2.png"])["blank"] is False
+
+    def test_missing_or_unjudgeable(self, tmp_path):
+        from src.engine.godot.playtest import detect_blank_frames
+
+        assert detect_blank_frames(tmp_path, [])["blank"] is None
+
+
+class TestRenderingFallback:
+    def _setup(self, tmp_path, monkeypatch, **pt_cfg):
+        monkeypatch.setattr(paths, "PROJECTS_ROOT", tmp_path / "projects")
+        proj = tmp_path / "proj"
+        (proj / "addons" / "gameforge").mkdir(parents=True, exist_ok=True)
+        (proj / "project.godot").write_text("[autoload]\n", encoding="utf-8")
+        (tmp_path / "fake_godot.exe").write_text("", encoding="utf-8")
+        r = PlaytestRunner({
+            "godot": {"editor_path": str(tmp_path / "fake_godot.exe"), "project_path": str(proj)},
+            "playtest": {"skip_when_unavailable": True, **pt_cfg},
+        })
+        return r
+
+    def test_blank_headless_falls_back_to_windowed(self, tmp_path, monkeypatch):
+        behaviors = {
+            "headless": lambda out, f: (
+                f.mkdir(parents=True),
+                (f / "f00000.png").write_bytes(_solid_png()),
+                (f / "f00001.png").write_bytes(_solid_png()),
+                _write_report(out, 2, 2),
+            ),
+            "windowed": lambda out, f: (
+                f.mkdir(parents=True),
+                (f / "f00000.png").write_bytes(_noise_png()),
+                (f / "f00001.png").write_bytes(_noise_png()),
+                (f / "f00002.png").write_bytes(_noise_png()),
+                _write_report(out, 3, 3),
+            ),
+        }
+        _patch_engine(monkeypatch, behaviors)
+        r = self._setup(tmp_path, monkeypatch)  # rendering_mode 默认 auto
+        result = r.run([{"t": 0.5, "type": "key", "key": "Right", "pressed": True}],
+                       project_id="p1", run_id="r1")
+        assert result["rendering_mode"] == "windowed"
+        assert result["ok"] is True
+        assert result["report"]["frames_captured"] == 3
+        assert any("空帧" in w for w in result["warnings"])
+
+    def test_forced_headless_never_falls_back(self, tmp_path, monkeypatch):
+        behaviors = {
+            "headless": lambda out, f: (
+                f.mkdir(parents=True),
+                (f / "f00000.png").write_bytes(_solid_png()),
+                _write_report(out, 1, 1),
+            ),
+            "windowed": lambda out, f: (_ for _ in ()).throw(AssertionError("不应回退窗口模式")),
+        }
+        _patch_engine(monkeypatch, behaviors)
+        r = self._setup(tmp_path, monkeypatch, rendering_mode="headless")
+        result = r.run([{"t": 0.5, "type": "key", "key": "Right", "pressed": True}],
+                       project_id="p1", run_id="r1")
+        assert result["rendering_mode"] == "headless"
+        assert result["ok"] is True
+
+    def test_frameless_headless_falls_back_to_windowed(self, tmp_path, monkeypatch):
+        """headless 连帧都抓不到（dummy 渲染器无图像）→ 也应回退窗口模式。"""
+        behaviors = {
+            "headless": lambda out, f: _write_report(out, 2, 0),  # 无 frames 目录
+            "windowed": lambda out, f: (
+                f.mkdir(parents=True),
+                (f / "f00000.png").write_bytes(_noise_png()),
+                _write_report(out, 3, 1),
+            ),
+        }
+        _patch_engine(monkeypatch, behaviors)
+        r = self._setup(tmp_path, monkeypatch)  # auto
+        result = r.run([{"t": 0.5, "type": "key", "key": "Right", "pressed": True}],
+                       project_id="p1", run_id="r1")
+        assert result["rendering_mode"] == "windowed"
+        assert result["report"]["frames_captured"] == 1
+
+    def test_windowed_mode_runs_directly(self, tmp_path, monkeypatch):
+        behaviors = {
+            "headless": lambda out, f: (_ for _ in ()).throw(AssertionError("不应启动 headless")),
+            "windowed": lambda out, f: (
+                f.mkdir(parents=True),
+                (f / "f00000.png").write_bytes(_noise_png()),
+                _write_report(out, 1, 1),
+            ),
+        }
+        _patch_engine(monkeypatch, behaviors)
+        r = self._setup(tmp_path, monkeypatch, rendering_mode="windowed")
+        result = r.run([{"t": 0.5, "type": "key", "key": "Right", "pressed": True}],
+                       project_id="p1", run_id="r1")
+        assert result["rendering_mode"] == "windowed"
+        assert result["ok"] is True

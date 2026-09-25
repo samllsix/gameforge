@@ -45,6 +45,16 @@ func _ready() -> void:
 		set_process(false)
 		return
 
+	# 录制器是 watchdog，不是玩法节点：游戏会主动 paused（开局挂起、
+	# 游戏结束、暂停菜单），PAUSABLE 模式下 _process 一停就永远到不了
+	# 收尾点，playtest 整体超时且零证据（实弹验证踩过的坑）。
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	# 开局即挂起等输入的生成游戏（game_flow._ready 里 paused=true）：
+	# 暂停树会把输入回调一并拦下，玩家按键无法开局。借用生成运行时的
+	# 预览自启约定（GAMEFORGE_PREVIEW_AUTOSTART=1），让 playtest 真正
+	# 玩起来而不是对着开始画面录 7 秒。autoload 早于主场景 _ready，时序成立。
+	OS.set_environment("GAMEFORGE_PREVIEW_AUTOSTART", "1")
+
 	var txt := _read_text(actions_path)
 	if txt.is_empty():
 		_finish(false, "actions_file_unreadable")
@@ -142,7 +152,18 @@ func _mouse_button_index(name: String) -> MouseButton:
 func _capture_frame(frame: int) -> void:
 	if _frames_dir == null:
 		return
-	var img := get_viewport().get_texture().get_image()
+	# 场景可能被 preview_runner 搬进离屏 SubViewport 渲染（生成运行时的
+	# 预览约定），根视口只剩默认清屏色——必须截"场景所在的视口"。
+	# 注意 reparent 会把 SceneTree.current_scene 置空且不恢复（实弹验证
+	# 踩过的坑），所以要按名字找 GameForgePreviewViewport 兜底。
+	var vp := get_viewport()
+	if get_tree().current_scene:
+		vp = get_tree().current_scene.get_viewport()
+	else:
+		var sv := get_tree().root.get_node_or_null("GameForgePreviewViewport")
+		if sv is SubViewport:
+			vp = sv
+	var img := vp.get_texture().get_image()
 	if img == null or img.is_empty():
 		return
 	var err := img.save_png(_out_dir.path_join("frames/f%05d.png" % frame))

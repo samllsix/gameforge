@@ -180,6 +180,17 @@ def _fallback_plan(scene_ir: Any, requirements: Optional[str] = None) -> Dict[st
     return plan
 
 
+def resolve_palette_base(scene_ir: Any, requirements: Optional[str] = None) -> Optional[str]:
+    """解析场景应使用的调色板基色（palette_base）。
+
+    供美术资源后处理（asset_forge 的像素化量化）复用同一套主题解析逻辑，
+    让 AI 贴图与程序化几何（scene_to_godot._get_palette）处于同一色彩体系。
+    这也是 palette_base 此前只被程序化几何使用的补漏点。
+    """
+    pack = _resolve_pack(scene_ir, requirements)
+    return pack.get("palette_base") if pack else None
+
+
 def plan_art(scene_ir: Any, requirements: Optional[str] = None) -> Dict[str, str]:
     """规划整份美术指导书：{素材槽位: 英文生图提示}。
 
@@ -188,7 +199,11 @@ def plan_art(scene_ir: Any, requirements: Optional[str] = None) -> Dict[str, str
 
     LLM 一次调用产出全部槽位（比逐槽 smart_prompt 便宜 9 倍），
     输出缺槽/解析失败 → 按槽回落母题组合模板，保证恒有可用方案。
-    风格约束（星露谷像素风）不在这里写——由生图漏斗统一追加。
+
+    P2：槽位提示词允许包含简要画法描述（材质/光照/描边/剪影，
+    并要求全槽位统一光位与描边），不再限制 "no style keywords"——
+    "怎么画"此前被整体丢给全局风格串，是美术控制力缺失的主因；
+    全局像素风底座仍由生图漏斗统一追加（apply_art_style）。
     """
     fallback = _fallback_plan(scene_ir, requirements)
     if os.getenv("GAMEFORGE_SMART_PROMPTS", "1").strip().lower() in {"0", "false", "no"}:
@@ -212,13 +227,16 @@ def plan_art(scene_ir: Any, requirements: Optional[str] = None) -> Dict[str, str
         reply = client.chat_sync(
             messages=[{"role": "user", "content": (
                 f'You are the art director of a {genre} pixel-art game themed "{motifs}". '
-                f"Write one short English image prompt (max 18 words, no style keywords, "
-                f'no quotes) for each asset slot. Reply with STRICT JSON only: '
+                f"Write one short English image prompt (max 20 words, no quotes) for each "
+                f"asset slot. Describe WHAT the asset is, plus brief HOW it is drawn: "
+                f"consistent soft lighting from one direction, clean dark outline, "
+                f"readable silhouette, matching material feel across all slots. "
+                f'Reply with STRICT JSON only: '
                 f'{{"background":"...","player":"...","enemy":"...","pickup":"...",'
                 f'"ground":"...","platform":"...","decoration":"...","npc":"...","icon":"..."}}'
             )}],
             max_tokens=2000,
-            temperature=0.8,
+            temperature=0.4,
         )
         import json
 

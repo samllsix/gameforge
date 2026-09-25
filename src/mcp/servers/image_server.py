@@ -128,6 +128,9 @@ class ImageMCPServer:
         size: Optional[List[int]] = None,
         seed: Optional[int] = None,
         provider: Optional[str] = None,
+        genre: Optional[str] = None,
+        palette_base: Optional[str] = None,
+        camera: Optional[str] = None,
     ) -> Dict[str, Any]:
         """生成图像（AI 优先，程序化兜底）
 
@@ -136,11 +139,17 @@ class ImageMCPServer:
             size: [width, height]
             seed: 随机种子
             provider: 指定提供者（step 或 sensenova），None 表示自动选择
+            genre: 游戏品类（推断相机视角，见 style.apply_art_style）
+            palette_base: 主题包调色板基色（决定调色倾向）
+            camera: 相机模式（2d_side_view / top_down / ...）
         """
         # 全局美术风格约束（幂等，AIImageClient 内部还会再拼一次也不会重复）：
         # 所有生图统一为类星露谷 2D 像素风
+        # （视角/调色按 scene_ir 上下文参数化，P1 见 src/image/style.py）
         from src.image.style import apply_art_style
-        prompt = apply_art_style(prompt)
+        prompt = apply_art_style(
+            prompt, genre=genre, palette_base=palette_base, camera=camera
+        )
 
         # 优先使用 AI API
         if self.ai_client is not None:
