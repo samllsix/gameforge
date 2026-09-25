@@ -103,6 +103,9 @@ cloudflared.exe
 # Rust 构建产物
 tools/gd-guard/target/
 
+# Godot 引擎二进制（本地安装，约 345MB；由 .env 的 GODOT_EDITOR_PATH 指向）
+tools/godot/
+
 # TRAE internal
 .trae-html-share-packages/
 _gf_check_result.json
@@ -127,3 +130,6 @@ gameforge-mcp-proposal-v2/
 gameforge-quality-report/
 assets/kenney_*.zip
 icon.svg
+
+# Godot 为脚本生成的 UID 缓存（headless 测试等会随手生成，勿提交）
+scripts/_gf_*.gd.uid
