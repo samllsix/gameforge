@@ -1,0 +1,92 @@
+[
+  {
+    "id": "gf_player_controller_contract",
+    "title": "GameForge 玩家控制器契约",
+    "tags": ["gf_contract", "player", "baseline"],
+    "content": "生成的玩家脚本必须满足机械验收基线：extends CharacterBody2D；_physics_process 内维护 velocity 并调用 move_and_slide()；方向输入用 Input.get_axis(\"move_left\", \"move_right\")；跳跃键必须用 ui_accept（内置动作，无需 input_map 配置）；死亡判定包含 fall_limit 与 begins_with(\"Enemy\")。只写节点/物理/Input API，禁止 OS.execute/FileAccess/HTTPRequest。"
+  },
+  {
+    "id": "gf_score_loop",
+    "title": "GameForge 计分闭环契约",
+    "tags": ["gf_contract", "pickup", "score"],
+    "content": "计分链路：pickup.gd 检测到玩家后调用 GameFlow.add_score(1) 并 queue_free()；game_flow.gd 维护 score 并向 HUD 发出更新；HUD 显示 SCORE。三个环节任一缺失基线检查 score_loop 即失败。"
+  },
+  {
+    "id": "gf_flow_panels",
+    "title": "GameForge 上线件面板契约",
+    "tags": ["gf_contract", "ui", "scene"],
+    "content": "主场景 scenes/main.tscn 必须含 GameFlow 节点与 BootPanel / PausePanel / OverPanel 三个面板，以及 RestartBtn 按钮连接到 _on_restart_pressed，否则 base_line 检查 game_flow / panel_* / restart_button 失败。重开调用 get_tree().reload_current_scene()。"
+  },
+  {
+    "id": "gf_pause_contract",
+    "title": "GameForge 暂停契约",
+    "tags": ["gf_contract", "ui"],
+    "content": "game_flow.gd 提供 toggle_pause()：切换 get_tree().paused，KeyEsc（InputEventKey.physical_keycode == KEY_ESCAPE）或 ui_cancel 触发；面板按钮需 process_mode = Node.PROCESS_MODE_ALWAYS 才能在暂停树里响应。"
+  },
+  {
+    "id": "gf_runtime_scripts",
+    "title": "GameForge 官方运行时脚本位置",
+    "tags": ["gf_contract", "scene", "assets"],
+    "content": "运行时脚本固定写在 res://addons/gameforge/runtime/ 下：player.gd、pickup.gd、game_flow.gd、hud.gd、walker.gd、mover.gd、bouncer.gd、rotator.gd、parallax_bg.gd。.tscn 通过 ext_resource path=\"res://addons/gameforge/runtime/xxx.gd\" 引用；导出前这些文件必须真实存在于磁盘。"
+  },
+  {
+    "id": "gf_scene_ir_pipeline",
+    "title": "GameForge Scene IR → .tscn 管线",
+    "tags": ["gf_contract", "scene"],
+    "content": "GameDesignModel → SceneGenerator 产出 Scene IR（entities/environment/camera/theme/genre）→ GodotSceneBuilder.build_tscn 生成合法 .tscn 文本落盘；IR 同时写入 <project>/.scene_ir.json 供预览端点重建。IR 比 main.tscn 新时会自动重建。"
+  },
+  {
+    "id": "gf_baseline_gate",
+    "title": "GameForge 机械验收门禁（Baseline）",
+    "tags": ["gf_contract", "baseline"],
+    "content": "发布前 check_project() 做确定性检查：场景存在、GameFlow 与三面板、玩家输入（Input.get_axis + ui_accept）、死亡判定、计分闭环、暂停、≥4 个 sfx wav、icon.png、Web+Windows 导出预设、.tscn 的 ext_resource 全部在磁盘存在、project.godot 注册 run/main_scene=\"res://scenes/main.tscn\"。"
+  },
+  {
+    "id": "gd_guard_gate",
+    "title": "gd-guard 安全闸门与有界修复",
+    "tags": ["gf_contract", "security"],
+    "content": "运行/出包前用 Rust 二进制 gd-guard scan 扫描全部 .gd 与 .tscn 内嵌脚本：命中危险 API 黑名单即 block，此时把 findings 喂给 code_generator 重生成一轮再复检，仍 block 才判定失败。res://addons/gameforge/runtime/ 下的官方脚本在信任名单内。"
+  },
+  {
+    "id": "gf_runtime_smoke",
+    "title": "运行时冒烟测试与修复回路",
+    "tags": ["gf_contract", "runtime"],
+    "content": "语法通过不等于可运行：用 godot --headless --path <dir> <scene> 真跑一次，解析 stderr 的 SCRIPT ERROR / ERROR 行；失败把错误喂给 debugger 修复后重跑，最多若干轮。产物写 .gameforge/<run_id>/runtime_smoke.json 供产物级评测读取。"
+  },
+  {
+    "id": "gf_playtest",
+    "title": "Playtest 输入回放与帧证据",
+    "tags": ["gf_contract", "playtest"],
+    "content": "Playtest 注入 res://addons/gameforge/playtest_recorder.gd autoload，按 actions.json 注入按键/松开事件并逐帧抓 PNG，产出 report.json（actions_executed / frames_captured / ok）。默认动作脚本覆盖左右移动、跳跃、交互键，使用内置 ui_* 动作保证任何项目可跑。"
+  },
+  {
+    "id": "gf_visual_review",
+    "title": "VLM 视觉审查失败模式清单",
+    "tags": ["gf_contract", "review"],
+    "content": "把 playtest 帧交给多模态模型按清单打分：黑屏、精灵错位、UI 不可读、风格不符、相机异常。高严重度问题计入 findings 并触发修复回路；结果写 visual_review.json。"
+  },
+  {
+    "id": "gf_artifact_eval",
+    "title": "产物级评测 schema",
+    "tags": ["gf_contract", "eval"],
+    "content": "eval/summary.json（schema gameforge.eval_summary.v1）聚合四项指标：project_completeness(权重1)、runtime_smoke(1)、playtest(2)、visual_review(1)。只读已有证据，缺失记为 skipped 且不参与总分，绝不重新生成或重新运行游戏。"
+  },
+  {
+    "id": "gf_llm_stub",
+    "title": "离线 stub 模式全链路冒烟",
+    "tags": ["gf_contract", "tooling"],
+    "content": "GAMEFORGE_LLM_STUB=1 或 llm.stub.enabled=true 时所有 LLM 调用立即拒绝，Agent 走模板降级路径，用于无 API key / 无网络环境下的全链路冒烟与 CI。stub 不应被当成生产生成模式。"
+  },
+  {
+    "id": "gf_paths_contract",
+    "title": "GameForge 路径单一事实源",
+    "tags": ["gf_contract", "tooling"],
+    "content": "所有产物路径只能经 src/core/paths.py 构造：生成游戏在 projects/<project_id>/，流水线产物在 <project>/.gameforge/<run_id>/{playtest,visual_review.json,eval/summary.json}。其他模块不得自行拼接 \"projects\" 路径；可用环境变量 GAMEFORGE_PROJECTS_ROOT / GAMEFORGE_DATA_ROOT 整体迁移输出树。"
+  },
+  {
+    "id": "gf_sandbox_contract",
+    "title": "沙箱任务工作区与合并回滚",
+    "tags": ["gf_contract", "tooling"],
+    "content": "sandbox.enabled 开启后每次运行创建 task 工作区，代码生成类产物先写 sandbox.modify(task, rel_path, content)；成功 auto_merge 合并回主线，异常 auto_rollback 回滚出生基线。预览端点带 task_id 可直接预览未合并的工作区。"
+  }
+]

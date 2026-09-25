@@ -381,7 +381,9 @@ class GodotSupervisor:
         if scene is None:
             raise FileNotFoundError(f"项目 {project_id} 找不到任何 .tscn 场景")
 
-        env = os.environ.copy()
+        from src.engine.godot import godot_user_env
+
+        env = godot_user_env(os.environ.copy())
         env["GAMEFORGE_PREVIEW_PORT"] = str(port)
         env["GAMEFORGE_PREVIEW_TOKEN"] = self.token
         # 预览截图模式：跳过开始画面直接进入玩法（导出的成品仍从开始画面起步）

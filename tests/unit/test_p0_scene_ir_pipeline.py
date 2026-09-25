@@ -93,8 +93,21 @@ def _bare_workflow():
     return wf
 
 
+def _redirect_projects_root(monkeypatch, tmp_path):
+    """把生成项目根指到临时目录。
+
+    必须用 monkeypatch 覆盖 paths.PROJECTS_ROOT（模块属性，函数调用时读取），
+    不能靠 monkeypatch.chdir：PROJECTS_ROOT 在 paths 模块 import 时按
+    REPO_ROOT 算出，之后与 cwd 无关；用 chdir 会把 IR 写进真实仓库的
+    projects/ 下（曾经就是这样污染过 demo 项目目录的）。
+    """
+    from src.core import paths
+
+    monkeypatch.setattr(paths, "PROJECTS_ROOT", tmp_path / "projects")
+
+
 def test_persist_scene_ir_writes_wrapper(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
+    _redirect_projects_root(monkeypatch, tmp_path)
     wf = _bare_workflow()
     ir = default_scene_ir(theme="space_black", genre="shooter")
 
@@ -113,7 +126,7 @@ def test_persist_scene_ir_writes_wrapper(monkeypatch, tmp_path):
 
 
 def test_persist_scene_ir_skips_none_ir(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
+    _redirect_projects_root(monkeypatch, tmp_path)
     wf = _bare_workflow()
 
     wf._persist_scene_ir({"preview_project_id": "x"}, None)
@@ -123,7 +136,7 @@ def test_persist_scene_ir_skips_none_ir(monkeypatch, tmp_path):
 
 def test_run_scene_generation_persists_before_complete(monkeypatch, tmp_path):
     """IR 必须在 scene_complete 事件发出前落盘：前端收到 project_id 才开始轮询预览。"""
-    monkeypatch.chdir(tmp_path)
+    _redirect_projects_root(monkeypatch, tmp_path)
     wf = _bare_workflow()
     ir = default_scene_ir(theme="space_black", genre="shooter")
 

@@ -108,6 +108,8 @@ def ensure_imported(project_path: str, editor_path: str, timeout: float = 180.0)
     幂等：已有 .godot 缓存时 Godot 快速跳过。返回是否成功。
     """
     try:
+        from src.engine.godot import godot_user_env
+
         proc = subprocess.run(
             [editor_path, "--headless", "--import", "--path", project_path],
             cwd=project_path,
@@ -116,6 +118,7 @@ def ensure_imported(project_path: str, editor_path: str, timeout: float = 180.0)
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            env=godot_user_env(),
         )
         return proc.returncode == 0
     except Exception as e:  # noqa: BLE001
@@ -152,6 +155,8 @@ def export_project(
     ]
     logger.info("export_kit.export_start", preset=preset_name, out=out_rel)
     try:
+        from src.engine.godot import godot_user_env
+
         proc = subprocess.run(
             cmd,
             cwd=project_path,
@@ -160,6 +165,7 @@ def export_project(
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            env=godot_user_env(),
         )
         ok = proc.returncode == 0 and os.path.isfile(out_path)
         tail = (proc.stderr or "")[-800:]

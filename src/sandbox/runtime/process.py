@@ -5,7 +5,9 @@ Windows：Job Object（ctypes，零依赖）
   - 进程数上限（ActiveProcessLimit，防 fork 炸弹）
   - CPU 时间上限（PerProcessUserTimeLimit）
   - KILL_ON_JOB_CLOSE：父进程退出自动清场（根治 Godot 僵尸进程泄漏）
-Linux：resource.setrlimit（RLIMIT_AS / RLIMIT_NPROC / RLIMIT_CPU）
+POSIX（Linux / macOS / BSD）：resource.setrlimit（RLIMIT_AS / RLIMIT_NPROC / RLIMIT_CPU）
+  - 逐条 clamp 到当前硬限，单项在本平台设不上只告警降级（见 _posix_preexec）
+  - macOS 上 RLIMIT_AS 无法在 preexec 阶段下调，内存由墙钟 timeout 兜底
 
 安全语义：fail-closed——Job Object 创建/关联失败则拒绝执行，绝不裸奔。
 env 白名单：默认只放行系统必需变量，剥掉 GAMEFORGE_*/DB* 等敏感凭据。
@@ -201,14 +203,49 @@ if _IS_WINDOWS:
                 self._job = None
 
 
-# ────────────────────────── Linux rlimit ──────────────────────────
-def _linux_preexec(policy: RuntimePolicy):
+# ────────────────────────── POSIX rlimit ──────────────────────────
+# 注意：不只 Linux —— macOS / BSD 同样走这里（_IS_WINDOWS 之外的 POSIX）。
+# 平台差异（写死成"Linux"曾经让 macOS 上整个沙箱起不来）：
+#   Linux   三项都能直接设
+#   macOS   RLIMIT_AS 无法在 preexec 阶段下调：Python 子进程的地址空间已经
+#           远大于配置的 2GB，setrlimit 返回 EINVAL("current limit exceeds
+#           maximum limit")；RLIMIT_NPROC 也不能把硬限压到当前软限以下。
+# 策略：逐条 clamp 到当前硬限、失败只降级该项并告警，不让 spawn 整体崩掉；
+# 内存/进程数真失控由墙钟 timeout 兜底（与 Windows 上 PROCESS_TIME 不可用时
+# 去掉该 flag 是同一策略）。
+def _posix_preexec(policy: RuntimePolicy):
     import resource
 
     def _apply():
-        resource.setrlimit(resource.RLIMIT_AS, (policy.memory_limit_mb * 1024 * 1024,) * 2)
-        resource.setrlimit(resource.RLIMIT_NPROC, (policy.process_limit,) * 2)
-        resource.setrlimit(resource.RLIMIT_CPU, (policy.cpu_time_seconds,) * 2)
+        wanted = (
+            ("RLIMIT_AS", policy.memory_limit_mb * 1024 * 1024, "memory"),
+            ("RLIMIT_NPROC", policy.process_limit, "process_limit"),
+            ("RLIMIT_CPU", policy.cpu_time_seconds, "cpu_time"),
+        )
+        for name, want, human in wanted:
+            res = getattr(resource, name, None)
+            if res is None:
+                logger.warning("sandbox.rlimit_unsupported", limit=name)
+                continue
+            try:
+                soft, hard = resource.getrlimit(res)
+            except (OSError, ValueError):
+                continue
+            infinity = getattr(resource, "RLIM_INFINITY", -1)
+            if hard != infinity and want > hard:
+                # 无权限抬高硬限，压到当前天花板（仍保留限流效果）
+                want = hard
+            try:
+                # 只下调软限，硬限保持原样：macOS 不允许把硬限压到当前软限以下
+                resource.setrlimit(res, (min(want, hard), hard))
+            except (ValueError, OSError) as e:
+                # 该项在本平台无法生效（如 macOS 的 RLIMIT_AS），其余项继续
+                logger.warning(
+                    "sandbox.rlimit_apply_failed",
+                    limit=human,
+                    wanted=want,
+                    error=str(e),
+                )
 
     return _apply
 
@@ -228,7 +265,7 @@ def run_isolated(
     env = env if env is not None else policy.sanitized_env()
     t0 = time.monotonic()
 
-    preexec = _linux_preexec(policy) if not _IS_WINDOWS else None
+    preexec = _posix_preexec(policy) if not _IS_WINDOWS else None
 
     try:
         proc = subprocess.Popen(
@@ -243,6 +280,10 @@ def run_isolated(
             errors="replace",
             preexec_fn=preexec,
         )
+    except subprocess.SubprocessError as e:
+        # preexec_fn 抛出的异常被 Python 包装成 SubprocessError（不是 OSError），
+        # 同样拒绝执行，别让调用方看到一个裸的 "Exception occurred in preexec_fn"
+        raise OSError(f"沙箱进程启动失败（拒绝裸奔执行）: {e}") from e
     except OSError as e:
         raise OSError(f"沙箱进程启动失败（拒绝裸奔执行）: {e}") from e
 

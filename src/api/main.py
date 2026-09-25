@@ -56,6 +56,13 @@ from src.api.schemas import (
 )
 from src.sandbox.controller import SandboxController
 
+# 显式加载 .env：否则只能靠 llm_client 等模块的 load_dotenv 间接生效，
+# 一旦某次重构少引入一条链，.env 就静默失效（表现为"明明配了却还报
+# GAMEFORGE_API_KEYS must be set"）。必须在下面读取 GAMEFORGE_* 之前执行。
+from dotenv import load_dotenv as _load_dotenv
+
+_load_dotenv()
+
 logger = structlog.get_logger()
 
 

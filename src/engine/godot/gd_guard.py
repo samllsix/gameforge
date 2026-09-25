@@ -13,8 +13,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -35,18 +36,37 @@ DANGEROUS_APIS = [
 _repo_root = Path(__file__).resolve().parents[3]
 
 
+def _guard_binary_names() -> List[str]:
+    """按平台返回 gd-guard 二进制的候选文件名。
+
+    Cargo 只在 Windows 上给可执行文件加 ``.exe``，Linux/macOS 的产物是不带
+    后缀的 ``gd-guard``（Cargo.toml 未声明 [[bin]]，二进制名取 package name）。
+    此前这里只找 ``gd-guard.exe``，导致类 Unix 平台即使 ``cargo build`` 成功
+    也定位不到，``scan_project`` 永远返回 unavailable——安全闸门静默失效。
+    两个名字都找，顺序按平台优先。
+    """
+    if sys.platform == "win32":
+        return ["gd-guard.exe", "gd-guard"]
+    return ["gd-guard", "gd-guard.exe"]
+
+
 def find_guard() -> Optional[str]:
     """定位 gd-guard 二进制: 仓库构建产物 → PATH。找不到返回 None。"""
-    candidates = [
-        _repo_root / "tools" / "gd-guard" / "target" / "release" / _GUARD_NAME,
-        _repo_root / "tools" / "gd-guard" / "target" / "debug" / _GUARD_NAME,
-    ]
-    for c in candidates:
-        if c.is_file():
-            return str(c)
+    for name in _guard_binary_names():
+        for candidate in (
+            _repo_root / "tools" / "gd-guard" / "target" / "release" / name,
+            _repo_root / "tools" / "gd-guard" / "target" / "debug" / name,
+        ):
+            if candidate.is_file():
+                return str(candidate)
+
     from shutil import which
 
-    return which(_GUARD_NAME)
+    for name in _guard_binary_names():
+        found = which(name)
+        if found:
+            return found
+    return None
 
 
 def scan_project(project_path: str, timeout: float = 120.0) -> Dict[str, Any]:

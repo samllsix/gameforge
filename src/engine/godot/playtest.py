@@ -194,6 +194,9 @@ class PlaytestRunner:
             cmd.append(scene_path)
 
         timeout = timeout or self.timeout
+        from src.engine.godot import godot_user_env
+
+        env = godot_user_env(env)
         t0 = time.monotonic()
         try:
             proc = subprocess.run(

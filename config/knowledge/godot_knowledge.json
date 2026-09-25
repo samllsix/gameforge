@@ -1,0 +1,212 @@
+[
+  {
+    "id": "characterbody2d_move_and_slide",
+    "title": "CharacterBody2D move_and_slide velocity",
+    "tags": ["physics", "scripting", "player"],
+    "content": "Godot 4 的 2D 角色控制器必须 extends CharacterBody2D（3.x 的 KinematicBody2D 已移除）。在 _physics_process(delta) 里维护 velocity 向量，最后调用 move_and_slide()；move_and_slide() 返回 bool 表示是否发生碰撞。重力从 ProjectSettings.get_setting(\"physics/2d/default_gravity\") 读取。判断落地用 is_on_floor()，墙面用 is_on_wall()，天花板用 is_on_ceiling()；停止滑动用 velocity = Vector2.ZERO。"
+  },
+  {
+    "id": "characterbody2d_platformer_template",
+    "title": "CharacterBody2D 平台跳跃玩家控制器完整写法",
+    "tags": ["physics", "scripting", "player"],
+    "content": "标准结构：@export var speed = 300.0；@export var jump_velocity = -400.0；var _gravity = ProjectSettings.get_setting(\"physics/2d/default_gravity\")；@onready var animated_sprite = $AnimatedSprite2D。_physics_process 里：if not is_on_floor(): velocity.y += _gravity * delta；if Input.is_action_just_pressed(\"jump\") and is_on_floor(): velocity.y = jump_velocity；var direction = Input.get_axis(\"move_left\", \"move_right\")；if direction: velocity.x = direction * speed else velocity.x = move_toward(velocity.x, 0, speed)；move_and_slide()。"
+  },
+  {
+    "id": "area2d_signals",
+    "title": "Area2D 拾取物与碰撞信号",
+    "tags": ["physics", "signals", "pickup"],
+    "content": "拾取物用 Area2D + CollisionShape2D，在 _ready() 里连接自身信号：body_entered.connect(_on_body_entered)。_on_body_entered(body) 中判断 body.is_in_group(\"player\") 或 body is CharacterBody2D，命中后 queue_free()。注意 Godot 4 中 signal 连接语法为 obj.signal_name.connect(callable)，不再使用 .connect(\"signal\", target, \"method\")。"
+  },
+  {
+    "id": "collision_layers_masks",
+    "title": "Collision layers 与 mask 配置",
+    "tags": ["physics", "scene"],
+    "content": "layer 决定物体自身属于哪一层，mask 决定它检测哪些层。2D 项目在 Project Settings > Layer Names > 2D Physics 命名。玩家 CharacterBody2D 设 mask 包含地面层；Area2D 拾取物 mask 包含玩家层。.gd 里可用 collision_layer / collision_mask 读取，set_collision_layer_value(index, enabled) 逐位设置。"
+  },
+  {
+    "id": "input_get_axis",
+    "title": "Input get_axis 与 is_action_just_pressed",
+    "tags": ["input"],
+    "content": "连续输入用 Input.get_axis(\"move_left\", \"move_right\") 返回 -1..1；单次触发用 Input.is_action_just_pressed(\"jump\")（在 _physics_process/_process 中每帧只触发一次）。动作在 Project Settings > Input Map 定义；未定义的动作会打印 Unknown action 'x'。Godot 内置 ui_accept（空格/回车）、ui_left/ui_right/ui_up/ui_down 始终可用，无需配置。"
+  },
+  {
+    "id": "input_map_define",
+    "title": "InputMap 运行时新增动作",
+    "tags": ["input"],
+    "content": "InputMap.add_action(\"jump\")；var ev = InputEventKey.new()；ev.physical_keycode = KEY_SPACE；InputMap.action_add_event(\"jump\", ev)。查询动作存在性用 InputMap.has_action(name)，避免 Unknown action 报错。"
+  },
+  {
+    "id": "onready_node_refs",
+    "title": "@onready 与节点引用",
+    "tags": ["scripting", "scene"],
+    "content": "@onready var sprite = $Sprite2D 在节点进入场景树后求值（等价于在 _ready() 里赋值），不能在 _init() 用。跨层级引用用 get_node(\"../ScoreManager\") 或 get_tree().current_scene.get_node_or_null(\"Name\")。拿不到节点时 get_node_or_null() 返回 null 而不报错，适合可缺失的可选节点。"
+  },
+  {
+    "id": "signals_define_connect",
+    "title": "signal 定义、emit 与连接",
+    "tags": ["signals"],
+    "content": "signal coin_collected(amount: int)。发射用 coin_collected.emit(1)。连接：button.pressed.connect(_on_button_pressed)；断开用 disconnect(callable)。一次性连接用 CONNECT_ONE_SHOT：sig.connect(cb, CONNECT_ONE_SHOT)。信号带参回调签名必须与声明一致，否则报 \"Signal 'x' is declared with N arguments\"。"
+  },
+  {
+    "id": "lifecycle_callbacks",
+    "title": "_ready _process _physics_process 生命周期",
+    "tags": ["scripting"],
+    "content": "_enter_tree → _ready → _process(delta) 每帧 → _physics_process(delta) 固定物理步长（默认 60fps）→ _exit_tree。物理相关（velocity、move_and_slide、施加力）必须放 _physics_process。节点在父节点之前 _ready()；子节点未就绪时引用会拿到 null，需用 @onready 或 await get_tree().process_frame。"
+  },
+  {
+    "id": "typed_gdscript",
+    "title": "GDScript 强类型注解与常见解析错误",
+    "tags": ["scripting"],
+    "content": "var speed: float = 300.0；func f(a: int) -> int:；const GRAVITY: float = 980.0。常见 Parse Error：'Expected expression for variable initial value after \"=\"'（赋值右侧为空或少了右值）；'Identifier \"x\" not declared in the current scope'（拼写错误或变量定义在引用之后）；'Cannot infer the type of \"x\" variable'（var x = null 需显式标注类型）；'Too many arguments for \"f()\" call'（回调参数数量不与信号匹配）。"
+  },
+  {
+    "id": "null_instance_error",
+    "title": "null instance 与 Invalid get index 运行时错误",
+    "tags": ["scripting"],
+    "content": "'Attempt to call function \"f\" in base \"null instance\" on a null instance' 说明变量是 null：常见原因是 _ready() 里拿了尚未初始化的节点（改 @onready）、get_node 路径写错、或子节点在场景里被删。'Invalid get index \"x\" (on base \"Array\"/\"Dictionary\")' 是越界访问或键名不存在，用 dict.get(\"key\", default) 或 if dict.has(\"key\") 防护。"
+  },
+  {
+    "id": "class_name_convention",
+    "title": "class_name 与 snake_case 命名规范",
+    "tags": ["scripting"],
+    "content": "class_name PlayerController（PascalCase）让脚本可作为全局类型使用；函数与变量 snake_case；常量 UPPER_SNAKE_CASE。同一 class_name 在项目中必须唯一，重复会报 \"Class \"x\" hides a global script class\"。信号与函数命名避免与内置成员冲突（如 process、position）。"
+  },
+  {
+    "id": "animated_sprite",
+    "title": "AnimatedSprite2D 与 SpriteFrames 动画",
+    "tags": ["animation"],
+    "content": "@onready var anim = $AnimatedSprite2D；anim.play(\"run\") / play(\"idle\")；anim.flip_h = direction < 0；当前帧 anim.frame / animation。SpriteFrames 资源在动画面板里建，或用 frames = SpriteFrames.new() + add_animation(\"run\") + add_frame(\"run\", texture) 动态创建。Godot 3 的 AnimatedSprite 已改名 AnimatedSprite2D。"
+  },
+  {
+    "id": "animation_player",
+    "title": "AnimationPlayer 播放与等待",
+    "tags": ["animation"],
+    "content": "anim_player.play(\"spawn\")；await anim_player.animation_finished；seek(t, true) 立即更新。Godot 4 中 AnimationPlayer 也是 AnimationTree 的播放源；Tween 更适合作程序化插值。"
+  },
+  {
+    "id": "tween",
+    "title": "Tween 程序化补间动画",
+    "tags": ["animation", "scripting"],
+    "content": "var t = create_tween()；t.tween_property(self, \"position\", target, 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)；串行动作用 t.chain()；t.kill() 取消。Godot 4 的 Tween 是 RefCounted 节点式对象，不再有 scene_tree_tween 的 yoyo/easing 旧语法。"
+  },
+  {
+    "id": "camera2d",
+    "title": "Camera2D 跟随玩家",
+    "tags": ["scene", "camera"],
+    "content": "给场景加 Camera2D，_ready() 里 make_current()；position_smoothing_enabled = true 平滑跟随。多相机时用 make_current() 切换。限制边界可用 limit_left/right/top/bottom。相机不与玩家同节点，通常作为玩家的子节点或独立节点每帧 position = player.position。"
+  },
+  {
+    "id": "canvaslayer_ui",
+    "title": "CanvasLayer 与 Control UI 布局",
+    "tags": ["ui"],
+    "content": "HUD 用 CanvasLayer 独立于世界坐标；内部 Control 节点用 anchor + position 布局。Label 设 text 更新分数：$ScoreLabel.text = \"SCORE: %d\" % score。按钮 pressed 信号连接回调；自适应分辨率在 Control 上设 anchors preset 或用 MarginContainer/HBoxContainer/VBoxContainer。"
+  },
+  {
+    "id": "label_text_format",
+    "title": "Label 文本格式化与中文字体",
+    "tags": ["ui"],
+    "content": "label.text = \"分数: %d\" % score 或 \"{score}\".format({\"score\": score})。中文不显示是因为主题字体缺字形：Project Settings > GUI > Theme > Default Font 指定支持中文的字体（如 NotoSansSC）。"
+  },
+  {
+    "id": "audio_stream_player",
+    "title": "AudioStreamPlayer 播放音效与 BGM",
+    "tags": ["audio"],
+    "content": "@onready var sfx = $JumpSound；sfx.stream = load(\"res://assets/sfx/jump.wav\")；sfx.play()。BGM 用 AudioStreamPlayer 并设 volume_db 降低， looping 场景用循环 wav/ogg。音频文件放 res://assets/sfx/，wav 为 16-bit PCM 最稳。"
+  },
+  {
+    "id": "timer_node",
+    "title": "Timer 节点与一次性定时器",
+    "tags": ["scene", "scripting"],
+    "content": "$RespawnTimer.start()；timeout.connect(_on_timeout)。代码创建：var t = Timer.new()；add_child(t)；t.wait_time = 2.0；t.one_shot = true；t.timeout.connect(func(): queue_free())；t.start()。需要等待动画/倒计时时也可用 await get_tree().create_timer(2.0).timeout。"
+  },
+  {
+    "id": "groups",
+    "title": "Group 分组获取节点",
+    "tags": ["scene"],
+    "content": "add_to_group(\"enemies\")；get_tree().get_nodes_in_group(\"enemies\") 返回数组；is_in_group(\"player\") 判断；call_group(\"enemies\", \"die\") 批量调用。适合关卡重置时统一处理同类节点。"
+  },
+  {
+    "id": "scene_change",
+    "title": "切换场景与游戏流程",
+    "tags": ["scene"],
+    "content": "get_tree().change_scene_to_file(\"res://scenes/Level2.tscn\") 异步安全；重开当前场景 get_tree().reload_current_scene()。暂停树 get_tree().paused = true，节点 process_mode = Node.PROCESS_MODE_ALWAYS 可让 UI 在暂停时仍响应。启动场景由 project.godot 的 run/main_scene 指定。"
+  },
+  {
+    "id": "autoload_singleton",
+    "title": "Autoload 单例",
+    "tags": ["scene", "scripting"],
+    "content": "project.godot 的 [autoload] 段 GameManager=\"*res://autoload/game_manager.gd\"，之后全局用 GameManager.add_score(1)。Autoload 脚本必须 extends Node；跨场景共享状态、分数、设置都放这里。注意 Autoload 在任意场景 _ready() 之前已就绪，可安全引用。"
+  },
+  {
+    "id": "preload_load_res",
+    "title": "preload load 与 res:// 资源路径",
+    "tags": ["scripting"],
+    "content": "const Player = preload(\"res://scenes/player.tscn\") 编译期加载；var s = load(\"res://scenes/player.tscn\") 运行时加载。实例化 var p = Player.instantiate()（3.x 的 instance() 已移除）。res:// 指向项目根；路径大小写敏感且必须真实存在，否则 \"Cannot open file\" / Failed loading resource。"
+  },
+  {
+    "id": "packed_string_array",
+    "title": "Packed*Array 与 Godot 4 类型变化",
+    "tags": ["scripting"],
+    "content": "Godot 4 中 PoolStringArray→PackedStringArray、PoolIntArray→PackedIntArray、PoolVector2Array→PackedVector2Array。Dictionary/Array 仍为 Variant 容器。遍历 for i in arr.size(): / for v in arr: 均可。"
+  },
+  {
+    "id": "rng",
+    "title": "RandomNumberGenerator 随机数",
+    "tags": ["scripting"],
+    "content": "var rng = RandomNumberGenerator.new()；rng.randomize()；rng.randf_range(-1.0, 1.0)、rng.randi_range(1, 6)。全局 randf()/randi() 也可用但跨步不确定，需要可重放逻辑时用独立 rng 实例。"
+  },
+  {
+    "id": "godot3_to_4_migration",
+    "title": "Godot 3 → 4 迁移对照表",
+    "tags": ["scripting", "migration"],
+    "content": "KinematicBody2D→CharacterBody2D；RigidBody2D 用法不变但积分器变化；OS.get_ticks_msec()→Time.get_ticks_msec()；yield($Timer, \"timeout\")→await $Timer.timeout；instance()→instantiate()；connect 字符串语法→Callable.connect；VisualServer→RenderingServer；shader MATERIAL 改为 ORM_MATERIAL（4.3+）。生成代码严禁出现 3.x API。"
+  },
+  {
+    "id": "gdscript_forbidden_apis",
+    "title": "生成脚本禁止使用的危险 API",
+    "tags": ["scripting", "security"],
+    "content": "游戏逻辑禁止触碰执行/文件/网络/反射：OS.execute、OS.create_process、OS.shell_open、FileAccess、DirAccess、ResourceSaver.save、HTTPRequest、HTTPClient、WebSocketPeer、ENetMultiplayerPeer、MultiplayerAPI、JavaScriptBridge、ClassDB.class_call_static、ClassDB.instantiate。游戏只需要节点/物理/Input/HUD API。"
+  },
+  {
+    "id": "headless_cli",
+    "title": "Godot headless 命令行用法",
+    "tags": ["scene", "tooling"],
+    "content": "godot --headless --path <project_dir> 无窗口导入/运行；检查脚本语法：--headless --path <dir> --check-only --script res://scripts/foo.gd；直接跑场景：--headless --path <dir> res://scenes/main.tscn；退出用 get_tree().quit() 或 --quit-after N 帧。无编辑器 GUI 时这是唯一校验方式。"
+  },
+  {
+    "id": "export_presets",
+    "title": "导出预设与 Web 构建",
+    "tags": ["tooling"],
+    "content": "export_presets.cfg 中 platform=\"Web\" 与 platform=\"Windows Desktop\" 各一份；Web 导出需 Godot 的 Web 导出模板（Editor > Manage Export Templates）。命令行导出预览：godot --headless --path <dir> --export-release \"Web\" out.html。"
+  },
+  {
+    "id": "visible_on_screen_notifier",
+    "title": "VisibleOnScreenNotifier2D 离屏销毁",
+    "tags": ["scene", "scripting"],
+    "content": "Area2D 子节点加 VisibleOnScreenNotifier2D，screen_exited.connect(func(): queue_free())，用于清理飞出视野的子弹/敌人，防止节点无限累积。rect 尺寸决定判定范围。"
+  },
+  {
+    "id": "tilemap",
+    "title": "TileMapLayer 瓦片地图",
+    "tags": ["scene"],
+    "content": "Godot 4.3+ 用 TileMapLayer 节点（旧 TileMap 已拆分为 TileMapLayer + TileSet 资源）。关卡地形先在 TileSet 里画 physics layer，再 set_cell(coords, source_id, atlas_coords)。碰撞自动生成，玩家用 move_and_slide 与之交互。"
+  },
+  {
+    "id": "parallax_background",
+    "title": "ParallaxBackground 与 ParallaxLayer 视差背景",
+    "tags": ["scene", "camera"],
+    "content": "ParallaxBackground > ParallaxLayer > Sprite2D，motion_scale 小于 1 产生视差（0.3 远景 / 1.0 跟随）。ignore_camera_zoom = true 保持像素清晰。背景层 collision_layer 设 0，避免阻挡玩家。"
+  },
+  {
+    "id": "particles",
+    "title": "CPUParticles2D 粒子特效",
+    "tags": ["animation"],
+    "content": "CPUParticles2D（Godot 4 中 GPUParticles2D 已改名）设 amount、lifetime、one_shot = true、emitting = true；一次性特效完成后 queue_free()。blood_direction / spread / gravity 控制方向。"
+  },
+  {
+    "id": "save_load_config",
+    "title": "ConfigFile 本地存档",
+    "tags": ["scripting"],
+    "content": "var cfg = ConfigFile.new()；cfg.load(\"user://save.cfg\")；cfg.set_value(\"progress\", \"level\", 3)；cfg.save(\"user://save.cfg\")。user:// 指向用户数据目录（各平台一致），比 FileAccess 任意路径安全且导出后可用。"
+  }
+]

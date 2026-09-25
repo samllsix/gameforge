@@ -57,6 +57,101 @@ def _normalize_godot_path(p: str) -> str:
     return p
 
 
+# ── Godot user:// 数据目录 ──────────────────────────────────────────────────
+# Godot 启动时必须能写 user:// 数据目录，否则不是优雅退出而是**段错误崩溃**：
+#   ERROR: Error attempting to create data dir: .../Godot/app_userdata/<项目名>
+#   handle_crash: Program crashed with signal 11 (RotatedFileLogger 拿不到 user://logs)
+# 受限环境（容器 / CI / 只读 HOME / 文件沙箱）里该位置常常不可写，headless
+# 校验会因此全部误判为"通过"（崩在写日志阶段，根本没校验到脚本）。
+#
+# 注意不能无条件重定向 HOME：Godot 的导出模板装在
+#   ~/Library/Application Support/Godot/export_templates/
+# 改了 HOME 会让 Web/Windows 导出找不到模板。所以这里先探测真实位置是否可写，
+# 只在不可写时才回退到工作区内的 data/godot_home。
+_godot_home_logged = False
+
+
+def _godot_default_user_root() -> Optional[str]:
+    """Godot 存放 user:// 数据的平台默认根目录。"""
+    import sys
+
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+    if sys.platform == "win32":
+        return os.environ.get("APPDATA")
+    return os.environ.get("XDG_DATA_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "share"
+    )
+
+
+def _godot_user_root_writable() -> bool:
+    """真实 user:// 数据根是否可写（探测失败即视为不可写）。
+
+    只做 ``makedirs(exist_ok=True)`` 是不够的：目录已存在但不可写时它静默返回，
+    会把不可写误判成可写（macOS 文件沙箱下正是这种情况，随后 Godot 段错误）。
+    必须真的落一个探针文件。
+    """
+    root = _godot_default_user_root()
+    if not root:
+        return False
+    target = os.path.join(root, "Godot")
+    try:
+        os.makedirs(target, exist_ok=True)
+        probe = os.path.join(target, ".gameforge_write_probe")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def godot_user_env(base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """构造运行 Godot 子进程用的环境变量。
+
+    Args:
+        base: 基础环境；缺省用 ``os.environ``（不修改父进程环境）
+
+    Returns:
+        可直接传给 ``subprocess.run(..., env=...)`` 的字典。真实 user:// 位置
+        可写时原样返回；不可写时把 HOME / XDG_DATA_HOME / APPDATA 指向
+        ``data/godot_home``（可由 GAMEFORGE_DATA_ROOT 整体迁移）。
+    """
+    global _godot_home_logged
+
+    env = dict(os.environ if base is None else base)
+    if _godot_user_root_writable():
+        return env
+
+    from src.core import paths
+
+    fallback = paths.DATA_ROOT / "godot_home"
+    try:
+        os.makedirs(fallback, exist_ok=True)
+    except OSError as e:  # 连工作区都写不了：交给 Godot 自己报错，别在这里吞掉
+        logger.warning("godot.user_home_fallback_failed", error=str(e))
+        return env
+
+    env["HOME"] = str(fallback)
+    env["XDG_DATA_HOME"] = str(fallback / "share")
+    env["APPDATA"] = str(fallback / "AppData" / "Roaming")
+    try:
+        os.makedirs(env["XDG_DATA_HOME"], exist_ok=True)
+        os.makedirs(env["APPDATA"], exist_ok=True)
+    except OSError:
+        pass
+
+    if not _godot_home_logged:
+        _godot_home_logged = True
+        logger.warning(
+            "godot.user_home_redirected",
+            reason="默认 user:// 数据目录不可写，Godot 会段错误崩溃",
+            default=_godot_default_user_root(),
+            fallback=str(fallback),
+        )
+    return env
+
+
 @dataclass
 class GodotCompileResult:
     """Godot 编译结果"""
@@ -123,6 +218,7 @@ class GodotCompiler:
                 cmd, capture_output=True, text=True, timeout=self.timeout,
                 encoding="utf-8", errors="replace",
                 cwd=self.project_path,
+                env=godot_user_env(),
             )
 
             errors = self._parse_errors(result.stderr)
@@ -277,6 +373,7 @@ class GodotEditor:
                 cmd, capture_output=True, text=True, timeout=self.timeout,
                 encoding="utf-8", errors="replace",
                 cwd=self.project_path,
+                env=godot_user_env(),
             )
             output = result.stdout + result.stderr
             errors = self._parse_headless_errors(output)
@@ -401,6 +498,7 @@ class GodotEditor:
                 cmd, capture_output=True, text=True, timeout=self.timeout,
                 encoding="utf-8", errors="replace",
                 cwd=self.project_path,
+                env=godot_user_env(),
             )
             return {
                 "status": "success" if result.returncode == 0 else "error",
@@ -425,6 +523,7 @@ class GodotEditor:
                 [self.editor_path, "--version"],
                 capture_output=True, text=True, timeout=10,
                 encoding="utf-8", errors="replace",
+                env=godot_user_env(),
             )
             version_str = result.stdout.strip()
             major = int(version_str.split(".")[0]) if version_str else self.godot_version
@@ -521,6 +620,7 @@ class GodotEditor:
                 cmd, capture_output=True, text=True, timeout=timeout,
                 encoding="utf-8", errors="replace",
                 cwd=project_path,
+                env=godot_user_env(),
             )
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": f"Godot 渲染超时（{timeout}s）"}

@@ -13,7 +13,7 @@ import time as _time
 import structlog
 
 logger = structlog.get_logger()
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from langgraph.graph import END, StateGraph
 
@@ -416,6 +416,87 @@ class GameDevWorkflow:
         cfg["godot"] = godot_cfg
         return cfg
 
+    def _godot_project_config(self, state: GameDevState) -> Optional[Dict[str, Any]]:
+        """Godot 流水线（写盘/编译校验/冒烟/playtest）应使用的配置。
+
+        优先级：Sandbox 任务工作区 > projects/<project_id>/。
+
+        非沙箱模式此前直接沿用全局 ``godot.project_path``（缺省取环境变量
+        ``GODOT_PROJECT_PATH``），于是生成物会写到一个与项目无关的固定目录；
+        指向仓库根时会**覆盖 scripts/、scenes/ 下的已跟踪文件**（实测发生过）。
+        这与 paths 契约（生成项目位于 projects/<project_id>/）以及 eval 的
+        project_completeness 指标（检查 projects/<pid>/ 下的 project.godot、
+        *.tscn、*.gd）都矛盾——非沙箱模式那条指标因此永远不可能通过。
+        Sandbox 模式本就按任务覆盖 project_path，这里把同一模式推广到主线。
+
+        返回 None 表示无法确定目标（project_id 非法等），调用方退回 self.config。
+        """
+        sandbox_cfg = self._sandbox_project_config(state)
+        if sandbox_cfg is not None:
+            return sandbox_cfg
+
+        pid = self._resolve_preview_project_id(state)
+        if not pid:
+            return None
+        try:
+            project_dir = paths.ensure_project_dir(pid)
+        except (ValueError, OSError) as e:
+            self.log_error("godot_project_dir_failed", {"error": str(e)})
+            return None
+
+        self._ensure_project_skeleton(project_dir, state)
+        cfg = dict(self.config)
+        godot_cfg = dict(cfg.get("godot") or {})
+        godot_cfg["project_path"] = str(project_dir)
+        cfg["godot"] = godot_cfg
+        return cfg
+
+    def _ensure_project_skeleton(self, project_dir, state: GameDevState) -> None:
+        """确保目标目录内有 project.godot。
+
+        ``GodotEditor.validate()`` 要求 project_path 下有 project.godot，而真正的
+        写盘发生在 validate() 之后；缺这一步非沙箱模式会直接判"未配置项目"跳过。
+        优先用已生成的内容，其次退回最小工程模板。
+        """
+        project_godot = project_dir / "project.godot"
+        if project_godot.is_file():
+            return
+        content = (state.get("code_generated") or {}).get("project.godot")
+        if not content:
+            try:
+                from src.engine.godot.scene_to_godot import _minimal_project_godot
+
+                scene_desc = state.get("scene_description") or {}
+                scene_name = scene_desc.get("scene_name") or "GameScene"
+                content = _minimal_project_godot(scene_name)
+            except Exception as e:  # noqa: BLE001
+                self.log_error("project_skeleton_failed", {"error": str(e)})
+                return
+        try:
+            project_godot.write_text(content, encoding="utf-8")
+        except OSError as e:
+            self.log_error("project_skeleton_write_failed", {"error": str(e)})
+
+    def _project_materialized(self, state: GameDevState) -> bool:
+        """目标项目目录里是否已有场景文件（判定是否需要真正落盘构建）。
+
+        只读判断，不触发 _godot_project_config 的建目录副作用。
+        """
+        task = (state.get("sandbox") or {}).get("task")
+        if task and task.get("task_dir"):
+            base = task["task_dir"]
+        else:
+            pid = self._resolve_preview_project_id(state)
+            if not pid:
+                return False
+            try:
+                base = str(paths.project_dir(pid))
+            except ValueError:
+                return False
+        scene_path = state.get("scene_path") or "res://scenes/main.tscn"
+        rel = scene_path.removeprefix("res://").replace("/", os.sep)
+        return os.path.isfile(os.path.join(base, rel))
+
     def _sandbox_cleanup_if_needed(self, project_id: str) -> None:
         """当项目沙箱任务数超过阈值时，自动清理最旧的任务。"""
         if not getattr(self, "sandbox_enabled", False) or not getattr(self, "sandbox", None):
@@ -519,6 +600,13 @@ class GameDevWorkflow:
             # IR 落盘须先于 scene_complete 事件：前端收到 project_id 才开始轮询预览
             scene_ir_obj = result.get("scene_ir")
             if scene_ir_obj is not None:
+                # 存进 state 供配方沉淀（save_recipe）复用：配方命中时不跑场景生成，
+                # 若配方不带 IR，预览端点会回退到通用 platformer 主题（品类错配）
+                state["scene_ir"] = (
+                    scene_ir_obj.model_dump()
+                    if hasattr(scene_ir_obj, "model_dump")
+                    else scene_ir_obj
+                )
                 await asyncio.to_thread(self._persist_scene_ir, state, scene_ir_obj)
 
             if result.get("compile_errors"):
@@ -564,6 +652,7 @@ class GameDevWorkflow:
 
         sandbox_cfg = self._sandbox_project_config(state)
         use_sandbox = sandbox_cfg is not None
+        project_cfg = self._godot_project_config(state) or self.config
 
         # —— 编译闭环模式路由 ——
         # auto    : 配置了 Godot 引擎路径则走 headless（无需编辑器 GUI），否则退回 8765 HTTP
@@ -572,7 +661,7 @@ class GameDevWorkflow:
         compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
         if compile_mode in ("auto", "headless"):
             from src.engine.godot import GodotEditor
-            editor = GodotEditor(sandbox_cfg or self.config)
+            editor = GodotEditor(project_cfg)
             valid, _editor_msg = editor.validate()
             if valid:
                 await self._godot_compile_loop_headless(state, event_callback, max_rounds, editor)
@@ -698,12 +787,15 @@ class GameDevWorkflow:
                 from src.engine.godot.scene_builder import GodotSceneBuilder
                 tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
                 name = scene_desc.get("scene_name", "GameScene")
+                # 固定写 scenes/main.tscn：project.godot 的 run/main_scene、
+                # 预览端 _need_build、基线检查与导出端点都只认这个路径
+                # （与 scene_to_godot.write_project 的约定一致）
                 # import_files 同步写盘，放入线程池避免阻塞事件循环
                 await asyncio.to_thread(
-                    editor.import_files, {f"scenes/{name}.tscn": tscn_text}
+                    editor.import_files, {"scenes/main.tscn": tscn_text}
                 )
                 state["scene_status"] = "success"
-                state["scene_path"] = f"res://scenes/{name}.tscn"
+                state["scene_path"] = "res://scenes/main.tscn"
                 await event_callback("scene_complete", {
                     "scene_name": name,
                     "scene_path": state["scene_path"],
@@ -716,8 +808,9 @@ class GameDevWorkflow:
 
         # 3) 校验闭环
         import os as _os
-        _sandbox_cfg = self._sandbox_project_config(state)
-        _proj = (_sandbox_cfg or self.config).get("godot", {}).get("project_path", "") or _os.getcwd()
+        _proj = (self._godot_project_config(state) or self.config).get("godot", {}).get(
+            "project_path", ""
+        ) or _os.getcwd()
         res_paths = []
         for k in gd_files.keys():
             clean = k.removeprefix("res://").removeprefix("res:/")
@@ -801,9 +894,7 @@ class GameDevWorkflow:
                 "runtime_smoke_skipped": True,
             }
 
-        sandbox_cfg = self._sandbox_project_config(state)
-        use_sandbox = sandbox_cfg is not None
-        runtime_config = sandbox_cfg or self.config
+        runtime_config = self._godot_project_config(state) or self.config
         from src.engine.godot.runtime_smoke import GodotRuntimeSmoke
         smoke = GodotRuntimeSmoke(runtime_config)
         for attempt in range(max_fix_attempts + 1):
@@ -904,7 +995,7 @@ class GameDevWorkflow:
             async def event_callback(_event_type, _data=None):
                 pass
 
-        runtime_config = self._sandbox_project_config(state) or self.config
+        runtime_config = self._godot_project_config(state) or self.config
         runner = PlaytestRunner(runtime_config)
         actions = pt_cfg.get("actions") or build_default_action_plan()
         run_id = paths.new_run_id()
@@ -1033,12 +1124,13 @@ class GameDevWorkflow:
         """
         sandbox_cfg = self._sandbox_project_config(state)
         use_sandbox = sandbox_cfg is not None
+        project_cfg = self._godot_project_config(state) or self.config
 
         # —— 一键构建模式路由 ——
         compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
         if compile_mode in ("auto", "headless"):
             from src.engine.godot import GodotEditor
-            editor = GodotEditor(sandbox_cfg or self.config)
+            editor = GodotEditor(project_cfg)
             valid, _editor_msg = editor.validate()
             if valid:
                 await self._try_godot_pipeline_headless(state, event_callback, editor)
@@ -1182,12 +1274,15 @@ class GameDevWorkflow:
                 from src.engine.godot.scene_builder import GodotSceneBuilder
                 tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
                 name = scene_desc.get("scene_name", "GameScene")
+                # 固定写 scenes/main.tscn：project.godot 的 run/main_scene、
+                # 预览端 _need_build、基线检查与导出端点都只认这个路径
+                # （与 scene_to_godot.write_project 的约定一致）
                 # import_files 同步写盘，放入线程池避免阻塞事件循环
                 await asyncio.to_thread(
-                    editor.import_files, {f"scenes/{name}.tscn": tscn_text}
+                    editor.import_files, {"scenes/main.tscn": tscn_text}
                 )
                 state["scene_status"] = "success"
-                state["scene_path"] = f"res://scenes/{name}.tscn"
+                state["scene_path"] = "res://scenes/main.tscn"
                 await event_callback("scene_complete", {
                     "scene_name": name,
                     "scene_path": state["scene_path"],
@@ -1200,8 +1295,9 @@ class GameDevWorkflow:
 
         # 3) headless 一次性校验（不做自动修复闭环）
         import os as _os2
-        _sandbox_cfg = self._sandbox_project_config(state)
-        _proj2 = (_sandbox_cfg or self.config).get("godot", {}).get("project_path", "") or _os2.getcwd()
+        _proj2 = (self._godot_project_config(state) or self.config).get("godot", {}).get(
+            "project_path", ""
+        ) or _os2.getcwd()
         res_paths = []
         for k in gd_files.keys():
             clean = k.removeprefix("res://").removeprefix("res:/")
@@ -1470,7 +1566,16 @@ class GameDevWorkflow:
         try:
             scene_task = asyncio.create_task(asyncio.sleep(0))
             await self._post_process(state, scene_task, cb)
-            if state.get("scene_status") in (None, "pending", "skipped"):
+            # Scene IR 落盘：配方命中时不跑场景生成，IR 必须随配方复用并补写磁盘，
+            # 否则预览端点读不到 IR 而回退到通用 platformer 主题（品类错配），
+            # eval 的 project_completeness 也拿不到 has_scene_ir。
+            # 历史配方没有 scene_ir 字段时 _persist_scene_ir 收到 None 直接跳过。
+            scene_ir = state.get("scene_ir")
+            if scene_ir:
+                await asyncio.to_thread(self._persist_scene_ir, state, scene_ir)
+            if not self._project_materialized(state) or state.get("scene_status") in (
+                None, "pending", "skipped",
+            ):
                 await self._try_godot_pipeline(state, cb)
         except Exception as e:
             record_workflow_run(False, _time.time() - _start)
@@ -1505,6 +1610,56 @@ class GameDevWorkflow:
                 self.logger.info("recipe_baked", title=state.get("recipe_title", ""))
         except Exception as e:
             self.logger.warning("recipe_bake_failed", error=str(e))
+
+    async def _run_verification_chain(
+        self,
+        state: GameDevState,
+        event_callback,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """跑完整验证闭环：安全闸门 → 运行时冒烟 → 配方沉淀 → playtest → 稳定性指标。
+
+        ``run()``（批处理）与 ``run_with_streaming()``（SSE）共用同一实现。
+        此前这段逻辑只写在流式入口里，批处理/同步接口在
+        ``_try_godot_pipeline`` 之后就返回了——gd-guard 闸门、运行时冒烟、
+        playtest 全不跑，等于 batch 调用方拿到的是未经任何验证的产物。
+
+        Returns:
+            (blocked, smoke_summary)：blocked=True 表示 gd-guard 拦截
+            （调用方应提前收尾，且不要合并回主线）；smoke_summary 供
+            调用方拼装 complete 事件。
+        """
+        # 安全闸门：gd-guard 扫描生成脚本（危险 API 一票否决，Rust 二进制缺失则跳过）
+        if await self._gd_guard_scan(state, event_callback):
+            return True, {}
+
+        # P0-2 运行时冒烟测试（"可运行"闭环）
+        smoke_summary = await self._runtime_smoke_test(state, event_callback)
+        state["runnable"] = smoke_summary.get("runnable")
+
+        # P1 语义级复用：真机冒烟通过 → 沉淀为已验证配方，供后续同类需求复用
+        # （save_recipe 同步写完整代码 JSON，放入线程池避免阻塞事件循环）
+        if state.get("runnable") is True:
+            await asyncio.to_thread(self._bake_if_verified, state)
+
+        # P1 playtest：真正玩游戏（输入回放 + 帧证据）——编译通过 ≠ 可玩
+        playtest_summary = await self._playtest(state, event_callback)
+        if playtest_summary:
+            state["playtest"] = playtest_summary
+
+        # P2 稳定性指标：本次生成的修改次数（按品类/难度，量化多智能体协作的首过率）
+        try:
+            from src.utils.metrics import record_generation_stability
+
+            genre_match = state.get("genre_match") or {}
+            record_generation_stability(
+                genre_match.get("genre") or "unknown",
+                genre_match.get("difficulty") or "medium",
+                int(state.get("fix_attempts", 0)),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        return False, smoke_summary
 
     # ========== 运行入口 ==========
 
@@ -1567,6 +1722,9 @@ class GameDevWorkflow:
             for _key in (
                 "scene_status", "scene_description", "scene_path",
                 "scene_error", "scene_compile_errors",
+                # scene_ir：场景任务在 LangGraph 之外写，必须和图内快照合并，
+                # 否则配方沉淀拿不到它（预览端会回退到通用主题）
+                "scene_ir",
             ):
                 if _key in state:
                     result[_key] = state[_key]
@@ -1602,6 +1760,16 @@ class GameDevWorkflow:
         # Godot 一键构建 pipeline
         if state.get("scene_status") in (None, "pending", "skipped"):
             await self._try_godot_pipeline(state, lambda *a, **kw: asyncio.sleep(0))
+
+        # 验证闭环（与 run_with_streaming 共用同一实现）：gd-guard → 冒烟 → 配方 → playtest。
+        # 此前批处理入口在这里就返回了，gd-guard 闸门/运行时冒烟/playtest 全不跑，
+        # 批量调用方拿到的是未经任何验证的产物。
+        blocked, _smoke_summary = await self._run_verification_chain(
+            state, lambda *a, **kw: asyncio.sleep(0)
+        )
+        if blocked:
+            # gd-guard 拦截：不合并回主线，runnable/warnings 已在链内置位
+            return state
 
         # Sandbox：成功则合并回主线
         if sandbox_task and self.sandbox_enabled and self.sandbox_auto_merge:
@@ -1732,6 +1900,7 @@ class GameDevWorkflow:
                 for _key in (
                     "scene_status", "scene_description", "scene_path",
                     "scene_error", "scene_compile_errors",
+                    "scene_ir",
                 ):
                     if _key in state:
                         final_state[_key] = state[_key]
@@ -1763,36 +1932,10 @@ class GameDevWorkflow:
         if state.get("scene_status") in (None, "pending", "skipped"):
             await self._try_godot_pipeline(state, event_callback)
 
-        # 安全闸门：gd-guard 扫描生成脚本（危险 API 一票否决，Rust 二进制缺失则跳过）
-        if await self._gd_guard_scan(state, event_callback):
+        # 验证闭环（与 run 共用同一实现）：gd-guard → 冒烟 → 配方沉淀 → playtest → 稳定性指标
+        blocked, smoke_summary = await self._run_verification_chain(state, event_callback)
+        if blocked:
             return state
-
-        # P0-2 运行时冒烟测试（"可运行"闭环）
-        smoke_summary = await self._runtime_smoke_test(state, event_callback)
-        state["runnable"] = smoke_summary.get("runnable")
-
-        # P1 语义级复用：真机冒烟通过 → 沉淀为已验证配方，供后续同类需求复用
-        # （save_recipe 同步写完整代码 JSON，放入线程池避免阻塞事件循环）
-        if state.get("runnable") is True:
-            await asyncio.to_thread(self._bake_if_verified, state)
-
-        # P1 playtest：真正玩游戏（输入回放 + 帧证据）——编译通过 ≠ 可玩
-        playtest_summary = await self._playtest(state, event_callback)
-        if playtest_summary:
-            state["playtest"] = playtest_summary
-
-        # P2 稳定性指标：本次生成的修改次数（按品类/难度，量化多智能体协作的首过率）
-        try:
-            from src.utils.metrics import record_generation_stability
-
-            genre_match = state.get("genre_match") or {}
-            record_generation_stability(
-                genre_match.get("genre") or "unknown",
-                genre_match.get("difficulty") or "medium",
-                int(state.get("fix_attempts", 0)),
-            )
-        except Exception:  # noqa: BLE001
-            pass
 
         await event_callback("complete", {
             "phase": "complete",

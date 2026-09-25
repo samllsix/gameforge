@@ -19,12 +19,31 @@ from src.engine.godot import GodotEditor
 
 
 def _discover_godot() -> str:
+    """跨平台发现 Godot 引擎二进制。
+
+    优先级：显式环境变量 > 仓库内本地安装（tools/godot）> 系统级安装。
+    注意 macOS/Linux 要指向真正的可执行文件，Windows 才是 .exe。
+    """
+    import shutil
+
+    # 注意：本函数在模块级 PROJECT_ROOT 赋值之前就被调用，仓库根必须本地算
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     candidates = [
         os.environ.get("GODOT_EDITOR_PATH"),
+        # 仓库内本地安装（tools/godot/ 被 .gitignore 忽略）
+        os.path.join(repo_root, "tools", "godot", "Godot.app", "Contents", "MacOS", "Godot"),
+        # 系统级安装
+        "/Applications/Godot.app/Contents/MacOS/Godot",
+        os.path.expanduser("~/Applications/Godot.app/Contents/MacOS/Godot"),
+        "/usr/local/bin/godot",
+        "/usr/bin/godot",
+        shutil.which("godot") or "",
+        # Windows
         r"D:/godot/Godot_v4.6.3-stable_win64.exe/Godot_v4.6.3-stable_win64.exe",
     ]
     candidates += glob.glob(r"D:/godot/*/Godot*.exe")
     candidates += glob.glob(r"C:/Users/*/AppData/Roaming/Godot*/Godot*.exe")
+    candidates += glob.glob("/Applications/Godot*.app/Contents/MacOS/Godot")
     for c in candidates:
         if c and os.path.isfile(c):
             return c
@@ -55,12 +74,25 @@ def _write(path_rel: str, content: str) -> str:
 
 
 def _cleanup(*paths):
+    """删掉测试期间落盘的临时文件。
+
+    必须连带删 Godot 为脚本生成的 ``.uid``：Godot 4 见到 ``xxx.gd`` 就会在旁边
+    写 ``xxx.gd.uid``（UID 缓存）。只删 .gd 会留下 .uid，跑一次测试就在
+    scripts/ 下多一个未跟踪文件——仓库里那个 scripts/_gf_htest.gd.uid 就是
+    这样被误提交进来的。
+    """
     for p in paths:
-        try:
-            if os.path.isfile(p):
-                os.remove(p)
-        except Exception:
-            pass
+        if not p:
+            continue
+        targets = [p]
+        if p.endswith(".gd"):
+            targets.append(p + ".uid")
+        for t in targets:
+            try:
+                if os.path.isfile(t):
+                    os.remove(t)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +133,7 @@ def test_check_scripts_detects_syntax_error():
         assert result.errors[0]["file"] == "res://" + rel
     finally:
         _cleanup(full,
+                 full + ".uid",   # Godot 为 .gd 生成的 UID 缓存，一并清掉
                  os.path.join(PROJECT_ROOT, "_gf_check_manifest.json"),
                  os.path.join(PROJECT_ROOT, "_gf_check_result.json"))
 
@@ -116,6 +149,7 @@ def test_check_scripts_clean_after_fix():
         assert result.errors == []
     finally:
         _cleanup(full,
+                 full + ".uid",   # Godot 为 .gd 生成的 UID 缓存，一并清掉
                  os.path.join(PROJECT_ROOT, "_gf_check_manifest.json"),
                  os.path.join(PROJECT_ROOT, "_gf_check_result.json"))
 
