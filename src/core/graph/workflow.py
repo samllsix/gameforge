@@ -347,21 +347,15 @@ class GameDevWorkflow:
             return {"error_log": [f"Code generator pipeline failed: {e}"], "current_phase": "error"}
 
     async def _orchestrator_node(self, state: GameDevState) -> Dict[str, Any]:
-        """编排节点 — 调度下一个任务"""
+        """编排节点 — 调度下一个任务。
+
+        M2-01：派活逻辑只保留 OrchestratorAgent 一份实现，本节点退化为
+        转发器（与其余节点同构）。此前这里另有一份
+        ``_get_all_ready_tasks`` 重复实现，``self.orchestrator`` 实例化后
+        从未被调用——两份实现漂移风险 + Agent 层空转，同时消除。
+        """
         try:
-            task_plan = state.get("task_plan", [])
-
-            # 选择下一个待执行任务
-            ready_tasks = self._get_all_ready_tasks(task_plan)
-            if not ready_tasks:
-                return {"current_phase": "workflow_complete", "is_complete": True}
-
-            next_task = ready_tasks[0]
-            return {
-                "current_task_id": next_task.get("id"),
-                "ready_task_ids": [t.get("id") for t in ready_tasks],
-                "current_phase": "task_assigned",
-            }
+            return await self.orchestrator.execute(state)
         except Exception as e:
             return {"error_log": [f"Orchestrator failed: {e}"], "current_phase": "error"}
 
@@ -511,27 +505,6 @@ class GameDevWorkflow:
         TaskType.UI.value,
         "scene", "documentation", "config", "ui",
     }
-
-    def _is_task_completed(self, task_plan: List[Dict], task_id: str) -> bool:
-        for task in task_plan:
-            if task.get("id") == task_id:
-                return task.get("status") == TaskStatus.COMPLETED.value
-        return False
-
-    def _get_all_ready_tasks(self, task_plan: List[Dict]) -> List[Dict]:
-        """获取所有依赖已满足的待执行任务"""
-        ready = []
-        for task in task_plan:
-            if task.get("status") != TaskStatus.PENDING.value:
-                continue
-            dependencies = task.get("dependencies", [])
-            all_deps_met = all(
-                self._is_task_completed(task_plan, dep_id)
-                for dep_id in dependencies
-            )
-            if all_deps_met:
-                ready.append(task)
-        return ready
 
     # ========== 场景生成（与主图并行） ==========
 
@@ -1401,7 +1374,6 @@ class GameDevWorkflow:
         return {
             "task_plan": [],
             "current_task_id": None,
-            "ready_task_ids": None,
             "genre_match": None,
             "code_generated": {},
             "code_artifacts": [],

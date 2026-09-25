@@ -119,3 +119,42 @@ class TestOrchestratorAgent:
         result = await agent.execute({"task_plan": []})
         assert result["is_complete"] is True
         assert result["current_phase"] == "workflow_complete"
+
+
+class TestOrchestratorWiring:
+    """M2-01：workflow 编排节点必须真的调用 OrchestratorAgent。
+
+    此前 workflow 自持一份 ``_get_all_ready_tasks`` 重复实现，
+    ``self.orchestrator`` 实例化后从未被调用（两份派活逻辑 + Agent 空转）。
+    """
+
+    def test_orchestrator_node_delegates_to_agent(self, sample_config, sample_game_state):
+        from src.core.graph.workflow import GameDevWorkflow
+
+        wf = GameDevWorkflow.__new__(GameDevWorkflow)
+        wf.config = sample_config
+        wf.orchestrator = OrchestratorAgent(sample_config)
+
+        result = asyncio.run(wf._orchestrator_node(sample_game_state))
+
+        assert result["current_task_id"] == "task-001"
+        assert result["current_phase"] == "task_assigned"
+
+    def test_orchestrator_node_completes_when_nothing_ready(self, sample_config, completed_state):
+        from src.core.graph.workflow import GameDevWorkflow
+
+        wf = GameDevWorkflow.__new__(GameDevWorkflow)
+        wf.config = sample_config
+        wf.orchestrator = OrchestratorAgent(sample_config)
+
+        result = asyncio.run(wf._orchestrator_node(completed_state))
+
+        assert result["is_complete"] is True
+        assert result["current_phase"] == "workflow_complete"
+
+    def test_workflow_has_no_duplicate_dispatch_implementation(self):
+        """契约：workflow 不得再持有派活的第二份实现。"""
+        from src.core.graph.workflow import GameDevWorkflow
+
+        assert not hasattr(GameDevWorkflow, "_get_all_ready_tasks")
+        assert not hasattr(GameDevWorkflow, "_is_task_completed")
