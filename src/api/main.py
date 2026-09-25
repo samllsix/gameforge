@@ -154,6 +154,30 @@ async def lifespan(app: FastAPI):
         }
         logger.warning("llm.startup_check_crashed", error=str(e))
 
+    # M5-02：gd-guard 闸门可用性探测 — 失效必须可见。
+    # 此前二进制缺失时 scan_project 静默返回 unavailable（失败开放），
+    # 使用者没有任何体感；现在启动即记日志，/health 实时暴露 available。
+    try:
+        from src.engine.godot.gd_guard import find_guard
+
+        guard_binary = find_guard()
+        app.state.gd_guard_status = {
+            "available": guard_binary is not None,
+            "binary": guard_binary,
+        }
+        if guard_binary:
+            logger.info("gd_guard.startup_check", binary=guard_binary)
+        else:
+            logger.warning(
+                "gd_guard.unavailable",
+                hint="安全闸门未安装：预期二进制位于 tools/gd-guard/bin/<平台>/ "
+                     "（CI 预编译）或 tools/gd-guard/target/{release,debug}/（本地 "
+                     "cargo build）。缺失期间危险 API 扫描被跳过（失败开放）。",
+            )
+    except Exception as e:  # noqa: BLE001
+        app.state.gd_guard_status = {"available": False, "binary": None}
+        logger.warning("gd_guard.startup_check_crashed", error=str(e))
+
     yield
 
     # 退出时关闭所有 Godot 进程
@@ -384,12 +408,23 @@ async def health_check():
     manager = await ConcurrencyManager.get_instance()
     stats = manager.get_stats()
     llm = getattr(app.state, "llm_status", None) or {}
+    # M5-02：闸门可用性实时探测（find_guard 只做文件系统检查，成本可忽略）。
+    # 二进制被删掉后 /health 立刻反映不可用，不再静默失败开放。
+    try:
+        from src.engine.godot.gd_guard import find_guard
+
+        guard_binary = find_guard()
+        guard_available = guard_binary is not None
+    except Exception:  # noqa: BLE001
+        guard_binary, guard_available = None, False
     return HealthResponse(
         status="healthy",
         concurrency=stats,
         llm_configured=llm.get("llm_configured", False),
         llm_ping_ok=llm.get("ping_ok"),
         llm_ping_error=llm.get("ping_error") or "",
+        gd_guard_available=guard_available,
+        gd_guard_binary=guard_binary or "",
     )
 
 

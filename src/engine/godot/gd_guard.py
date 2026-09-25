@@ -50,8 +50,30 @@ def _guard_binary_names() -> List[str]:
     return ["gd-guard", "gd-guard.exe"]
 
 
+#: CI 预编译二进制的平台目录名（tools/gd-guard/bin/<平台>/gd-guard[.exe]）。
+#: 免去每人本地 cargo build；优先于本地 target/ 构建产物。
+_GUARD_BIN_PLATFORM_DIR = {
+    "win32": "windows",
+    "darwin": "macos",
+    "linux": "linux",
+}.get(sys.platform, "linux")
+
+
 def find_guard() -> Optional[str]:
-    """定位 gd-guard 二进制: 仓库构建产物 → PATH。找不到返回 None。"""
+    """定位 gd-guard 二进制: CI 预编译 bin/ → 仓库构建产物 → PATH。
+
+    找不到返回 None。M5-02：调用方（/health、workflow）必须把"找不到"
+    当作显式状态暴露，而不是静默失败开放。
+    """
+    # 1) CI 预编译的三平台二进制
+    for name in _guard_binary_names():
+        candidate = (
+            _repo_root / "tools" / "gd-guard" / "bin" / _GUARD_BIN_PLATFORM_DIR / name
+        )
+        if candidate.is_file():
+            return str(candidate)
+
+    # 2) 本地 cargo build 产物
     for name in _guard_binary_names():
         for candidate in (
             _repo_root / "tools" / "gd-guard" / "target" / "release" / name,
@@ -60,6 +82,7 @@ def find_guard() -> Optional[str]:
             if candidate.is_file():
                 return str(candidate)
 
+    # 3) PATH
     from shutil import which
 
     for name in _guard_binary_names():

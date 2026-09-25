@@ -192,3 +192,68 @@ def test_export_gate_passes_when_allow(monkeypatch, tmp_path):
     r = client.post("/api/v1/projects/demo_jump_v2/export")
     assert r.status_code == 200, r.text
     assert r.json()["ok"] is True
+
+
+# ---------------- M5-02：闸门失效显式化 ----------------
+
+def test_find_guard_prefers_ci_bin_dir(monkeypatch, tmp_path):
+    """CI 预编译 bin/<平台>/ 优先于本地 target/ 构建产物。"""
+    from src.engine.godot import gd_guard
+
+    monkeypatch.setattr(gd_guard, "_repo_root", tmp_path)
+    name = gd_guard._guard_binary_names()[0]
+    bin_dir = tmp_path / "tools" / "gd-guard" / "bin" / gd_guard._GUARD_BIN_PLATFORM_DIR
+    bin_dir.mkdir(parents=True)
+    (bin_dir / name).write_text("ci", encoding="utf-8")
+    target_dir = tmp_path / "tools" / "gd-guard" / "target" / "release"
+    target_dir.mkdir(parents=True)
+    (target_dir / name).write_text("local", encoding="utf-8")
+
+    assert gd_guard.find_guard() == str(bin_dir / name)
+
+
+def test_find_guard_falls_back_to_target(monkeypatch, tmp_path):
+    """无 CI 二进制时退回本地 cargo build 产物。"""
+    from src.engine.godot import gd_guard
+
+    monkeypatch.setattr(gd_guard, "_repo_root", tmp_path)
+    name = gd_guard._guard_binary_names()[0]
+    target_dir = tmp_path / "tools" / "gd-guard" / "target" / "release"
+    target_dir.mkdir(parents=True)
+    (target_dir / name).write_text("local", encoding="utf-8")
+
+    assert gd_guard.find_guard() == str(target_dir / name)
+
+
+def test_health_exposes_guard_unavailable(monkeypatch):
+    """M5-02：二进制缺失时 /health 必须显式报告 gd_guard_available=false。"""
+    import src.api.main as main_mod
+    from fastapi.testclient import TestClient
+
+    from src.engine.godot import gd_guard
+
+    monkeypatch.setattr(gd_guard, "find_guard", lambda: None)
+
+    client = TestClient(main_mod.app)
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gd_guard_available"] is False
+    assert body["gd_guard_binary"] == ""
+
+
+def test_health_exposes_guard_binary(monkeypatch):
+    """M5-02：二进制在位时 /health 报告 available=true 与路径。"""
+    import src.api.main as main_mod
+    from fastapi.testclient import TestClient
+
+    from src.engine.godot import gd_guard
+
+    monkeypatch.setattr(gd_guard, "find_guard", lambda: "C:/fake/gd-guard.exe")
+
+    client = TestClient(main_mod.app)
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gd_guard_available"] is True
+    assert body["gd_guard_binary"] == "C:/fake/gd-guard.exe"

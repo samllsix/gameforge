@@ -153,6 +153,9 @@ class HealthResponse(BaseModel):
     llm_configured: bool = False
     llm_ping_ok: Optional[bool] = None
     llm_ping_error: str = ""
+    # M5-02：gd-guard 闸门可用性（失效显式化，不再静默失败开放）
+    gd_guard_available: bool = False
+    gd_guard_binary: str = ""
 
 
 class AgentInfo(BaseModel):
