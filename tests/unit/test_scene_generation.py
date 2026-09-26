@@ -2,14 +2,12 @@
 
 核心回归点：Python 侧 GodotSceneBuilder.build_tscn() 必须产出含真实 Godot
 节点类型（CharacterBody2D / MeshInstance3D / Camera2D 等）的合法 .tscn，
-且 GodotHTTPClient.send_scene 在有 tscn 文本时优先以 {"tscn":...} 发送，
-从而让插件端直接落盘、绕开其类型错配逻辑。
+且 scene_generator 落盘只走 paths 契约（projects/<project_id>/scenes/）。
 """
 
 import asyncio
 from pathlib import Path
 
-from src.engine.godot.godot_http_client import GodotHTTPClient
 from src.engine.godot.scene_builder import GodotSceneBuilder
 
 
@@ -59,65 +57,15 @@ def test_build_tscn_detects_3d_dimension():
     assert 'type="CharacterBody3D"' in tscn
 
 
-def test_send_scene_uses_tscn_payload(monkeypatch):
-    captured = {}
+def test_http_client_module_removed():
+    """M6-02/03/04 契约：8765 HTTP 客户端模块必须已删除。
 
-    class _FakeResp:
-        status_code = 200
+    原 send_scene 两个用例随 GodotHTTPClient 一并移除；落盘路径由
+    test_disk_fallback_* 与 test_build_tscn_* 覆盖。
+    """
+    import importlib.util
 
-        def json(self):
-            return {"status": "success", "scene_path": "res://scenes/X.tscn", "object_count": 0}
-
-    class _FakeClient:
-        async def post(self, path, json=None):
-            captured["path"] = path
-            captured["json"] = json
-            return _FakeResp()
-
-    client = GodotHTTPClient()
-    captured_client = _FakeClient()
-
-    async def _fake_get_client():
-        return captured_client
-
-    monkeypatch.setattr(client, "_get_client", _fake_get_client)
-
-    tscn_text = "[gd_scene load_steps=1 format=3]\n[node name=\"X\" type=\"Node2D\"]\n"
-    result = asyncio.run(client.send_scene({"scene_name": "X"}, tscn_text=tscn_text))
-
-    assert captured["path"] == "/api/scene/generate"
-    assert captured["json"]["tscn"] == tscn_text
-    assert captured["json"]["scene_name"] == "X"
-    assert result["status"] == "success"
-
-
-def test_send_scene_falls_back_to_desc(monkeypatch):
-    captured = {}
-
-    class _FakeResp:
-        status_code = 200
-
-        def json(self):
-            return {"status": "success"}
-
-    class _FakeClient:
-        async def post(self, path, json=None):
-            captured["json"] = json
-            return _FakeResp()
-
-    client = GodotHTTPClient()
-    captured_client = _FakeClient()
-
-    async def _fake_get_client():
-        return captured_client
-
-    monkeypatch.setattr(client, "_get_client", _fake_get_client)
-
-    desc = {"scene_name": "Y", "game_objects": []}
-    asyncio.run(client.send_scene(desc))  # 无 tscn_text
-
-    assert "tscn" not in captured["json"]
-    assert captured["json"] == desc
+    assert importlib.util.find_spec("src.engine.godot.godot_http_client") is None
 
 
 def test_build_tscn_2d_scene_no_3d_materials():
@@ -278,7 +226,11 @@ _DISK_FALLBACK_DESC = {
 
 
 def _make_disk_fallback_agent(monkeypatch):
-    """构造一个走"编辑器不在线 → .tscn 落盘"分支的 SceneGeneratorAgent。"""
+    """构造一个走"auto_build_scene=True → .tscn 落盘"分支的 SceneGeneratorAgent。
+
+    M6-03/04：8765 HTTP 编辑器插件通路已移除，编辑器健康探测随之消失，
+    落盘是唯一构建路径（原 check_health 猴子补丁不再需要）。
+    """
     from src.agents.scene_generator import SceneGeneratorAgent
 
     agent = SceneGeneratorAgent({"godot": {"auto_build_scene": True}})
@@ -286,16 +238,12 @@ def _make_disk_fallback_agent(monkeypatch):
     async def _fake_desc(requirements, task_plan, engine, gdm=None, file_metadata=None):
         return _DISK_FALLBACK_DESC, None
 
-    async def _offline(*args, **kwargs):
-        return False
-
     monkeypatch.setattr(agent, "_generate_scene_description", _fake_desc)
-    monkeypatch.setattr(agent.godot_client, "check_health", _offline)
     return agent
 
 
 def test_disk_fallback_writes_to_projects_dir_not_cwd(monkeypatch, tmp_path):
-    """M6-01：编辑器不在线时 .tscn 必须落 projects/<pid>/scenes/。
+    """M6-01：auto_build 开启时 .tscn 必须落 projects/<pid>/scenes/。
 
     禁止回落 GODOT_PROJECT_PATH / os.getcwd()——那会把生成物写进
     仓库根，覆盖 scripts/、scenes/ 已跟踪源码（实测发生过的写穿事故）。

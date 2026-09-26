@@ -26,10 +26,6 @@ config/icon="res://icon.svg"
 GameManager="*res://autoload/game_manager.gd"
 AIController="*res://addons/ai_native/ai_controller.gd"
 
-[editor_plugins]
-
-enabled=PackedStringArray("gameforge")
-
 [input]
 
 move_left={

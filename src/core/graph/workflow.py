@@ -367,12 +367,6 @@ class GameDevWorkflow:
             return END
         return "continue"
 
-    def _route_next(self, state: GameDevState) -> str:
-        """条件路由：根据当前状态决定下一个节点"""
-        if state.get("is_complete"):
-            return END
-        return "code_generator"
-
     # ========== 工具方法 ==========
 
     def _sandbox_project_config(self, state: GameDevState) -> Optional[Dict[str, Any]]:
@@ -602,16 +596,20 @@ class GameDevWorkflow:
     # ========== Godot 编译闭环 ==========
 
     async def _godot_compile_loop(self, state: GameDevState, event_callback, max_rounds: int = 3):
-        """Godot 编译闭环：导入 → 编译 → 读错误 → 自动修复 → 重编译"""
+        """Godot 编译闭环：导入 → 编译 → 读错误 → 自动修复 → 重编译
+
+        M6-03/04：8765 HTTP 编辑器插件通路已整体移除（要求人肉开 Godot 并
+        启用插件，headless 时代无价值），编译只走 headless 一条路。
+        """
 
         sandbox_cfg = self._sandbox_project_config(state)
         use_sandbox = sandbox_cfg is not None
         project_cfg = self._godot_project_config(state) or self.config
 
         # —— 编译闭环模式路由 ——
-        # auto    : 配置了 Godot 引擎路径则走 headless（无需编辑器 GUI），否则退回 8765 HTTP
+        # auto    : 配置了 Godot 引擎路径则走 headless（无需编辑器 GUI），否则报错
         # headless: 始终走 headless（未配置引擎路径则报错，不退回）
-        # http    : 始终走 8765 编辑器插件（需打开 Godot 并启用插件）
+        # http    : 已废弃（8765 编辑器插件通路已移除），按未配置引擎处理
         compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
         if compile_mode in ("auto", "headless"):
             from src.engine.godot import GodotEditor
@@ -633,69 +631,12 @@ class GameDevWorkflow:
                     "message": "沙箱模式需要 headless Godot（设置 godot.editor_path），HTTP 模式会修改主线，已跳过",
                 })
                 return
-        # 以下为原 8765 编辑器插件路径（仅非沙箱模式）
 
-        await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
-        import_result = await client.import_files(gd_files)
-        if import_result.get("status") == "error":
-            await event_callback("compile_result", {
-                "status": "error",
-                "message": f"导入失败: {import_result.get('error', '')}",
-            })
-            return
-
-        for round_num in range(max_rounds):
-            await event_callback("phase_start", {
-                "phase": "compiling",
-                "message": f"正在编译 (第{round_num + 1}轮)...",
-            })
-
-            compile_result = await client.compile_scripts()
-            errors = compile_result.get("errors", [])
-
-            if not errors:
-                await event_callback("compile_result", {
-                    "status": "success",
-                    "message": f"编译成功！共{len(gd_files)}个文件",
-                    "round": round_num + 1,
-                })
-                return
-
-            await event_callback("compile_result", {
-                "status": "error",
-                "message": f"编译发现{len(errors)}个错误",
-                "errors": errors[:10],
-                "round": round_num + 1,
-            })
-
-            await event_callback("phase_start", {
-                "phase": "debugging",
-                "message": f"正在自动修复编译错误 (第{round_num + 1}轮)...",
-            })
-
-            error_log = []
-            for err in errors:
-                if isinstance(err, dict):
-                    line = err.get("line", "")
-                    file = err.get("file", "")
-                    msg = err.get("message", "")
-                    error_log.append(f"{file}:{line}: error: {msg}")
-                else:
-                    error_log.append(str(err))
-
-            state["error_log"] = error_log
-            debug_result = await self.code_generator.fix_code(state, error_log)
-            state.update(debug_result)
-
-            updated_files = state.get("code_generated", {})
-            updated_gd = {k: v for k, v in updated_files.items() if k.endswith(".gd")}
-            if updated_gd != gd_files:
-                gd_files = updated_gd
-                await client.import_files(gd_files)
-
+        # auto 模式未配置引擎（非沙箱）/ 废弃的 http 模式：明确报错，
+        # 不再静默探测一个不存在的 8765 服务（原分支引用未定义变量，触之即崩）。
         await event_callback("compile_result", {
-            "status": "partial",
-            "message": f"经过{max_rounds}轮修复仍有编译错误，可能需要人工介入",
+            "status": "error",
+            "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法编译",
         })
 
     async def _godot_compile_loop_headless(
@@ -1070,17 +1011,20 @@ class GameDevWorkflow:
     async def _try_godot_pipeline(self, state: GameDevState, event_callback) -> None:
         """Godot 一键构建：导入代码 → 编译 → 构建场景
 
-        路由逻辑同 :meth:`_godot_compile_loop`：
+        路由逻辑（M6-03/04：8765 HTTP 编辑器插件通路已移除）：
 
         - ``auto`` / ``headless`` 且配置了 Godot 引擎路径 → 走 headless
           （无需打开编辑器 GUI，直接调用 Godot 引擎二进制落盘 .gd/.tscn 并校验）
-        - 否则退回 8765 HTTP 编辑器插件
+        - 否则跳过并给出明确原因（不再探测 8765 服务）
         """
         sandbox_cfg = self._sandbox_project_config(state)
         use_sandbox = sandbox_cfg is not None
         project_cfg = self._godot_project_config(state) or self.config
 
         # —— 一键构建模式路由 ——
+        # auto    : 配置了 Godot 引擎路径则走 headless，否则跳过
+        # headless: 始终走 headless（未配置引擎路径则跳过）
+        # http    : 已废弃（8765 编辑器插件通路已移除），按未配置引擎处理
         compile_mode = self.config.get("godot", {}).get("compile_mode", "auto")
         if compile_mode in ("auto", "headless"):
             from src.engine.godot import GodotEditor
@@ -1105,86 +1049,13 @@ class GameDevWorkflow:
                 })
                 return
 
-        from src.engine.godot.godot_http_client import GodotHTTPClient
-
-        client = GodotHTTPClient()
-        if not await client.check_health():
-            await event_callback("scene_skipped", {
-                "reason": "godot_http_unavailable",
-                "message": "Godot Editor HTTP Server 未运行，跳过自动构建",
-                **self._preview_meta(state),
-            })
-            return
-
-        code_files = state.get("code_generated", {})
-        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
-        if not gd_files:
-            return
-
-        # 非沙箱模式：原 HTTP 编辑器导入
-        await event_callback("phase_start", {"phase": "compiling", "message": "正在导入代码到 Godot..."})
-        import_result = await client.import_files(gd_files)
-        if import_result.get("status") == "error":
-            await event_callback("compile_result", {
-                "status": "error",
-                "message": f"导入失败: {import_result.get('error', '')}",
-            })
-            return
-
-        # 第二步：编译
-        await event_callback("phase_start", {"phase": "compiling", "message": "正在编译..."})
-        compile_result = await client.compile_scripts()
-        errors = compile_result.get("errors", [])
-
-        if errors:
-            await event_callback("compile_result", {
-                "status": "error",
-                "message": f"编译发现 {len(errors)} 个错误",
-                "errors": errors[:10],
-            })
-
-        # 第三步：构建场景
-        scene_desc = state.get("scene_description")
-        if not scene_desc:
-            scene_json_str = code_files.get("scenes/scene_description.json")
-            if scene_json_str:
-                try:
-                    scene_desc = json.loads(scene_json_str)
-                except Exception:
-                    pass
-
-        if scene_desc:
-            # 由 Python 侧构建合法 .tscn 文本（绕开插件端类型错配）
-            tscn_text = None
-            try:
-                from src.engine.godot.scene_builder import GodotSceneBuilder
-                tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
-            except Exception:
-                tscn_text = None  # 失败时回退到插件端构建
-            await event_callback("scene_start", {"message": "正在构建 Godot 场景..."})
-            scene_result = await client.send_scene(scene_desc, tscn_text=tscn_text)
-            if scene_result.get("status") == "success":
-                state["scene_status"] = "success"
-                state["scene_path"] = scene_result.get("scene_path", "")
-                await event_callback("scene_complete", {
-                    "scene_name": scene_desc.get("scene_name", "GameScene"),
-                    "scene_path": scene_result.get("scene_path", ""),
-                    "object_count": len(scene_desc.get("game_objects", [])),
-                    "compile_status": "success" if not errors else "with_errors",
-                    **self._preview_meta(state),
-                })
-            else:
-                state["scene_status"] = "error"
-                await event_callback("scene_error", {
-                    "message": scene_result.get("error", "场景构建失败"),
-                    **self._preview_meta(state),
-                })
-
-        if not errors:
-            await event_callback("compile_result", {
-                "status": "success",
-                "message": f"编译成功！共 {len(gd_files)} 个文件",
-            })
+        # auto 模式未配置引擎（非沙箱）/ 废弃的 http 模式：明确跳过，
+        # 不再探测一个不存在的 8765 服务。
+        await event_callback("scene_skipped", {
+            "reason": "godot_unavailable",
+            "message": "未配置 Godot 引擎路径（设置 godot.editor_path 或环境变量 GODOT_EDITOR_PATH），无法构建",
+            **self._preview_meta(state),
+        })
 
     async def _try_godot_pipeline_headless(
         self, state: GameDevState, event_callback, editor
@@ -1803,7 +1674,7 @@ class GameDevWorkflow:
                         "phase": node_name,
                         "message": f"正在执行: {node_name}...",
                     })
-                elif kind == "on_chain_end" and node_name not in ("__start__", "__end__", "LangGraph", "_route_next"):
+                elif kind == "on_chain_end" and node_name not in ("__start__", "__end__", "LangGraph"):
                     output = event.get("data", {}).get("output", {})
                     if output and isinstance(output, dict):
                         # P1-3 契约：补发前端 handler 期待但后端从未发的事件

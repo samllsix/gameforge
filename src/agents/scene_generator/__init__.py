@@ -1,11 +1,12 @@
 """GameForge - 场景生成Agent
 
-分析游戏需求和任务计划，生成 Godot 场景描述并发送到 Godot Editor 构建场景。
-与代码生成并行执行，不阻塞主workflow。
+分析游戏需求和任务计划，生成 Godot 场景描述，并由 Python 侧构建合法 .tscn
+落盘到项目目录。与代码生成并行执行，不阻塞主workflow。
 """
 
 import asyncio
 import json
+import os
 import re
 from typing import Any, Dict, List, Optional
 
@@ -14,29 +15,24 @@ import structlog
 from src.agents.base import BaseAgent
 from src.core import paths
 from src.core.state.game_state import GameDevState, AgentType
-from src.engine.godot.godot_http_client import GodotHTTPClient
 
 logger = structlog.get_logger()
 
 
 class SceneGeneratorAgent(BaseAgent):
-    """场景生成Agent - 生成 Godot 场景描述并发送到 Godot Editor"""
+    """场景生成Agent - 生成 Godot 场景描述并构建 .tscn 落盘"""
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(AgentType.SCENE_GENERATOR, config)
         godot_config = config.get("godot", {})
         self.auto_build_scene = godot_config.get("auto_build_scene", False)
-        self.godot_client = GodotHTTPClient(
-            base_url=f"http://{godot_config.get('host', 'localhost')}:{godot_config.get('http_port', 8765)}",
-            timeout=60.0,
-        )
 
     async def execute(self, state: GameDevState, **kwargs) -> Dict[str, Any]:
         """执行场景生成
 
-        始终生成场景描述JSON，无论 Godot Editor 是否在线。
-        仅在 auto_build_scene=True 且 Godot 在线时才发送构建；
-        Python 侧会先构建合法 .tscn 文本并交由插件落盘。
+        始终生成场景描述JSON。auto_build_scene=True 时由 Python 侧构建合法
+        .tscn 并落盘到项目目录（M6-03/04：8765 编辑器插件通路已移除，
+        "构建 → 写盘"收敩为一条路）。
 
         Args:
             state: 当前游戏开发状态
@@ -77,95 +73,7 @@ class SceneGeneratorAgent(BaseAgent):
                 "message": "场景描述已生成，自动构建已关闭（godot.auto_build_scene=false）",
             }
 
-        # Step 3: Check Godot Editor health
-        is_alive = await self.godot_client.check_health()
-        if not is_alive:
-            self.log_action("godot_http_unavailable_fallback_to_disk", {})
-            tscn_text = None
-            try:
-                from src.engine.godot.scene_builder import GodotSceneBuilder
-                tscn_text = GodotSceneBuilder(godot_version=4).build_tscn(scene_desc)
-            except Exception as e:
-                self.log_error("scene_tscn_build_failed_fallback", {"error": str(e)})
-
-            if tscn_text:
-                import os
-
-                # state["sandbox"] 可能为 None（键存在、值为 None），不能依赖 {} 默认值
-                sandbox_task = (state.get("sandbox") or {}).get("task")
-                if sandbox_task:
-                    project_path = sandbox_task.get("task_dir", "")
-                else:
-                    # M6-01：项目目录只走 paths 契约（projects/<project_id>/）。
-                    # 禁止回落到 GODOT_PROJECT_PATH / os.getcwd()——
-                    # 那正是"生成物写穿仓库、覆盖 scripts/、scenes/ 已跟踪
-                    # 源码"的根因（作者实测发生过，已回滚）。
-                    project_id = paths.resolve_project_id(state)
-                    if not project_id:
-                        self.log_error("scene_project_id_unresolved", {})
-                        return {
-                            "scene_status": "error",
-                            "scene_error": "无法确定项目目录：state 中无 preview_project_id / project_name",
-                            "scene_description": scene_desc,
-                            "scene_ir": scene_ir,
-                        }
-                    project_path = str(paths.ensure_project_dir(project_id))
-                scenes_dir = os.path.join(project_path, "scenes")
-                os.makedirs(scenes_dir, exist_ok=True)
-                scene_name = scene_desc.get("scene_name", "GameScene")
-                tscn_path = os.path.join(scenes_dir, f"{scene_name}.tscn")
-                try:
-                    with open(tscn_path, "w", encoding="utf-8") as f:
-                        f.write(tscn_text)
-
-                    main_tscn_path = os.path.join(scenes_dir, "Main.tscn")
-                    with open(main_tscn_path, "w", encoding="utf-8") as f:
-                        f.write(tscn_text)
-
-                    if not sandbox_task:
-                        self._ensure_script_stubs(scene_desc, project_path)
-
-                    self.log_action("scene_tscn_written_to_disk", {
-                        "path": tscn_path, "size": len(tscn_text),
-                        "object_count": len(scene_desc.get("game_objects", [])),
-                    })
-                    return {
-                        "scene_status": "built",
-                        "scene_description": scene_desc,
-                        "scene_ir": scene_ir,
-                        "scene_path": tscn_path,
-                        "object_count": len(scene_desc.get("game_objects", [])),
-                        "compile_status": "skipped",
-                        "compile_errors": [],
-                        "message": "Godot HTTP 不可用，.tscn 已直接写入磁盘",
-                    }
-                except Exception as e:
-                    self.log_error("scene_tscn_write_failed", {"error": str(e)})
-                    return {
-                        "scene_status": "error",
-                        "scene_error": f"写入 .tscn 文件失败: {e}",
-                        "scene_description": scene_desc,
-                        "scene_ir": scene_ir,
-                    }
-
-            return {
-                "scene_status": "skipped",
-                "scene_skip_reason": "godot_http_unavailable",
-                "scene_description": scene_desc,
-                "scene_ir": scene_ir,
-                "message": "Godot Editor HTTP 服务未运行，场景描述已生成但未构建",
-            }
-
-        # Step 4: Import generated code files to Godot Editor
-        code_files = state.get("code_generated", {})
-        gd_files = {k: v for k, v in code_files.items() if k.endswith(".gd")}
-        if gd_files:
-            self.log_action("importing_code_to_godot", {"file_count": len(gd_files)})
-            import_result = await self.godot_client.import_files(gd_files)
-            if import_result.get("status") != "success":
-                self.log_error("import_failed", {"error": import_result.get("error", "未知")})
-
-        # Step 5: 由 Python 侧构建合法 .tscn 文本（绕开插件端类型错配），再推给 Godot
+        # Step 3: Python 侧构建合法 .tscn 并落盘（唯一构建路径）
         tscn_text = None
         try:
             from src.engine.godot.scene_builder import GodotSceneBuilder
@@ -174,35 +82,70 @@ class SceneGeneratorAgent(BaseAgent):
         except Exception as e:
             self.log_error("scene_tscn_build_failed", {"error": str(e)})
 
-        self.log_action("sending_scene_to_godot", {
-            "object_count": len(scene_desc.get("game_objects", [])),
-            "has_tscn": tscn_text is not None,
-        })
-
-        result = await self.godot_client.send_scene(scene_desc, tscn_text=tscn_text)
-
-        if result.get("status") != "success":
+        if not tscn_text:
             return {
                 "scene_status": "error",
-                "scene_error": result.get("error", "未知错误"),
+                "scene_error": "场景 .tscn 构建失败",
                 "scene_description": scene_desc,
                 "scene_ir": scene_ir,
             }
 
-        # Step 6: Trigger compilation
-        self.log_action("compiling_godot_scripts")
-        compile_result = await self.godot_client.compile_scripts()
-        compile_errors = compile_result.get("errors", [])
+        # 项目目录：sandbox 任务工作区 > paths 契约（projects/<project_id>/）。
+        # 禁止回落到 GODOT_PROJECT_PATH / os.getcwd()——那正是"生成物写穿仓库、
+        # 覆盖 scripts/、scenes/ 已跟踪源码"的根因（作者实测发生过，已回滚）。
+        # state["sandbox"] 可能为 None（键存在、值为 None），不能依赖 {} 默认值。
+        sandbox_task = (state.get("sandbox") or {}).get("task")
+        if sandbox_task:
+            project_path = sandbox_task.get("task_dir", "")
+        else:
+            project_id = paths.resolve_project_id(state)
+            if not project_id:
+                self.log_error("scene_project_id_unresolved", {})
+                return {
+                    "scene_status": "error",
+                    "scene_error": "无法确定项目目录：state 中无 preview_project_id / project_name",
+                    "scene_description": scene_desc,
+                    "scene_ir": scene_ir,
+                }
+            project_path = str(paths.ensure_project_dir(project_id))
 
-        return {
-            "scene_status": "built",
-            "scene_description": scene_desc,
-            "scene_ir": scene_ir,
-            "scene_path": result.get("scene_path", ""),
-            "object_count": result.get("object_count", 0),
-            "compile_status": compile_result.get("status", "unknown"),
-            "compile_errors": compile_errors,
-        }
+        scenes_dir = os.path.join(project_path, "scenes")
+        os.makedirs(scenes_dir, exist_ok=True)
+        scene_name = scene_desc.get("scene_name", "GameScene")
+        tscn_path = os.path.join(scenes_dir, f"{scene_name}.tscn")
+        try:
+            with open(tscn_path, "w", encoding="utf-8") as f:
+                f.write(tscn_text)
+
+            main_tscn_path = os.path.join(scenes_dir, "Main.tscn")
+            with open(main_tscn_path, "w", encoding="utf-8") as f:
+                f.write(tscn_text)
+
+            if not sandbox_task:
+                self._ensure_script_stubs(scene_desc, project_path)
+
+            self.log_action("scene_tscn_written_to_disk", {
+                "path": tscn_path, "size": len(tscn_text),
+                "object_count": len(scene_desc.get("game_objects", [])),
+            })
+            return {
+                "scene_status": "built",
+                "scene_description": scene_desc,
+                "scene_ir": scene_ir,
+                "scene_path": tscn_path,
+                "object_count": len(scene_desc.get("game_objects", [])),
+                "compile_status": "skipped",
+                "compile_errors": [],
+                "message": "场景 .tscn 已写入磁盘",
+            }
+        except Exception as e:
+            self.log_error("scene_tscn_write_failed", {"error": str(e)})
+            return {
+                "scene_status": "error",
+                "scene_error": f"写入 .tscn 文件失败: {e}",
+                "scene_description": scene_desc,
+                "scene_ir": scene_ir,
+            }
 
     async def _generate_scene_description(
         self, requirements: str, task_plan: List[Dict], engine: str,
@@ -365,9 +308,6 @@ class SceneGeneratorAgent(BaseAgent):
 
     def _ensure_script_stubs(self, scene_desc: Dict[str, Any], project_path: str):
         """为场景中引用但磁盘上不存在的脚本创建功能性存根。"""
-        import os
-        import re
-
         scripts_dir = os.path.join(project_path, "scripts")
         os.makedirs(scripts_dir, exist_ok=True)
 

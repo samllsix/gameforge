@@ -28,7 +28,7 @@ def _emit_for_node_event(
         async def cb(t, d):
             events.append({"type": t, "data": d})
         # 复刻代码块：on_chain_end 后的判断
-        if node_name not in ("__start__", "__end__", "LangGraph", "_route_next"):
+        if node_name not in ("__start__", "__end__", "LangGraph"):
             if output and isinstance(output, dict):
                 gdm = output.get("game_design_model")
                 if gdm and isinstance(gdm, dict) and node_name == "game_designer":
