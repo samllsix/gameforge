@@ -1211,15 +1211,14 @@ _PLAY_MIME = {
 
 
 def _resolve_editor_path() -> str:
-    """解析 Godot 编辑器路径（与 supervisor 同源：config → env）。"""
-    from src.engine.godot import _normalize_godot_path, _resolve_env
+    """解析 Godot 编辑器路径。
 
-    godot_cfg = (config or {}).get("godot", {}) or {}
-    return _normalize_godot_path(
-        _resolve_env(
-            godot_cfg.get("editor_path", "") or os.getenv("GODOT_EDITOR_PATH", "")
-        )
-    )
+    收口 GodotSession（M6-06/07）：config → env → 常见安装位置自动发现，
+    与 supervisor / runtime_smoke / playtest 同一答案。
+    """
+    from src.engine.godot.session import GodotSession
+
+    return GodotSession.executable(config)
 
 
 # ========== 灵感骰子：融合概念组合引擎 ==========

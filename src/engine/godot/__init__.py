@@ -17,139 +17,14 @@ import structlog
 
 logger = structlog.get_logger()
 
-_ENV_TMPL = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
-
-
-def _resolve_env(value: str) -> str:
-    """展开 ``${VAR}`` / ``${VAR:default}`` 形式的环境变量模板。
-
-    配置加载器（yaml.safe_load）不会解析这类模板，而 config.yaml 中的
-    ``godot.editor_path: ${GODOT_EDITOR_PATH:}`` 会原样保留为字面量字符串。
-    若不展开，``GodotEditor`` 会拿到字面量 ``${GODOT_EDITOR_PATH:}``（truthy），
-    导致 ``or os.getenv(...)`` 兜底永不触发、``validate()`` 误判引擎缺失。
-    """
-    if not value or "${" not in value:
-        return value
-
-    def _sub(m: "re.Match") -> str:
-        name = m.group(1)
-        default = m.group(2) if m.group(2) is not None else ""
-        return os.getenv(name, default)
-
-    return _ENV_TMPL.sub(_sub, value)
-
-
-def _normalize_godot_path(p: str) -> str:
-    """把 Git Bash 风格的 /d/godot/... 归一化为 Windows 的 D:/godot/...
-
-    在 Windows 上 Python 的 os.path 不会翻译 /d/ 前缀，直接当成相对路径，
-    导致 isfile 失败、headless 路径无法识别。
-    """
-    if not p:
-        return p
-    if (
-        p.startswith("/")
-        and len(p) > 2
-        and p[1].isalpha()
-        and p[2] == "/"
-    ):
-        return p[1].upper() + ":" + p[2:]
-    return p
-
-
-# ── Godot user:// 数据目录 ──────────────────────────────────────────────────
-# Godot 启动时必须能写 user:// 数据目录，否则不是优雅退出而是**段错误崩溃**：
-#   ERROR: Error attempting to create data dir: .../Godot/app_userdata/<项目名>
-#   handle_crash: Program crashed with signal 11 (RotatedFileLogger 拿不到 user://logs)
-# 受限环境（容器 / CI / 只读 HOME / 文件沙箱）里该位置常常不可写，headless
-# 校验会因此全部误判为"通过"（崩在写日志阶段，根本没校验到脚本）。
-#
-# 注意不能无条件重定向 HOME：Godot 的导出模板装在
-#   ~/Library/Application Support/Godot/export_templates/
-# 改了 HOME 会让 Web/Windows 导出找不到模板。所以这里先探测真实位置是否可写，
-# 只在不可写时才回退到工作区内的 data/godot_home。
-_godot_home_logged = False
-
-
-def _godot_default_user_root() -> Optional[str]:
-    """Godot 存放 user:// 数据的平台默认根目录。"""
-    import sys
-
-    if sys.platform == "darwin":
-        return os.path.join(os.path.expanduser("~"), "Library", "Application Support")
-    if sys.platform == "win32":
-        return os.environ.get("APPDATA")
-    return os.environ.get("XDG_DATA_HOME") or os.path.join(
-        os.path.expanduser("~"), ".local", "share"
-    )
-
-
-def _godot_user_root_writable() -> bool:
-    """真实 user:// 数据根是否可写（探测失败即视为不可写）。
-
-    只做 ``makedirs(exist_ok=True)`` 是不够的：目录已存在但不可写时它静默返回，
-    会把不可写误判成可写（macOS 文件沙箱下正是这种情况，随后 Godot 段错误）。
-    必须真的落一个探针文件。
-    """
-    root = _godot_default_user_root()
-    if not root:
-        return False
-    target = os.path.join(root, "Godot")
-    try:
-        os.makedirs(target, exist_ok=True)
-        probe = os.path.join(target, ".gameforge_write_probe")
-        with open(probe, "w", encoding="utf-8") as f:
-            f.write("ok")
-        os.remove(probe)
-        return True
-    except OSError:
-        return False
-
-
-def godot_user_env(base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-    """构造运行 Godot 子进程用的环境变量。
-
-    Args:
-        base: 基础环境；缺省用 ``os.environ``（不修改父进程环境）
-
-    Returns:
-        可直接传给 ``subprocess.run(..., env=...)`` 的字典。真实 user:// 位置
-        可写时原样返回；不可写时把 HOME / XDG_DATA_HOME / APPDATA 指向
-        ``data/godot_home``（可由 GAMEFORGE_DATA_ROOT 整体迁移）。
-    """
-    global _godot_home_logged
-
-    env = dict(os.environ if base is None else base)
-    if _godot_user_root_writable():
-        return env
-
-    from src.core import paths
-
-    fallback = paths.DATA_ROOT / "godot_home"
-    try:
-        os.makedirs(fallback, exist_ok=True)
-    except OSError as e:  # 连工作区都写不了：交给 Godot 自己报错，别在这里吞掉
-        logger.warning("godot.user_home_fallback_failed", error=str(e))
-        return env
-
-    env["HOME"] = str(fallback)
-    env["XDG_DATA_HOME"] = str(fallback / "share")
-    env["APPDATA"] = str(fallback / "AppData" / "Roaming")
-    try:
-        os.makedirs(env["XDG_DATA_HOME"], exist_ok=True)
-        os.makedirs(env["APPDATA"], exist_ok=True)
-    except OSError:
-        pass
-
-    if not _godot_home_logged:
-        _godot_home_logged = True
-        logger.warning(
-            "godot.user_home_redirected",
-            reason="默认 user:// 数据目录不可写，Godot 会段错误崩溃",
-            default=_godot_default_user_root(),
-            fallback=str(fallback),
-        )
-    return env
+# 引擎对接收口（M6-06/07）：以下符号的实现已迁至 engine/godot/session.py，
+# 此处 re-export 保持历史 import 点不变（supervisor / runtime_smoke / playtest /
+# export_kit 及 6 处 editor_path 解析点均从本包导入它们）。
+from src.engine.godot.session import (  # noqa: F401
+    _normalize_godot_path,
+    _resolve_env,
+    godot_user_env,
+)
 
 
 @dataclass
@@ -175,10 +50,10 @@ class GodotCompiler:
     """Godot 编译器 — 通过 headless 模式验证 GDScript 语法"""
 
     def __init__(self, config: Dict[str, Any]):
+        from src.engine.godot.session import GodotSession
+
         godot_config = config.get("godot", {})
-        self.editor_path = _normalize_godot_path(_resolve_env(
-            godot_config.get("editor_path", "") or os.getenv("GODOT_EDITOR_PATH", "")
-        ))
+        self.editor_path = GodotSession.executable(config)
         self.project_path = _normalize_godot_path(_resolve_env(
             godot_config.get("project_path", "") or os.getenv("GODOT_PROJECT_PATH", "")
         ))
@@ -289,10 +164,10 @@ class GodotEditor:
     """
 
     def __init__(self, config: Dict[str, Any]):
+        from src.engine.godot.session import GodotSession
+
         godot_config = config.get("godot", {})
-        self.editor_path = _normalize_godot_path(_resolve_env(
-            godot_config.get("editor_path", "") or os.getenv("GODOT_EDITOR_PATH", "")
-        ))
+        self.editor_path = GodotSession.executable(config)
         self.project_path = _normalize_godot_path(_resolve_env(
             godot_config.get("project_path", "") or os.getenv("GODOT_PROJECT_PATH", "")
         ))

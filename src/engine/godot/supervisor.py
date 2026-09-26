@@ -150,14 +150,10 @@ class GodotSupervisor:
             list(win) if isinstance(win, list) else [20000, 20000]
         )
 
-        godot_cfg = (config or {}).get("godot", {}) or {}
-        from src.engine.godot import _normalize_godot_path, _resolve_env
+        # 引擎路径收口 GodotSession（M6-06/07：config → env → 自动发现）
+        from src.engine.godot.session import GodotSession
 
-        self.editor_path: str = _normalize_godot_path(
-            _resolve_env(
-                godot_cfg.get("editor_path", "") or os.getenv("GODOT_EDITOR_PATH", "")
-            )
-        )
+        self.editor_path: str = GodotSession.executable(config)
 
         self._procs: Dict[str, ProjectProc] = {}
         self._native_sessions: Dict[str, NativeRunSession] = {}

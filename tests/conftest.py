@@ -13,6 +13,10 @@ os.environ.pop("LANGCHAIN_API_KEY", None)
 os.environ.pop("LANGSMITH_API_KEY", None)
 # 音频单测统一走程序化合成，不加载 AI 模型（保持快速且离线）
 os.environ.setdefault("GAMEFORGE_AUDIO_BACKEND", "procedural")
+# Godot 引擎自动发现宿主免疫（M6-07）：开发机/CI 装了 Godot 时，自动发现会让
+# "未配置引擎路径"的用例拿到真实引擎而改变分支（skip → 真跑）。需要验证自动
+# 发现本身的用例（tests/unit/test_godot_session.py）自行 delenv 打开。
+os.environ.setdefault("GAMEFORGE_NO_GODOT_AUTODISCOVER", "1")
 # src.api.main 在 import 时强制要求 API Key 或 loopback 白名单，否则整个模块
 # 无法导入（test_llm_health_endpoint / test_gd_guard 等会因此全红）。
 # 测试统一走 loopback 白名单；无需鉴权的断言改在各用例内自行覆盖环境变量。

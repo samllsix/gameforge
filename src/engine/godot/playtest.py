@@ -187,11 +187,11 @@ class PlaytestRunner:
 
     def __init__(self, config: Dict[str, Any]):
         from src.engine.godot import _normalize_godot_path, _resolve_env
+        from src.engine.godot.session import GodotSession
 
         godot_cfg = (config or {}).get("godot", {}) or {}
-        self.editor_path: str = _normalize_godot_path(_resolve_env(
-            godot_cfg.get("editor_path", "") or os.getenv("GODOT_EDITOR_PATH", "")
-        ))
+        # 引擎路径收口 GodotSession（M6-06/07：config → env → 自动发现）
+        self.editor_path: str = GodotSession.executable(config)
         self.project_path: str = _normalize_godot_path(_resolve_env(
             godot_cfg.get("project_path", "") or os.getenv("GODOT_PROJECT_PATH", "")
         ))
