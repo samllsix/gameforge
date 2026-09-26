@@ -37,6 +37,21 @@ from src.sandbox.workspace import WorkspaceManager
 logger = structlog.get_logger(__name__)
 
 
+class MergeBlockedError(Exception):
+    """沙箱合并被 gd-guard 拦截（M5-09）。
+
+    findings 为拦截明细（file/line/rule/detail），供 API 层原样返回 403。
+    """
+
+    def __init__(self, findings: List[Dict[str, Any]]):
+        self.findings = findings
+        summary = "; ".join(
+            f"{f.get('file', '')}:{f.get('line', '')} {f.get('detail', '')}"
+            for f in findings
+        )
+        super().__init__(f"gd-guard 拦截，拒绝合并: {summary}")
+
+
 class SandboxController:
     """统一入口：创建沙箱、权限校验、快照留痕、受限执行、合并/回滚。"""
 
@@ -213,7 +228,25 @@ class SandboxController:
 
     # ── 合并 / 丢弃 ──
     def merge(self, task: Dict[str, str]) -> str:
-        """测试通过后合并回主线。合并前自动留快照。"""
+        """测试通过后合并回主线。合并前自动留快照。
+
+        M5-09：合并前过一道 gd-guard——任务工作区的代码即将进入主线
+        （projects/<pid>/，可被预览端点直接执行），不可信代码不能在这
+        最后一道关口裸奔。block 时抛 MergeBlockedError，不合并（fail-closed）；
+        闸门不可用时维持失败开放（可用性经 /health 暴露）。
+        """
+        from src.engine.godot.gd_guard import scan_project
+
+        guard = scan_project(task["task_dir"])
+        if guard.get("available") and guard.get("verdict") == "block":
+            findings = (guard.get("findings") or [])[:5]
+            logger.warning(
+                "sandbox.merge_blocked_by_guard",
+                task_id=task.get("task_id"),
+                findings=findings,
+            )
+            raise MergeBlockedError(findings)
+
         self.snapshots.create(task["task_dir"], label="pre-merge")
         main = self.workspace.merge_task(self._project_of(task), task["task_id"])
         return str(main)

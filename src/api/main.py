@@ -54,7 +54,7 @@ from src.api.schemas import (
     HealthResponse,
     AgentListResponse,
 )
-from src.sandbox.controller import SandboxController
+from src.sandbox.controller import MergeBlockedError, SandboxController
 
 # 显式加载 .env：否则只能靠 llm_client 等模块的 load_dotenv 间接生效，
 # 一旦某次重构少引入一条链，.env 就静默失效（表现为"明明配了却还报
@@ -1039,6 +1039,29 @@ async def preview_frame(
             status_code=404, detail=f"项目 {project_id} 缺少 project.godot"
         )
 
+    # M5-03：预览端点是唯一真实代码执行面——一次 GET 就会起 Godot 子进程
+    # 执行项目里的代码，而起进程前不过任何闸门。按"不可信代码 → 磁盘 →
+    # 被执行"的边界，这里补上 gd-guard：block → 403，不渲染、不起进程。
+    # 闸门不可用（二进制缺失）时维持失败开放；可用性已在 /health 显式暴露（M5-02）。
+    from src.engine.godot import gd_guard as _gd_guard
+
+    _guard_result = _gd_guard.scan_project(project_path)
+    if _guard_result.get("available") and _guard_result.get("verdict") == "block":
+        _findings = (_guard_result.get("findings") or [])[:5]
+        logger.warning(
+            "preview.gd_guard_blocked",
+            project_id=project_id,
+            findings=_findings,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "stage": "gd_guard",
+                "message": "项目包含被禁止的危险 API，预览已拦截",
+                "findings": _findings,
+            },
+        )
+
     if not legacy_only:
         # 2.0 长驻进程路径：真窗口 + mss 截图
         from src.engine.godot import GodotSupervisor, GodotTimeout, GodotCrashed
@@ -1563,6 +1586,16 @@ async def sandbox_merge(project_id: str, task_id: str):
         task = {"task_id": task_id, "task_dir": task_dir, "role": "director"}
         main_path = sandbox.merge(task)
         return {"ok": True, "merged_to": str(main_path)}
+    except MergeBlockedError as exc:
+        # M5-09：闸门拦截 → 403，与导出门禁同一形态
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "stage": "gd_guard",
+                "message": str(exc),
+                "findings": exc.findings,
+            },
+        ) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

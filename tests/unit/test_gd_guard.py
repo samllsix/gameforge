@@ -198,9 +198,13 @@ def test_export_gate_passes_when_allow(monkeypatch, tmp_path):
 
 def test_find_guard_prefers_ci_bin_dir(monkeypatch, tmp_path):
     """CI 预编译 bin/<平台>/ 优先于本地 target/ 构建产物。"""
+    import shutil
+
     from src.engine.godot import gd_guard
 
     monkeypatch.setattr(gd_guard, "_repo_root", tmp_path)
+    # tmp_path 跨运行复用（确定性 basetemp），先清残留再搭场景
+    shutil.rmtree(tmp_path / "tools", ignore_errors=True)
     name = gd_guard._guard_binary_names()[0]
     bin_dir = tmp_path / "tools" / "gd-guard" / "bin" / gd_guard._GUARD_BIN_PLATFORM_DIR
     bin_dir.mkdir(parents=True)
@@ -214,9 +218,12 @@ def test_find_guard_prefers_ci_bin_dir(monkeypatch, tmp_path):
 
 def test_find_guard_falls_back_to_target(monkeypatch, tmp_path):
     """无 CI 二进制时退回本地 cargo build 产物。"""
+    import shutil
+
     from src.engine.godot import gd_guard
 
     monkeypatch.setattr(gd_guard, "_repo_root", tmp_path)
+    shutil.rmtree(tmp_path / "tools", ignore_errors=True)
     name = gd_guard._guard_binary_names()[0]
     target_dir = tmp_path / "tools" / "gd-guard" / "target" / "release"
     target_dir.mkdir(parents=True)
@@ -257,3 +264,73 @@ def test_health_exposes_guard_binary(monkeypatch):
     body = r.json()
     assert body["gd_guard_available"] is True
     assert body["gd_guard_binary"] == "C:/fake/gd-guard.exe"
+
+
+# ---------------- M5-03：预览端点接闸门 ----------------
+
+def test_preview_frame_blocked_by_guard(monkeypatch, tmp_path):
+    """M5-03：含危险 API 的项目 GET /preview/frame → 403，Godot 进程不被拉起。"""
+    import src.api.main as main_mod
+    from fastapi.testclient import TestClient
+
+    _export_fixture(monkeypatch, tmp_path)
+
+    from src.engine.godot import gd_guard
+
+    monkeypatch.setattr(gd_guard, "scan_project", lambda *a, **k: {
+        "available": True, "verdict": "block",
+        "findings": [{"file": "res://scripts/evil.gd", "line": 3, "rule": "OS.execute",
+                      "detail": "执行任意系统命令", "snippet": "OS.execute('cmd', [])"}],
+        "scanned": {},
+    })
+
+    # 闸门必须先拦：supervisor 一旦被拉起即为缺陷
+    from src.engine.godot import GodotSupervisor
+
+    async def _explode(cfg):
+        raise AssertionError("闸门拦截后不应拉起 Godot 进程")
+
+    monkeypatch.setattr(GodotSupervisor, "get_instance", _explode)
+
+    client = TestClient(main_mod.app)
+    r = client.get("/api/v1/preview/frame", params={"project_id": "demo_jump_v2"})
+    assert r.status_code == 403
+    # 全局 HTTPException 处理器统一信封 {"error": ..., "message": detail}
+    body = r.json()
+    assert body["error"] == "forbidden"
+    assert body["message"]["stage"] == "gd_guard"
+    assert "OS.execute" in body["message"]["findings"][0]["snippet"]
+
+
+def test_preview_frame_passes_when_guard_allows(monkeypatch, tmp_path):
+    """M5-03：闸门 allow 时预览正常走 supervisor 渲染（不误伤正常流程）。"""
+    import src.api.main as main_mod
+    from fastapi.testclient import TestClient
+
+    _export_fixture(monkeypatch, tmp_path)
+
+    from src.engine.godot import gd_guard
+
+    monkeypatch.setattr(gd_guard, "scan_project", lambda *a, **k: {
+        "available": True, "verdict": "allow", "findings": [], "scanned": {},
+    })
+
+    from src.engine.godot import GodotSupervisor
+
+    class _FakeSupervisor:
+        async def is_alive(self, pid):
+            return True
+
+        async def get_frame(self, pid, frame_index=0, width=640, height=360):
+            return b"\x89PNG fake frame"
+
+    async def _fake_get_instance(cfg):
+        return _FakeSupervisor()
+
+    monkeypatch.setattr(GodotSupervisor, "get_instance", _fake_get_instance)
+
+    client = TestClient(main_mod.app)
+    r = client.get("/api/v1/preview/frame", params={"project_id": "demo_jump_v2"})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.headers["X-Preview-Source"] == "godot-mss"

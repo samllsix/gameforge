@@ -279,6 +279,43 @@ class TestController:
         main = sb.merge(task)
         assert "# v2" in (Path(main) / "scripts" / "player.gd").read_text(encoding="utf-8")
 
+    def test_merge_blocked_by_guard(self, controller_with_roots, project, monkeypatch):
+        """M5-09：任务工作区含危险 API 时合并被闸门拦截，主线不被污染。"""
+        from src.sandbox.controller import MergeBlockedError
+
+        sb = controller_with_roots
+        task = sb.create("proj_a", role="code_agent")
+        sb.modify(task, "scripts/evil.gd", "extends Node\nfunc _ready():\n\tOS.execute('cmd', [])\n")
+
+        import src.engine.godot.gd_guard as gd_guard
+
+        monkeypatch.setattr(gd_guard, "scan_project", lambda *a, **k: {
+            "available": True, "verdict": "block",
+            "findings": [{"file": "scripts/evil.gd", "line": 3, "rule": "OS.execute",
+                          "detail": "执行任意系统命令"}],
+            "scanned": {},
+        })
+
+        with pytest.raises(MergeBlockedError):
+            sb.merge(task)
+        # 主线未被写入危险脚本
+        assert not (project / "scripts" / "evil.gd").exists()
+
+    def test_merge_passes_when_guard_allows(self, controller_with_roots, project, monkeypatch):
+        """M5-09：闸门 allow 时合并正常进行（不破坏既有生命周期）。"""
+        sb = controller_with_roots
+        task = sb.create("proj_a", role="code_agent")
+        sb.modify(task, "scripts/player.gd", "extends CharacterBody2D\n# v3\n")
+
+        import src.engine.godot.gd_guard as gd_guard
+
+        monkeypatch.setattr(gd_guard, "scan_project", lambda *a, **k: {
+            "available": True, "verdict": "allow", "findings": [], "scanned": {},
+        })
+
+        main = sb.merge(task)
+        assert "# v3" in (Path(main) / "scripts" / "player.gd").read_text(encoding="utf-8")
+
     def test_full_lifecycle_failure_rollback(self, controller_with_roots, project):
         sb = controller_with_roots
         task = sb.create("proj_a", role="repair_agent")
