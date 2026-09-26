@@ -113,9 +113,13 @@ def test_discovery_candidates_cover_platform_common_paths(monkeypatch):
 
 def test_discovery_includes_repo_tools_godot(monkeypatch, tmp_path):
     """仓库内置 tools/godot/ 版本化子目录（解压即用）要被发现。"""
+    import shutil
+
     from src.engine.godot import session
 
     monkeypatch.setattr(session, "_REPO_ROOT", tmp_path)
+    # tmp_path 跨运行复用（确定性 basetemp），先清残留再搭场景
+    shutil.rmtree(tmp_path / "tools", ignore_errors=True)
     versioned = tmp_path / "tools" / "godot" / "Godot_v4.6.3-stable_win64.exe"
     versioned.mkdir(parents=True)
     exe = versioned / "Godot_v4.6.3-stable_win64.exe"
